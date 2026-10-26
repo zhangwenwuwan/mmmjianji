@@ -154,20 +154,33 @@ class _ShellState extends ConsumerState<Shell> {
                   _ => null,
                 },
               ),
-        // 动效只作用在「单个页面」上：IndexedStack 保留各页滚动位置，
-        // 被选中的那一个播一次淡入 + 轻移。
+        // 动效只作用在「单个页面」上，被选中的那一个播一次轻移。
         //
-        // ⚠️ 不要用 AnimatedSwitcher 去包 IndexedStack：那样新旧两个栈都带着
+        // ⚠️ 不要用 AnimatedSwitcher 去包这个栈：那样新旧两个栈都带着
         // 全部 4 个页面做交叉淡入，会叠在一起出残影（0.6.0 踩过）。
-        body: IndexedStack(
-          index: _index,
+        //
+        // 【性能】原来是 `IndexedStack`：它**会把 4 个页面全部 layout**
+        // （RenderIndexedStack 继承 RenderStack，只跳过 paint，不跳过 layout）。
+        // 首页那一坨折叠头部 + 长列表、统计页的图表、资产页的净值走势全都跟着
+        // 每次切 tab 重排一遍，弱 GPU 上就是那一顿。
+        // 现在换成 `Stack + Offstage`：非当前页**连 layout 都不做**，
+        // 再叠一层 `TickerMode(enabled: false)` 把它们身上的动画 ticker 也停掉。
+        // 各页 State 仍然保留（滚动位置、输入内容都不丢）。
+        body: Stack(
+          fit: StackFit.expand,
           children: [
             for (var i = 0; i < _pages.length; i++)
-              _TabPage(
-                key: ValueKey('tab-$i'),
-                active: i == _index,
-                fromRight: i > _prevIndex,
-                child: _pages[i],
+              Offstage(
+                offstage: i != _index,
+                child: TickerMode(
+                  enabled: i == _index,
+                  child: _TabPage(
+                    key: ValueKey('tab-$i'),
+                    active: i == _index,
+                    fromRight: i > _prevIndex,
+                    child: _pages[i],
+                  ),
+                ),
               ),
           ],
         ),
@@ -230,6 +243,24 @@ class _TabPageState extends State<_TabPage>
     duration: Motion.page,
   );
 
+  /// 进出曲线**只建一次**。
+  ///
+  /// 以前这两个 CurvedAnimation 是在 build 里 new 的：每次切 tab（Shell 重建）
+  /// 都会给 controller 挂一个新的监听器、而且旧的没人摘 —— 切十几次之后
+  /// 一个 tick 要走十几个死回调。现在固定成字段，方向用两条 Tween 区分。
+  late final Animation<double> _enter =
+      CurvedAnimation(parent: _ctrl, curve: XCurve.enter);
+
+  late final Animation<Offset> _slideFromRight = Tween<Offset>(
+    begin: const Offset(0.05, 0),
+    end: Offset.zero,
+  ).animate(_enter);
+
+  late final Animation<Offset> _slideFromLeft = Tween<Offset>(
+    begin: const Offset(-0.05, 0),
+    end: Offset.zero,
+  ).animate(_enter);
+
   bool get _reduce => MediaQuery.of(context).disableAnimations;
 
   @override
@@ -259,19 +290,15 @@ class _TabPageState extends State<_TabPage>
 
   @override
   Widget build(BuildContext context) {
-    final dx = (widget.fromRight ? 1 : -1) * 0.05;
-    // 淡入同 AppPageRoute：必须「快速到位后保持」。平滑淡入会让页面在整段
-    // 动画里半透明，露出 Scaffold 底色 —— 那就是 tab 切换的残影来源。
-    final fade = CurvedAnimation(parent: _ctrl, curve: const Threshold(0.12));
-    return FadeTransition(
-      opacity: fade,
-      child: SlideTransition(
-        position: Tween<Offset>(
-          begin: Offset(dx, 0),
-          end: Offset.zero,
-        ).animate(CurvedAnimation(parent: _ctrl, curve: XCurve.enter)),
-        child: widget.child,
-      ),
+    // 不再套 FadeTransition：原来那层 `Threshold(0.12)` 是"前 12% 全透明、
+    // 之后直接 1.0"，视觉上就是硬切，却让整页白走一次 full-screen saveLayer。
+    // 弱 GPU 上这一次 saveLayer 就是切 tab 时那一顿。
+    //
+    // RepaintBoundary 放在 SlideTransition **里面**：页面先栅格化成图层，
+    // 位移只是换合成偏移，不再每帧重画整页（和 AppPageRoute 同一个道理）。
+    return SlideTransition(
+      position: widget.fromRight ? _slideFromRight : _slideFromLeft,
+      child: RepaintBoundary(child: widget.child),
     );
   }
 }

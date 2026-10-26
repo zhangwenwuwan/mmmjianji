@@ -39,6 +39,16 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- 渲染后端：强制走 Skia（GL），关掉 Impeller（Vulkan）。
+             真机 OPPO PBEM00 = 骁龙 710 / Adreno 615 + 2020 年的驱动，
+             Flutter 3.44 在 Android 上默认 Impeller-Vulkan，这种老 GPU 上
+             每次转场都要重新栅格化、掉帧明显（用户反馈"进出页面卡顿"）。
+             Skia 的 GL 路径在这类设备上成熟得多。
+             想改回 Impeller 试对比：把 value 改成 true（或删掉这条）。 -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
     
         <!-- 桌面小组件：本月概览 -->
         <receiver

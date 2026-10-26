@@ -429,15 +429,18 @@ class AppPageRoute extends PageRouteBuilder {
               // 观感就是"冲一下然后长时间蹭"。换成 emphasized-decelerate。
               curve: XCurve.enter,
             ));
-            final fade = animation.status == AnimationStatus.reverse
-                ? const AlwaysStoppedAnimation<double>(1)
-                : CurvedAnimation(
-                    parent: animation,
-                    curve: const Threshold(0.12),
-                  );
-            return FadeTransition(
-              opacity: fade,
-              child: SlideTransition(position: slide, child: child),
+            // 【性能·关键】RepaintBoundary 必须放在 SlideTransition **里面**：
+            // 这样页面先栅格化成自己的图层，转场期间只是换一个合成偏移，
+            // 不再每帧重画整页（卡片阴影 / 圆角裁剪 / 渐变都很贵）。
+            // 放到外面就白搭 —— boundary 里含 transform，照样每帧重画。
+            // 弱 GPU（Adreno 615）上这是 60fps 与掉帧的分界线。
+            //
+            // 另外原来那层 `Threshold(0.12)` 的 FadeTransition 已经删掉：
+            // 它前 12% 是全透明、之后直接跳到 1.0，视觉上就是硬切，
+            // 却让整页白走一次 full-screen saveLayer。删掉更快也更干净。
+            return SlideTransition(
+              position: slide,
+              child: RepaintBoundary(child: child),
             );
           },
         );
