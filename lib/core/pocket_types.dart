@@ -401,6 +401,7 @@ const List<PocketType> kPocketTypes = [
       group: '投资与保障',
       nameHint: '例如 待报销的票'),
   // 「自定义」：选择器里的自定义项，选中后让用户自己改名 / 换图标。
+  // 资金账户那一列的「自定义」，走现金口径（有余额、可记收支）。
   PocketType(
       id: 'custom',
       label: '自定义',
@@ -408,19 +409,30 @@ const List<PocketType> kPocketTypes = [
       kind: PocketKind.cash,
       group: '现金与储值',
       nameHint: '自定义账户'),
+  // 信贷账户那一列的「自定义」：**和 custom 是不同的类型**，
+  // 走信用卡口径（欠款 / 额度 / 出账日 / 还款日），页面跟信用卡一致。
+  PocketType(
+      id: 'customCredit',
+      label: '自定义',
+      glyph: '⭐',
+      kind: PocketKind.credit,
+      group: '信用与分期',
+      nameHint: '自定义信用卡'),
 ];
 
-/// 新增账户时「选择类型」展示的分组与类型（对照参考 App 的 6 组 25 项）。
+/// 新增账户时「选择类型」展示的分组与类型。
 ///
-/// ⚠️ 老类型**仍然留在 [kPocketTypes] 里**，只是不进这个选择器 ——
-/// 否则老账户的 typeId 会失联、图标和名称一起丢。要增删可选类型，改这里就行。
+/// 2026-10-26 用户拍板：只留「资金账户 / 信贷账户」两列，
+/// 充值账户、投资理财、二手货物、债务四组**从这个页面删掉**（不是隐藏）。
+///
+/// ⚠️ 那些老类型**仍然留在 [kPocketTypes] 里** —— 否则老账户的 typeId 会失联、
+/// 图标和名称一起丢。要增删可选类型，改这里就行，别动上面那张表。
 const List<(String, List<String>)> kAccountChooserGroups = [
-  ('资金账户', ['cash', 'alipay', 'wechatWallet', 'bankcard', 'qq', 'jd', 'custom']),
-  ('信贷账户', ['credit', 'huabei', 'baitiaoPlain', 'custom']),
-  ('充值账户', ['member', 'transit', 'meal', 'depositCard', 'custom']),
-  ('投资理财', ['insurance', 'crypto', 'custom']),
-  ('二手货物', ['house', 'car', 'custom']),
-  ('债务', ['borrowIn', 'lendOut', 'reimburse']),
+  (
+    '资金账户',
+    ['cash', 'alipay', 'wechatWallet', 'bankcard', 'qq', 'jd', 'custom']
+  ),
+  ('信贷账户', ['credit', 'huabei', 'baitiaoPlain', 'customCredit']),
 ];
 
 PocketType? pocketTypeOf(String? id) {

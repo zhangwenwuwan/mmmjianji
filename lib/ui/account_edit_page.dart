@@ -1133,6 +1133,9 @@ const Map<String, TypeBadge> kTypeBadges = {
   'credit': TypeBadge(tint: Color(0xFF8A9099), icon: Icons.credit_card),
   'huabei': TypeBadge(tint: Color(0xFF2F6BFF), text: '花'),
   'baitiaoPlain': TypeBadge(tint: Color(0xFFE1251B), text: '白条'),
+  // 信贷列的「自定义」：和资金列的 custom 是两个类型（口径不同），
+  // 徽标配色也换掉，免得两列都是同款青绿星星分不清。
+  'customCredit': TypeBadge(tint: Color(0xFF7C5CD6), icon: Icons.star),
   // 充值账户
   'member': TypeBadge(tint: Color(0xFFC99B3B), icon: Icons.card_membership),
   'transit': TypeBadge(tint: Color(0xFF1FA463), icon: Icons.directions_bus),

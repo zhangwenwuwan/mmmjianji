@@ -5,8 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/currency.dart';
+import '../core/pocket_types.dart';
 import '../core/rules.dart';
 import '../data/store.dart';
+import '../services/icon_service.dart';
 import '../state/ledger_state.dart';
 import '../state/settings.dart';
 import 'account_detail_page.dart';
@@ -578,6 +580,47 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
     );
   }
 
+  /// 账户卡上的图标：用户自己换了**图片图标**就显示图片，
+  /// 否则退回该 kind 的特征图标（卡面 / 银行 / 负债各有识别度）。
+  ///
+  /// 之前这里是写死的 `Icon(...)`，用户设了自定义图标在资产页根本看不到——
+  /// 只有现金那一支用了 `AppGlyph`，等于「换图只在现金账户生效」。
+  Widget _accountIcon(
+    Pocket p, {
+    required IconData fallback,
+    required double size,
+    required Color color,
+  }) {
+    if (!IconService.isImage(p.glyph)) {
+      return Icon(fallback, size: size, color: color);
+    }
+    final radius = size * 0.24;
+    return SizedBox(
+      width: size,
+      height: size,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(radius),
+        child: AppGlyph(p.glyph, size: size, fill: true, radius: radius),
+      ),
+    );
+  }
+
+  /// 账户卡上的小标签：优先显示**账户类型名**（支付宝 / 花呗 / 白条 / 自定义…），
+  /// 老账户没有 type 才退回 kind 的通用叫法。
+  ///
+  /// 之前写死「现金」「储蓄卡」「信用卡」，支付宝账户也顶着「储蓄卡」标签，
+  /// 信贷列的自定义账户同样顶着「信用卡」——换类型文案不跟着变。
+  String _accountTag(Pocket p) {
+    final t = pocketTypeOf(p.typeId);
+    if (t != null) return t.label;
+    return switch (p.kind) {
+      PocketKind.cash => '现金',
+      PocketKind.bank => '储蓄卡',
+      PocketKind.credit => '信用卡',
+      PocketKind.debt => '负债',
+    };
+  }
+
   Widget _accountCard(BuildContext context, _BalanceRow row, String base) {
     final p = row.pocket;
     final money = MoneyText(
@@ -616,10 +659,11 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
             children: [
               Row(
                 children: [
-                  const Icon(Icons.credit_card,
-                      size: 16, color: Colors.white70),
-                  const SizedBox(width: 6),
-                  // 账户名没有 maxLength，不限宽的话长名字会把这一行撑溢出
+                  _accountIcon(p,
+                      fallback: Icons.credit_card,
+                      size: 16,
+                      color: Colors.white70),
+                  const SizedBox(width: 6),                  // 账户名没有 maxLength，不限宽的话长名字会把这一行撑溢出
                   Expanded(
                     child: Text(p.displayName,
                         maxLines: 1,
@@ -637,9 +681,9 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                       color: Colors.white.withValues(alpha: 0.16),
                       borderRadius: BorderRadius.circular(4),
                     ),
-                    child: const Text('信用卡',
-                        style: TextStyle(fontSize: 9, color: Colors.white70)),
-                  ),
+                    child: Text(_accountTag(p),
+                        style: const TextStyle(
+                            fontSize: 9, color: Colors.white70)),                  ),
                   Text(nameOf(p.currency),
                       style:
                           const TextStyle(fontSize: 10, color: Colors.white54)),
@@ -733,8 +777,10 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                 const SizedBox(width: 12),
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 12),
-                  child: const Icon(Icons.account_balance,
-                      size: 18, color: Color(0xFF3E7BB6)),
+                  child: _accountIcon(p,
+                      fallback: Icons.account_balance,
+                      size: 18,
+                      color: const Color(0xFF3E7BB6)),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -766,8 +812,8 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                                           .withValues(alpha: 0.12),
                                       borderRadius: BorderRadius.circular(4),
                                     ),
-                                    child: const Text('储蓄卡',
-                                        style: TextStyle(
+                                    child: Text(_accountTag(p),
+                                        style: const TextStyle(
                                             fontSize: 9,
                                             color: Color(0xFF3E7BB6))),
                                   ),
@@ -809,7 +855,10 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
           ),
           child: Row(
             children: [
-              Icon(Icons.trending_down, size: 18, color: Palette.expense),
+              _accountIcon(p,
+                  fallback: Icons.trending_down,
+                  size: 18,
+                  color: Palette.expense),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(
@@ -832,7 +881,7 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                             color: Palette.expense.withValues(alpha: 0.14),
                             borderRadius: BorderRadius.circular(4),
                           ),
-                          child: Text('负债',
+                          child: Text(_accountTag(p),
                               style: TextStyle(
                                   fontSize: 9, color: Palette.expense)),
                         ),
@@ -866,7 +915,14 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
         ),
         child: Row(
           children: [
-            AppGlyph(p.glyph, size: 16),
+            // 现金没有特征图标，emoji 走 AppGlyph；自定义图片则按圆角方块裁一次，
+            // 否则 16px 的方图直接贴上去显得毛边、和别的账户卡不齐。
+            IconService.isImage(p.glyph)
+                ? _accountIcon(p,
+                    fallback: Icons.payments_outlined,
+                    size: 16,
+                    color: Palette.inkSoft(context))
+                : AppGlyph(p.glyph, size: 16),
             const SizedBox(width: 10),
             Expanded(
               child: Row(
@@ -879,7 +935,7 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                             fontSize: 13.5, fontWeight: FontWeight.w500)),
                   ),
                   const SizedBox(width: 5),
-                  Text('现金',
+                  Text(_accountTag(p),
                       style: TextStyle(
                           fontSize: 9.5, color: Palette.inkFaint(context))),
                 ],
