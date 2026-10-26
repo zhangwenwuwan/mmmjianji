@@ -1,0 +1,36 @@
+name: jianji
+description: "简记 —— 本地优先的个人记账应用"
+publish_to: 'none'
+version: 1.4.15+54
+
+environment:
+  sdk: ^3.6.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  flutter_riverpod: ^2.6.1
+  sqflite: ^2.3.3
+  path: ^1.9.0
+  shared_preferences: ^2.3.2
+  share_plus: ^10.1.4
+  intl: any
+  image_picker: ^1.2.4
+  local_auth: ^2.3.0
+  file_picker: ^11.0.3
+  flutter_local_notifications: ^22.3.2
+  path_provider: ^2.1.6
+  timezone: ^0.11.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  sqflite_common_ffi: ^2.3.3
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/licenses/
