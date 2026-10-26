@@ -1,0 +1,185 @@
+{
+  "app": "jianji",
+  "schema": 16,
+  "exportedAt": "2026-10-26T21:41:50.913901",
+  "source": "beecount",
+  "books": [
+    {
+      "id": 1,
+      "title": "我的账本",
+      "glyph": "📒",
+      "base_currency": "CNY",
+      "rank": 0
+    }
+  ],
+  "pockets": [
+    {
+      "id": 10,
+      "book_id": 1,
+      "title": "现金",
+      "glyph": "💵",
+      "kind": "cash",
+      "currency": "CNY",
+      "opening_cents": 10050,
+      "rank": 0,
+      "archived": 0,
+      "credit_limit_cents": 0,
+      "billing_day": null,
+      "payment_due_day": null,
+      "note": "",
+      "type": ""
+    },
+    {
+      "id": 11,
+      "book_id": 1,
+      "title": "招行储蓄卡",
+      "glyph": "🏦",
+      "kind": "bank",
+      "currency": "CNY",
+      "opening_cents": 250000,
+      "rank": 1,
+      "archived": 0,
+      "credit_limit_cents": 0,
+      "billing_day": null,
+      "payment_due_day": null,
+      "note": "",
+      "type": ""
+    },
+    {
+      "id": 12,
+      "book_id": 1,
+      "title": "招行信用卡",
+      "glyph": "💳",
+      "kind": "credit",
+      "currency": "CNY",
+      "opening_cents": 80000,
+      "rank": 2,
+      "archived": 0,
+      "credit_limit_cents": 2000000,
+      "billing_day": 5,
+      "payment_due_day": 23,
+      "note": "",
+      "type": ""
+    }
+  ],
+  "buckets": [
+    {
+      "id": 1,
+      "book_id": 1,
+      "title": "餐饮",
+      "glyph": "🍜",
+      "flow": "out",
+      "rank": 0,
+      "archived": 0,
+      "parent_id": null
+    },
+    {
+      "id": 2,
+      "book_id": 1,
+      "title": "外卖",
+      "glyph": "🛍️",
+      "flow": "out",
+      "rank": 0,
+      "archived": 0,
+      "parent_id": 1
+    },
+    {
+      "id": 3,
+      "book_id": 1,
+      "title": "工资",
+      "glyph": "💰",
+      "flow": "in",
+      "rank": 1,
+      "archived": 0,
+      "parent_id": null
+    }
+  ],
+  "entries": [
+    {
+      "id": 1000,
+      "book_id": 1,
+      "pocket_id": 10,
+      "to_pocket_id": null,
+      "bucket_id": 2,
+      "flow": "out",
+      "amount_cents": 3250,
+      "memo": "午饭",
+      "day": "2026-10-24",
+      "tags": "",
+      "reimburse": 0,
+      "mood": 0,
+      "fee_cents": 0,
+      "discount_cents": 0,
+      "exclude_from_stats": 0,
+      "exclude_from_budget": 0,
+      "currency": "CNY",
+      "to_amount_cents": null,
+      "refund_of_id": null,
+      "deleted_at": null,
+      "created_at": "2026-10-24T12:00:00.000"
+    },
+    {
+      "id": 1001,
+      "book_id": 1,
+      "pocket_id": 11,
+      "to_pocket_id": 10,
+      "bucket_id": null,
+      "flow": "transfer",
+      "amount_cents": 50000,
+      "memo": "取现",
+      "day": "2026-10-25",
+      "tags": "",
+      "reimburse": 0,
+      "mood": 0,
+      "fee_cents": 0,
+      "discount_cents": 0,
+      "exclude_from_stats": 0,
+      "exclude_from_budget": 0,
+      "currency": null,
+      "to_amount_cents": null,
+      "refund_of_id": null,
+      "deleted_at": null,
+      "created_at": "2026-10-25T09:00:00.000"
+    }
+  ],
+  "budgets": [
+    {
+      "month": "2026-10",
+      "book_id": 1,
+      "amount_cents": 500000
+    }
+  ],
+  "bucketBudgets": [],
+  "debts": [
+    {
+      "id": 7,
+      "book_id": 1,
+      "direction": "borrow",
+      "counterparty": "招商银行",
+      "channel": "bank",
+      "principal_cents": 5000000,
+      "currency": "CNY",
+      "borrowed_on": "2025-10-01",
+      "due_on": "2026-10-01",
+      "note": "装修贷",
+      "interest_rate": 4.35,
+      "closed": 0,
+      "created_at": "2025-10-01T00:00:00.000"
+    }
+  ],
+  "debtPayments": [
+    {
+      "id": 1,
+      "book_id": 1,
+      "debt_id": 7,
+      "amount_cents": 216600,
+      "paid_on": "2026-09-05",
+      "note": ""
+    }
+  ],
+  "wishes": [],
+  "rates": [],
+  "goals": [],
+  "recurring": [],
+  "monthNotes": []
+}
