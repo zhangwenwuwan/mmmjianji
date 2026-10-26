@@ -1,7 +1,18 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+// release 签名配置：读 android/key.properties（含 keystore 路径/别名/密码）。
+// 这个文件不进版本库；丢了它 = release 包签不了名。
+val keystorePropertiesFile = rootProject.file("key.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+    FileInputStream(keystorePropertiesFile).use { keystoreProperties.load(it) }
 }
 
 android {
@@ -16,8 +27,26 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    signingConfigs {
+        create("release") {
+            // 【硬要求】没有 key.properties 就直接报错，**绝不静默退回 debug 签名**。
+            // debug 签名的 release 包能装、能跑、UI 完全看不出区别，
+            // 直到某天想覆盖升级时才发现「装不上」（签名不一致），那时已经晚了。
+            // 2026-10-26 之前的包全是用 debug key 签的，就是吃了这个亏。
+            if (!keystorePropertiesFile.exists()) {
+                throw GradleException(
+                    "缺少 android/key.properties —— release 包必须用 jianji-release.jks 签名。" +
+                        " 见交接清单「签名」一节。"
+                )
+            }
+            storeFile = file(keystoreProperties.getProperty("storeFile"))
+            storePassword = keystoreProperties.getProperty("storePassword")
+            keyAlias = keystoreProperties.getProperty("keyAlias")
+            keyPassword = keystoreProperties.getProperty("keyPassword")
+        }
+    }
+
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.jianji.ledger"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
@@ -29,9 +58,8 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // 正式签名（jianji-release.jks）。**不要再改回 debug**。
+            signingConfig = signingConfigs.getByName("release")
 
             // ⚠️ 必须关掉 R8 收缩/混淆（2026-10-23 实测，别顺手打开）
             //

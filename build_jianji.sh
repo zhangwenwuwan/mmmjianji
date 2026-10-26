@@ -72,6 +72,19 @@ cp "$SRC/android/app/build.gradle.kts" "$BC/android/app/build.gradle.kts"
 # 结果打出来的包仍是 FlutterActivity → local_auth 抛 no_fragment_activity，
 # 指纹/面容"按了没反应"，且 UI 上完全看不出来。
 cp -rf "$SRC/android/app/src/." "$BC/android/app/src/"
+
+# 签名文件也要同步（release 用 jianji-release.jks + key.properties）。
+# ⚠️ 漏同步 = 构建副本里读不到 key.properties → gradle 直接失败（这是好事，
+#    2026-10-26 之前不失败是因为脚本静默退回 debug 签名，包能装能跑、UI 看不出，
+#    等要覆盖升级时才发现签名对不上）。两个文件都不进版本库，需另行备份。
+if [[ -f "$SRC/android/key.properties" && -f "$SRC/android/jianji-release.jks" ]]; then
+  cp "$SRC/android/jianji-release.jks" "$BC/android/jianji-release.jks"
+  cp "$SRC/android/key.properties" "$BC/android/key.properties"
+else
+  echo "⚠️  未找到 android/key.properties 或 android/jianji-release.jks"
+  echo "    release 构建会在 gradle 阶段报错（不会退回 debug 签名）。"
+fi
+
 mkdir -p "$BC/test"
 cp -rf "$SRC/test/." "$BC/test/"
 echo "[2/5] 源码同步完成"
@@ -203,6 +216,30 @@ else
 fi
 cp "$SRC_APK" "$OUT"
 echo "[6/6] 已产出 $OUT"
+
+# 6.5) 签名硬校验：release 必须是 jianji-release.jks 签的
+#
+# 为什么必须有这一步：签错的包**能装、能跑、UI 完全看不出来**，
+# 唯一的表现是「将来想覆盖升级时装不上」（INSTALL_FAILED_UPDATE_INCOMPATIBLE）。
+# 2026-10-26 之前所有 release 都是 debug 签名，就是这么被发现得太晚的。
+if [[ "$BUILD_TYPE" == "release" ]]; then
+  APKSIGNER="$(ls -d "${ANDROID_HOME:-/c/src/android-sdk}"/build-tools/*/apksigner.bat 2>/dev/null | sort -V | tail -1)"
+  # jianji-release.jks（DN=CN=JianJi）的 SHA-1，小写无冒号
+  WANT="95f4c153483dfa1618a2ec993e8a0fbab7580d5d"
+  if [[ -z "$APKSIGNER" ]]; then
+    echo "⚠️  找不到 apksigner，跳过签名校验（请手动核对 SHA-1 $WANT）"
+  else
+    GOT="$("$APKSIGNER" verify --print-certs "$OUT" 2>/dev/null \
+      | grep -i "SHA-1 digest" | head -1 \
+      | sed -E 's/.*digest:[[:space:]]*//' | tr -d ':' | tr 'A-F' 'a-f')"
+    if [[ "$GOT" != "$WANT" ]]; then
+      echo "❌ 签名不对！期望 jianji-release.jks ($WANT)，实际『$GOT』"
+      echo "   检查 android/key.properties 与 android/jianji-release.jks 是否到位。"
+      exit 1
+    fi
+    echo "✅ 签名校验通过：jianji-release.jks / SHA-1 $GOT"
+  fi
+fi
 echo
 echo "下一步必做（装真机后）："
 echo "  adb install -r jianji${VER}-arm64.apk"
