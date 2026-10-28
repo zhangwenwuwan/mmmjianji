@@ -1,12 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Modify this file to customize your launch splash screen -->
+<!-- 同 drawable/launch_background.xml（v21 起）：整屏深色，与 Flutter 启动幕同色。
+     原来用 `?android:colorBackground`，在浅色主题下就是白的 —— 白屏的来源。 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="?android:colorBackground" />
-
-    <!-- You can insert your own image assets here -->
-    <!-- <item>
-        <bitmap
-            android:gravity="center"
-            android:src="@mipmap/launch_image" />
-    </item> -->
+    <item android:drawable="@color/boot_scrim" />
 </layer-list>

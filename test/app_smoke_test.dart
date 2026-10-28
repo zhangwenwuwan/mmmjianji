@@ -33,19 +33,23 @@ void main() {
     }
   }
 
-  /// 走完真实启动链路：读偏好 → 启动页最短展示 560ms → 交叉淡入 320ms。
+  /// 走完真实启动链路：读偏好 → 启动幕（呼吸 600ms + 张开 700ms）。
   ///
   /// 这段路径上有两类等待，混着处理会卡住：
-  /// - SharedPreferences 是平台通道，假时钟推不动它 → 只能用 runAsync 真的等；
-  ///   而它 await 之后的续体脱离了假时钟区，续体里的 Future.delayed(560ms)
-  ///   也就成了真实定时器，同样只能真的等。
-  /// - 淡入是动画，得 pump(时长) 把假时钟推过去。
+  /// - SharedPreferences 是平台通道，假时钟推不动它 → 只能用 runAsync 真的等。
+  /// - 幕的呼吸/张开是动画，得 pump(时长) 把假时钟推过去，
+  ///   两段加起来 1300ms（见 ui/splash_page.dart 的 kBootBreath / kBootOpen），
+  ///   推不够就停在"幕还没开、首页还没插进来"的半路。
   /// 所以这里两边都推：runAsync 走真实时间，pump(时长) 推进画。
   Future<void> boot(WidgetTester tester) async {
     for (var i = 0; i < 10; i++) {
       await tester.runAsync(
           () => Future<void>.delayed(const Duration(milliseconds: 80)));
       await tester.pump(const Duration(milliseconds: 80));
+    }
+    // 幕：呼吸 600 + 张开 700，留足余量
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
     }
     await tester.pump(const Duration(milliseconds: 400));
   }
@@ -55,13 +59,20 @@ void main() {
     await tester.pump();
 
     expect(tester.takeException(), isNull, reason: '首帧 build 不应抛异常');
-    // 首帧是启动页——它本身就是「不 await 任何插件」的静态画面，
+    // 首帧是启动幕——它本身就是「不 await 任何插件」的画面，
     // 所以这一帧能出来，就说明启动路径上没有任何 await 卡着。
-    expect(find.byKey(const ValueKey('splash')), findsOneWidget);
+    // 首页要等幕开始张开才插进来（Key 见 main.dart 的 boot-curtain）。
+    expect(find.byKey(const ValueKey('boot-curtain')), findsOneWidget);
+    expect(find.byKey(const ValueKey('boot-target')), findsNothing);
 
     await boot(tester);
     expect(tester.takeException(), isNull, reason: '进主界面不应抛异常');
     expect(find.text('首页'), findsWidgets);
+    // 幕只演一次，演完必须摘掉。
+    // ⚠️ 这条是在钉 Stack 的 key：首页是幕开始张开时才插进来的，
+    // 两个 child 没各自带 key 的话，Flutter 按下标配对会把幕的 State 顶掉重建，
+    // 呼吸从头再来一轮 —— 表现是启动动画永远差一拍、总时长翻倍。
+    expect(find.byKey(const ValueKey('boot-curtain')), findsNothing);
   });
 
   testWidgets('四个 tab 都能建树且不抛异常（日历已移到首页右上角）', (tester) async {
@@ -76,7 +87,11 @@ void main() {
     for (final label in ['统计', '资产', '我的']) {
       await tester.tap(find.text(label).last);
       await tester.pump();
-      await settle(tester, rounds: 4);
+      // ⚠️ 轮数要给够：资产页首帧会把「近 6 个月净值（netWorthDaily，循环 6 次
+      // 全表聚合）」和「月序列（entriesOfMonth）」一起拉起来，sqflite 每个查询
+      // 挂着 10s 事务定时器。只等 4 轮时这两条常常跑不完 → 测试结束时断言
+      // "A Timer is still pending"（不是崩溃，是等待不够）。
+      await settle(tester, rounds: 10);
       expect(tester.takeException(), isNull, reason: '切到 $label 不应抛异常');
     }
 

@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Modify this file to customize your launch splash screen -->
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="@android:color/white" />
+<!-- 启动窗口背景：整屏深色（色值见 values/colors.xml 的 boot_scrim）。
 
-    <!-- You can insert your own image assets here -->
-    <!-- <item>
-        <bitmap
-            android:gravity="center"
-            android:src="@mipmap/launch_image" />
-    </item> -->
+     原来这里是 `@android:color/white`：冷启动先闪一下白屏，再跳到 Flutter
+     画的启动幕 —— 那一下就是"白屏"。现在和启动幕同色，
+     原生窗口 → Flutter 首帧是一次无缝交接。
+
+     ⚠️ 这里**故意不放 logo**：原生那张是固定尺寸、Flutter 那张带呼吸动效，
+     两者位置对不齐，交接时会看到 Logo 跳一下。Logo 只由 Flutter 画。 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/boot_scrim" />
 </layer-list>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 启动窗口底色（**亮色**）。必须和 lib/ui/splash_page.dart 里的
+         kBootScrimLight 完全一致：冷启动时先看到的是原生窗口背景
+         （Flutter 首帧之前），首帧之后换成 Flutter 画的启动幕。
+         两个色值不一样就是一次闪色，在弱光环境尤其明显。改一个就得改另一个。
+
+         暗色那一套在 values-night/colors.xml（#101614）——
+         系统深色模式下先闪一块浅色，比什么都刺眼。 -->
+    <color name="boot_scrim">#FFE7F1ED</color>
+</resources>

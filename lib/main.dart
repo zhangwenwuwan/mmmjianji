@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'services/app_log.dart';
 import 'services/reminder_service.dart';
 import 'state/settings.dart';
+import 'ui/boot_reveal.dart';
 import 'ui/shell.dart';
 import 'ui/splash_page.dart';
 import 'ui/theme.dart';
@@ -39,9 +40,13 @@ class JianjiApp extends ConsumerWidget {
       title: '简记',
       debugShowCheckedModeBanner: false,
       theme: buildTheme(Brightness.light,
-          paletteId: settings.paletteId, seedOverride: seed),
+          paletteId: settings.paletteId,
+          seedOverride: seed,
+          fontStyle: settings.fontStyle),
       darkTheme: buildTheme(Brightness.dark,
-          paletteId: settings.paletteId, seedOverride: seed),
+          paletteId: settings.paletteId,
+          seedOverride: seed,
+          fontStyle: settings.fontStyle),
       themeMode: settings.themeMode,
       // 字体缩放走 MediaQuery，比改 textTheme 更可靠（所有文字一起缩）
       builder: (context, child) => MediaQuery.withClampedTextScaling(
@@ -61,10 +66,16 @@ class JianjiApp extends ConsumerWidget {
   }
 }
 
-/// 启动闸门：启动页 → （首次）欢迎引导 → 主界面。
+/// 启动闸门：启动幕 → （首次）欢迎引导 → 主界面。
 ///
-/// 启动页本身不 await 任何插件，所以首帧立刻可见；
+/// 启动幕本身不 await 任何插件，所以首帧立刻可见；
 /// 「是否首次」在后台读，读到了再切，绝不会卡在启动页。
+///
+/// 2026-10-26：启动改成「开幕」——
+/// 幕和首页同时挂在 [Stack] 里，幕在上面。呼吸 600ms 后 [SplashCurtain]
+/// 回调 onOpenStart，这时才把首页插到幕底下（首页取数据的时间因此和
+/// 「幕张开」的 700ms 重叠，露出来的时候基本已经就绪）；
+/// 幕张开到一半时，首页各块按 boot_reveal 的时间线依次浮上来。
 class RootGate extends StatefulWidget {
   const RootGate({super.key});
 
@@ -75,7 +86,18 @@ class RootGate extends StatefulWidget {
 class _RootGateState extends State<RootGate> {
   static const _kOnboarded = 'onboarded_v1';
 
+  /// 首页内容开始浮上来的时刻：呼吸 600ms + 幕张开 350ms。
+  ///
+  /// 用绝对时刻而不是「从现在起 delay」，因为各块是数据驱动陆续创建的，
+  /// 晚创建 400ms 的那一块不该再从头排一次队。
+  late final BootRevealTimeline _timeline = BootRevealTimeline(
+    startAt: DateTime.now().add(kBootBreath + kBootContentDelay),
+  );
+
   bool _showSplash = true;
+
+  /// 首页是否已经插到幕底下（幕开始张开时才插）。
+  bool _targetIn = false;
 
   /// 默认 true：万一读偏好失败，也不要每次都弹欢迎页
   bool _onboarded = true;
@@ -91,13 +113,8 @@ class _RootGateState extends State<RootGate> {
       } catch (e) {
         AppLog.warn('boot', '读取引导状态失败: $e');
       }
-      // 让启动页至少露一下，避免一闪而过
-      await Future<void>.delayed(const Duration(milliseconds: 560));
       if (!mounted) return;
-      setState(() {
-        _onboarded = onboarded;
-        _showSplash = false;
-      });
+      setState(() => _onboarded = onboarded);
     });
   }
 
@@ -112,20 +129,40 @@ class _RootGateState extends State<RootGate> {
 
   @override
   Widget build(BuildContext context) {
-    final Widget child;
-    if (_showSplash) {
-      child = const SplashPage(key: ValueKey('splash'));
-    } else if (!_onboarded) {
-      child =
-          WelcomePage(key: const ValueKey('welcome'), onDone: _finishWelcome);
-    } else {
-      child = const Shell(key: ValueKey('shell'));
-    }
-    // 两个页面都不透明，交叉淡入不会露出底色
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 320),
-      switchInCurve: Curves.easeOut,
-      child: child,
+    final Widget target = _onboarded
+        ? const Shell(key: ValueKey('shell'))
+        : WelcomePage(key: const ValueKey('welcome'), onDone: _finishWelcome);
+
+    // ⚠️ 两个 child 必须各自带 key：
+    // 首页是在幕开始张开时才插入的，插进来之后幕在 children 里从下标 0 变成 1。
+    // 不给 key 的话 Flutter 按下标配对，会以为下标 0 从「幕」变成了「首页」，
+    // 直接把幕的 State 扔掉重建 —— 幕张开到一半会瞬间归零、闪一下首页。
+    return BootRevealScope(
+      timeline: _timeline,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (_targetIn)
+            Positioned.fill(
+              key: const ValueKey('boot-target'),
+              child: target,
+            ),
+          if (_showSplash)
+            Positioned.fill(
+              key: const ValueKey('boot-curtain'),
+              child: SplashCurtain(
+                onOpenStart: () {
+                  if (mounted) setState(() => _targetIn = true);
+                },
+                onDone: () {
+                  // 启动这一轮结束了：之后新建的内容块不再排队浮入
+                  _timeline.active = false;
+                  if (mounted) setState(() => _showSplash = false);
+                },
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

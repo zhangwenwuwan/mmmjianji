@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 亮色 + API 27~30：导航栏底色是浅薄荷，必须把系统导航栏图标转深
+     （windowLightNavigationBar = true），否则是一条白图标压在浅底上。
+     这个属性是 API 27 才有的，不能写在 values/styles.xml（minSdk 更低会编译失败）。 -->
+<resources>
+    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">@drawable/launch_background</item>
+        <item name="android:statusBarColor">@color/boot_scrim</item>
+        <item name="android:navigationBarColor">@color/boot_scrim</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+</resources>

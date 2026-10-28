@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 启动窗口底色（**暗色**）。对应 splash_page.dart 的 kBootScrimDark。
+         系统深色模式 / 夜间主题下用这一份，别让它跟着亮色一起变白。 -->
+    <color name="boot_scrim">#FF101614</color>
+</resources>

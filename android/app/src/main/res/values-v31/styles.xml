@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12（API 31）起系统会**先**弹自己的启动画面，然后才是 Flutter
+     画的那一层。不接管的话，那一层是白底 + 应用图标，冷启动照样闪白，
+     Flutter 再怎么改 launch_background 都盖不住。 -->
+<resources>
+    <!-- 亮色：底色浅，状态栏图标转深 -->
+    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">@drawable/launch_background</item>
+        <item name="android:statusBarColor">@color/boot_scrim</item>
+        <item name="android:navigationBarColor">@color/boot_scrim</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <!-- 导航栏也是浅底，图标要转深（API 27+ 属性，v31 目录里可以放心用） -->
+        <item name="android:windowLightNavigationBar">true</item>
+        <!-- 系统启动画面：底色接成启动幕的颜色，中间不放图标
+             （图标由 Flutter 那一层带呼吸动效画，放两次会重影）。 -->
+        <item name="android:windowSplashScreenBackground">@color/boot_scrim</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@null</item>
+    </style>
+</resources>
