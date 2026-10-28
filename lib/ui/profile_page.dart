@@ -101,7 +101,7 @@ class ProfilePage extends ConsumerWidget {
 
   /// 常用入口网格。清单和显隐都在 `profile_modules.dart`：
   /// 默认只显示 数据管理 / 外观与显示 / 自动化 / 导入账单 四项；
-  /// 财务洞察在统计页右上角、储蓄目标与借贷在资产页下方，
+  /// 财务洞察在统计页右上角、目标与债务在资产页上方三宫格，
   /// 都在别处有入口 —— 想留可以在齿轮里打开。
   Widget _grid(BuildContext context, Set<String> hidden) {
     final items = [

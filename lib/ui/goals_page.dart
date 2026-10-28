@@ -21,7 +21,9 @@ class GoalsPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final goalsAsync = ref.watch(goalsProvider);
     return Scaffold(
-      appBar: AppBar(title: const Text('储蓄目标')),
+      // 入口现在叫「目标」（资产页三宫格），页面标题跟着叫同一个名字，
+      // 免得用户点「目标」进来看到一页写着「储蓄目标」。
+      appBar: AppBar(title: const Text('目标')),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _edit(context, ref, null),
         child: const Icon(Icons.add),

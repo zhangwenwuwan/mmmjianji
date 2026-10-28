@@ -38,8 +38,8 @@ class ProfileModuleDef {
   /// 2026-10-25 用户两次精简后的结论：**只默认显示 4 个**
   /// （数据管理 / 外观与显示 / 自动化 / 导入账单），其余六个都收进齿轮。
   ///
-  /// 理由：财务洞察在统计页右上角、储蓄目标与借贷在
-  /// 资产页下方两栏，这些在「常用」里都是重复入口；愿望清单和预算管理属于
+  /// 理由：财务洞察在统计页右上角、目标与债务在
+  /// 资产页上方三宫格，这些在「常用」里都是重复入口；愿望清单和预算管理属于
   /// 低频功能，占着首屏反而把真正每天用的四个挤小了。
   /// 目录里仍然保留，用户在齿轮页可以随时打开。
   bool get defaultHidden => !const {
@@ -99,14 +99,14 @@ final List<ProfileModuleDef> kProfileModules = [
     label: '借贷',
     icon: Icons.account_balance_wallet_outlined,
     page: LoansPage(),
-    note: '资产页下方「债务」栏也是这里',
+    note: '资产页上方「债务」卡也是这里',
   ),
   const ProfileModuleDef(
     id: 'goals',
-    label: '储蓄目标',
+    label: '目标',
     icon: Icons.savings_outlined,
     page: GoalsPage(),
-    note: '资产页下方「理财」栏也是这里',
+    note: '资产页上方「目标」卡也是这里',
   ),
   const ProfileModuleDef(
     id: 'billImport',

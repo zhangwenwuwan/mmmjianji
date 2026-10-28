@@ -27,7 +27,7 @@ import 'theme.dart';
 /// 一行账户余额（provider 返回的记录类型）
 typedef _BalanceRow = ({Pocket pocket, int balanceCents});
 
-/// 资产：净资产 = 资产 − 负债；下面是账户卡片和储蓄目标。
+/// 资产：净资产 = 资产 − 负债；下面是快捷入口（报销/债务/目标）和账户卡片。
 ///
 /// 对齐参考版：净资产卡下面有「净资产趋势 / 资产构成」分段切换，
 /// 账户按「资产账户 / 负债账户」分组。
@@ -54,7 +54,6 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
     final settings = ref.watch(settingsProvider);
     final base = bookAsync.valueOrNull?.baseCurrency ?? 'CNY';
     final rates = ref.watch(ratesProvider).valueOrNull ?? const {};
-    final goals = ref.watch(goalsProvider).valueOrNull ?? const [];
     // 待报销（应收）：不属于任何账户余额，但要算进「手头到底有多少」
     final pendingReimburse =
         ref.watch(pendingReimburseProvider).valueOrNull ?? 0;
@@ -411,83 +410,7 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                   ],
                 ),
               ),
-              const SizedBox(height: 18),
             ],
-            SectionLabel(
-              '储蓄目标',
-              trailing: HeaderAction(
-                label: '管理',
-                onPressed: () => Navigator.of(context)
-                    .push(AppPageRoute(page: const GoalsPage())),
-              ),
-            ),
-            if (goals.isEmpty)
-              Panel(
-                child: Row(
-                  children: [
-                    Icon(Icons.flag_outlined,
-                        size: 18, color: Palette.inkFaint(context)),
-                    const SizedBox(width: 10),
-                    Text('给想买的东西攒钱',
-                        style: TextStyle(
-                            fontSize: 12, color: Palette.inkFaint(context))),
-                    const Spacer(),
-                    TextButton(
-                      onPressed: () => Navigator.of(context)
-                          .push(AppPageRoute(page: const GoalsPage())),
-                      child: const Text('新建'),
-                    ),
-                  ],
-                ),
-              )
-            else
-              Column(
-                children: [
-                  for (final g in goals.take(3)) ...[
-                    Panel(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              AppGlyph(g.glyph, size: 15),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(g.title,
-                                    style: const TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w500)),
-                              ),
-                              Text(
-                                '${(g.savedCents / (g.targetCents <= 0 ? 1 : g.targetCents) * 100).clamp(0, 100).round()}%',
-                                style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700,
-                                    color: Palette.brand(context)),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(4),
-                            child: LinearProgressIndicator(
-                              value: g.targetCents <= 0
-                                  ? 0
-                                  : (g.savedCents / g.targetCents)
-                                      .clamp(0.0, 1.0),
-                              minHeight: 6,
-                              backgroundColor: Palette.hairline(context),
-                              valueColor: AlwaysStoppedAnimation(
-                                  Palette.brand(context)),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                  ],
-                ],
-              ),
           ],
         );
       },
@@ -1422,7 +1345,7 @@ class _NetWorthCandlePainter extends CustomPainter {
       old.zeroLine != zeroLine;
 }
 
-/// 资产页快捷入口：报销 / 借贷 / 理财目标（参考版资产 tab 的三宫格）。
+/// 资产页快捷入口：报销 / 债务 / 目标（参考版资产 tab 的三宫格）。
 /// 资产页三张入口卡（对齐一木：每张带两个数字）。
 ///
 /// 一木把「报销 / 债务 / 理财」做成三张卡，各带两个关键数字
@@ -1440,7 +1363,12 @@ class _AssetQuickRow extends ConsumerWidget {
     final base =
         ref.watch(activeBookProvider).valueOrNull?.baseCurrency ?? 'CNY';
     int cv(int cents, String cur) => toBaseCents(cents, cur, base, rates);
-    String money(int cents) => hide ? '****' : '$sym${centsToText(cents)}';
+    // 每张卡只有 1/3 屏宽，完整金额（¥6,000.00）会被 ellipsis 截成「¥6,...」。
+    // 所以这里走 compact：一万以上折成「6.0万」，其余仍是完整数字。
+    String money(int cents) => hide
+        ? '****'
+        : moneyLabel(cents,
+            symbol: sym, compact: true, alwaysTwoDecimals: false);
 
     // 报销：待报销金额 + 已报销笔数
     final pending = ref.watch(pendingReimburseProvider).valueOrNull ?? 0;
@@ -1461,7 +1389,7 @@ class _AssetQuickRow extends ConsumerWidget {
       }
     }
 
-    // 理财目标：目标总额 + 已存
+    // 目标：目标总额 + 已存（底部那块重复的「储蓄目标」已删，这里是唯一入口）
     final goals = ref.watch(goalsProvider).valueOrNull ?? const [];
     final goalTotal =
         goals.fold<int>(0, (s, g) => s + cv(g.targetCents, base));
@@ -1501,7 +1429,10 @@ class _AssetQuickRow extends ConsumerWidget {
           child: _card(
             context,
             icon: Icons.savings_outlined,
-            label: '理财',
+            // 2026-10-28：原来叫「理财」，和页面底部的「储蓄目标」是同一个页面
+            // 的两个入口。底部那块已经删掉，这里就是唯一入口，直接把名字改成
+            // 用户嘴里的叫法。副标题的两个数字不动（目标总额 / 已存）。
+            label: '目标',
             top: ('目标', money(goalTotal)),
             bottom: ('已存', money(goalSaved)),
             page: const GoalsPage(),
@@ -1563,15 +1494,20 @@ class _AssetQuickRow extends ConsumerWidget {
             style: TextStyle(fontSize: 10.5, color: Palette.inkFaint(context))),
         const Spacer(),
         Flexible(
-          child: Text(
-            value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: color,
-              fontFeatures: const [FontFeature.tabularFigures()],
+          // 再长的数字也让它按比例缩一点，而不是截成「¥6,...」——
+          // 卡片宽度是固定的 1/3 屏，金额位数却不受控。
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerRight,
+            child: Text(
+              value,
+              maxLines: 1,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: color,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
             ),
           ),
         ),

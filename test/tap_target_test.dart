@@ -67,7 +67,7 @@ void main() {
           child: SizedBox(
             width: 160,
             child: SectionLabel(
-              '储蓄目标',
+              '目标',
               trailing: HeaderAction(label: '管理', onPressed: () {}),
             ),
           ),
