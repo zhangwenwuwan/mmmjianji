@@ -1483,53 +1483,142 @@ class LedgerStore {
         whereArgs: [e.id],
       );
 
+  /// 报销入账是**派生流水**：由 [reimburseTo] 从原流水生成，关系记在原流水的
+  /// `reimburse_entry_id` 上。删任何一边都必须管另一边，否则账会永久对不上：
+  ///
+  /// - 删原流水（这笔钱其实没花）→ 那笔入账收入还留在账上，余额凭空多一截；
+  /// - 删入账收入（报销记错了）→ 原流水仍是「已报销」却没有钱进来，
+  ///   点「撤回」会去删一个不存在的 id，标记永远清不掉。
+  ///
+  /// 这里只做**关系解析**，一行数据都不改，软删/硬删各自决定怎么用。
+  Future<({List<int> derived, List<int> parents})> _reimburseLinks(
+      DatabaseExecutor db, List<int> ids) async {
+    if (ids.isEmpty) return (derived: const <int>[], parents: const <int>[]);
+    final marks = List.filled(ids.length, '?').join(',');
+    final own = await db.query('entries',
+        columns: ['reimburse_entry_id'],
+        where: 'id IN ($marks)',
+        whereArgs: ids);
+    final derived = [
+      for (final r in own) r['reimburse_entry_id'] as int?,
+    ].whereType<int>().toList();
+    final rows = await db.query('entries',
+        columns: ['id'],
+        where: 'reimburse_entry_id IN ($marks)',
+        whereArgs: ids);
+    return (
+      derived: derived,
+      parents: [for (final r in rows) r['id'] as int],
+    );
+  }
+
   /// 删除流水 → 移入回收站（软删除）。
   ///
   /// ⚠️ 只把 `deleted_at` 置为当前时间，**不删附件**（附件在永久删除时才清理，
-  /// 这样撤销/恢复后凭证还在）。要真正删掉并清附件用 [purgeEntry]。
+  /// 这样撤销/恢复后凭证还在）。要真正删掉并清附件用 [purgeEntries]。
+  ///
+  /// 2026-10-28 起带报销级联：删原流水时，它派生的那笔报销收入一起进回收站
+  /// （否则余额永久多一截）；反过来删那笔派生收入时，原流水退回「待报销」。
   Future<void> deleteEntry(int id) => softDeleteEntries([id]);
 
   /// 批量删除流水 → 移入回收站（软删除，返回受影响条数）。
+  ///
+  /// 返回条数包含级联进来的派生流水 —— 界面上「已移入回收站 N 条」因此是
+  /// 用户真正看到消失的条数，不会出现「只说 1 条、结果少了两行」。
   Future<int> softDeleteEntries(List<int> ids) async {
     if (ids.isEmpty) return 0;
-    final marks = List.filled(ids.length, '?').join(',');
-    return _db.update(
-      'entries',
-      {'deleted_at': DateTime.now().toIso8601String()},
-      where: 'id IN ($marks) AND deleted_at IS NULL',
-      whereArgs: ids,
-    );
+    return _db.transaction((txn) async {
+      final links = await _reimburseLinks(txn, ids);
+      // 一起删的：请求的 + 它们派生出来的报销收入
+      final all = <int>{...ids, ...links.derived}.toList();
+      // 只有「派生收入被删、而它的原流水还留着」时才回退原流水。
+      // 两边同时删（批量勾选 / 从编辑页删一笔已报销的支出）时**不动标记**：
+      // 动了的话，从回收站恢复回来原流水会变成「待报销」，再点一次就重复入账。
+      final revert = links.parents
+          .toSet()
+          .difference({...ids, ...links.derived})
+          .toList();
+      if (revert.isNotEmpty) {
+        final m = List.filled(revert.length, '?').join(',');
+        await txn.update(
+          'entries',
+          {'reimburse': 1, 'reimburse_entry_id': null},
+          where: 'id IN ($m) AND deleted_at IS NULL',
+          whereArgs: revert,
+        );
+      }
+      final m = List.filled(all.length, '?').join(',');
+      return txn.update(
+        'entries',
+        {'deleted_at': DateTime.now().toIso8601String()},
+        where: 'id IN ($m) AND deleted_at IS NULL',
+        whereArgs: all,
+      );
+    });
   }
 
   /// 从回收站恢复一条流水（清空 deleted_at，附件一并回到原流水下）。
   Future<int> restoreEntry(int id) => restoreEntries([id]);
 
   /// 批量恢复回收站流水，返回恢复条数。
+  ///
+  /// 恢复原流水时，把当初跟着它一起进回收站的报销收入也恢复 —— 否则用户
+  /// 恢复了一笔「已报销」的支出，账上却没有那笔钱，等于凭空多记一笔支出。
   Future<int> restoreEntries(List<int> ids) async {
     if (ids.isEmpty) return 0;
-    final marks = List.filled(ids.length, '?').join(',');
-    return _db.update(
-      'entries',
-      {'deleted_at': null},
-      where: 'id IN ($marks) AND deleted_at IS NOT NULL',
-      whereArgs: ids,
-    );
+    return _db.transaction((txn) async {
+      final links = await _reimburseLinks(txn, ids);
+      final all = <int>{...ids, ...links.derived}.toList();
+      final m = List.filled(all.length, '?').join(',');
+      return txn.update(
+        'entries',
+        {'deleted_at': null},
+        where: 'id IN ($m) AND deleted_at IS NOT NULL',
+        whereArgs: all,
+      );
+    });
   }
 
   /// 永久删除一条流水 + 清理附件记录与文件（不可撤销）。
   ///
-  /// 两条 delete 必须在**同一个事务**里：先删 attachments 行、再删 entries 行，
+  /// 报销级联同 [softDeleteEntries]：原流水会把它派生的收入一起带走，
+  /// 派生收入被单独删掉时原流水退回「待报销」。
+  Future<void> purgeEntry(int id) => purgeEntries([id]);
+
+  /// 永久删除多笔流水 + 清理附件（不可撤销），返回**实际删除**条数
+  /// （含级联进来的派生流水）。
+  ///
+  /// 附件行与 entries 行必须在**同一个事务**里：先删 attachments、再删 entries，
   /// 中间被打断（进程被杀 / 磁盘满）就会留下"流水还在、凭证记录没了"的状态，
   /// 用户永远找不回那些票据。文件删除放事务外 —— 文件系统操作没法回滚，
   /// 但先删了也不影响数据一致性（文件成了孤儿，下次存储管理能看到）。
-  Future<void> purgeEntry(int id) async {
-    final paths = await _db.transaction((txn) async {
+  Future<int> purgeEntries(List<int> ids) async {
+    if (ids.isEmpty) return 0;
+    final paths = <String>[];
+    final removed = await _db.transaction((txn) async {
+      final links = await _reimburseLinks(txn, ids);
+      final all = <int>{...ids, ...links.derived}.toList();
+      final revert = links.parents
+          .toSet()
+          .difference({...ids, ...links.derived})
+          .toList();
+      if (revert.isNotEmpty) {
+        final m = List.filled(revert.length, '?').join(',');
+        await txn.update(
+          'entries',
+          {'reimburse': 1, 'reimburse_entry_id': null},
+          where: 'id IN ($m)',
+          whereArgs: revert,
+        );
+      }
+      final m = List.filled(all.length, '?').join(',');
       final rows = await txn.query('attachments',
-          columns: ['path'], where: 'entry_id = ?', whereArgs: [id]);
-      final list = [for (final r in rows) r['path'] as String];
-      await txn.delete('attachments', where: 'entry_id = ?', whereArgs: [id]);
-      await txn.delete('entries', where: 'id = ?', whereArgs: [id]);
-      return list;
+          columns: ['path'], where: 'entry_id IN ($m)', whereArgs: all);
+      paths.addAll([for (final r in rows) r['path'] as String]);
+      await txn.delete('attachments',
+          where: 'entry_id IN ($m)', whereArgs: all);
+      await txn.delete('entries', where: 'id IN ($m)', whereArgs: all);
+      return all.length;
     });
     for (final path in paths) {
       try {
@@ -1537,15 +1626,7 @@ class LedgerStore {
         if (f.existsSync()) f.deleteSync();
       } catch (_) {}
     }
-  }
-
-  /// 永久删除多笔流水 + 清理附件（不可撤销），返回删除条数。
-  Future<int> purgeEntries(List<int> ids) async {
-    if (ids.isEmpty) return 0;
-    for (final id in ids) {
-      await purgeEntry(id);
-    }
-    return ids.length;
+    return removed;
   }
 
   /// 回收站里的流水（按删除时间倒序）。无删除时间的永远不该出现在这里。

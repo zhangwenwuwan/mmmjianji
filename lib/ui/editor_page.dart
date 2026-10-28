@@ -1914,7 +1914,16 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('删除这笔记录？'),
-        content: const Text('会移入回收站，5 秒内可撤销。'),
+        // 已报销的流水删掉时，那笔自动入账的收入会一起进回收站（见 store.dart
+        // 的 softDeleteEntries）。不说清楚的话，用户只会看到「少了两行」。
+        content: Text(
+          (widget.existing?.reimburse == 2 ||
+                  widget.existing?.reimburseEntryId != null)
+              ? '会移入回收站，5 秒内可撤销。\n'
+                  '这笔已报销：当初自动记入的那笔收入会一起移进去，'
+                  '否则账户余额会多出一截。'
+              : '会移入回收站，5 秒内可撤销。',
+        ),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),

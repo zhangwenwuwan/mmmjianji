@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../data/store.dart';
 import '../state/ledger_state.dart';
 import 'common.dart';
 import 'ledger_page.dart';
@@ -72,11 +73,21 @@ class _RecycleBinPageState extends ConsumerState<RecycleBinPage> {
 
   Future<void> _purgeSelected() async {
     if (_selected.isEmpty) return;
+    // 已报销的那笔原始支出，它的「报销入账」是一条派生流水（有 reimburse_entry_id）。
+    // 永久删除时会一起删掉，不提前说一声，用户只会看到「删了 1 条、少了 2 行」。
+    final list = ref.read(recycleBinProvider).valueOrNull ?? const <Entry>[];
+    final hasLinked = list.any((e) =>
+        _selected.contains(e.id) &&
+        e.reimburseEntryId != null &&
+        !_selected.contains(e.reimburseEntryId));
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text('永久删除选中的 ${_selected.length} 条？'),
-        content: const Text('删除后无法恢复，附件也会一并清除。'),
+        content: Text(hasLinked
+            ? '删除后无法恢复，附件也会一并清除。\n'
+                '其中包含已报销的记录：当初自动记入的那笔收入会一起删除。'
+            : '删除后无法恢复，附件也会一并清除。'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
@@ -90,7 +101,8 @@ class _RecycleBinPageState extends ConsumerState<RecycleBinPage> {
     );
     if (ok != true) return;
     final store = await ref.read(storeProvider.future);
-    await store.purgeEntries(_selected.toList());
+    // 用返回的**实际删除条数**（含级联），不要用 _selected.length
+    final n = await store.purgeEntries(_selected.toList());
     bumpRevision(ref);
     if (!mounted) return;
     setState(() {
@@ -98,7 +110,7 @@ class _RecycleBinPageState extends ConsumerState<RecycleBinPage> {
       _selected.clear();
     });
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('已永久删除')),
+      SnackBar(content: Text('已永久删除 $n 条')),
     );
   }
 
