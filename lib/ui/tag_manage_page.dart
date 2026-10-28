@@ -26,7 +26,7 @@ class TagManagePage extends ConsumerWidget {
                 title: '还没有标签',
                 hint: '记账时在「备注与标签」里填，逗号分隔')
             : ListView(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
                 children: [
                   Panel(
                     padding: EdgeInsets.zero,
@@ -39,9 +39,9 @@ class TagManagePage extends ConsumerWidget {
                                 size: 18, color: Palette.brand(context)),
                             title: Text('#${list[i].tag}'),
                             subtitle: Text('${list[i].count} 笔',
-                                style: const TextStyle(fontSize: 11)),
+                                style: const TextStyle(fontSize: 12)),
                             trailing: PopupMenuButton<String>(
-                              icon: const Icon(Icons.more_horiz, size: 20),
+                              icon: const Icon(Icons.more_horiz, size: 18),
                               onSelected: (v) async {
                                 if (v == 'rename') {
                                   await _rename(context, ref, list[i].tag);
@@ -68,7 +68,7 @@ class TagManagePage extends ConsumerWidget {
                   const SizedBox(height: 10),
                   Text('改名会批量改写已有流水的标签；删除只是把标签摘掉，流水不动。',
                       style: TextStyle(
-                          fontSize: 11, color: Palette.inkFaint(context))),
+                          fontSize: 12, color: Palette.inkFaint(context))),
                 ],
               ),
       ),
@@ -151,7 +151,7 @@ class TagEntriesPage extends ConsumerWidget {
         data: (entries) => entries.isEmpty
             ? const EmptyView(icon: Icons.sell_outlined, title: '这个标签下没有流水')
             : ListView(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
                 children: [
                   Panel(
                     padding: EdgeInsets.zero,

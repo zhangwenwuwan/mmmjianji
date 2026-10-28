@@ -47,7 +47,7 @@ class BudgetPage extends ConsumerWidget {
           IconButton(
             tooltip: '结转规则',
             onPressed: () => _budgetRules(context, ref),
-            icon: const Icon(Icons.rule, size: 20),
+            icon: const Icon(Icons.rule, size: 18),
           ),
         ],
       ),
@@ -62,7 +62,7 @@ class BudgetPage extends ConsumerWidget {
           ),
           Expanded(
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 6, 16, 96),
+              padding: const EdgeInsets.fromLTRB(12, 6, 12, 96),
               children: [
                 Panel(
                   child: progress.configured
@@ -159,7 +159,7 @@ class BudgetPage extends ConsumerWidget {
                       child: Text(
                         '上个月没设预算时，一个月都不会结转，也不会倒扣。',
                         style: TextStyle(
-                            fontSize: 11.5,
+                            fontSize: 12,
                             height: 1.5,
                             color: Palette.inkFaint(context)),
                       ),
@@ -251,7 +251,7 @@ class _BudgetStatus extends StatelessWidget {
                 softWrap: false,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 30,
+                  fontSize: 28,
                   fontWeight: FontWeight.w700,
                   color: progress.overflow
                       ? Palette.expense
@@ -429,14 +429,14 @@ class _BucketBudgetRow extends ConsumerWidget {
                     children: [
                       Text(bucket.title,
                           style: const TextStyle(
-                              fontSize: 13.5, fontWeight: FontWeight.w500)),
+                              fontSize: 14, fontWeight: FontWeight.w500)),
                       const Spacer(),
                       Text(
                         configured
                             ? '$symbol${(spentCents / 100).toStringAsFixed(0)} / $symbol${(budgetCents / 100).toStringAsFixed(0)}'
                             : '未设预算',
                         style: TextStyle(
-                          fontSize: 11.5,
+                          fontSize: 12,
                           fontWeight:
                               configured ? FontWeight.w600 : FontWeight.w400,
                           color: over
@@ -526,9 +526,9 @@ class _CarryNote extends StatelessWidget {
             children: [
               Text('基础预算',
                   style: TextStyle(
-                      fontSize: 12.5, color: Palette.inkSoft(context))),
+                      fontSize: 13, color: Palette.inkSoft(context))),
               const Spacer(),
-              Text(_money(base), style: const TextStyle(fontSize: 12.5)),
+              Text(_money(base), style: const TextStyle(fontSize: 13)),
             ],
           ),
           const SizedBox(height: 6),
@@ -536,13 +536,13 @@ class _CarryNote extends StatelessWidget {
             children: [
               Text(carry >= 0 ? '上月结转' : '上月超支',
                   style: TextStyle(
-                      fontSize: 12.5, color: Palette.inkSoft(context))),
+                      fontSize: 13, color: Palette.inkSoft(context))),
               const Spacer(),
               Text(
                 // 负数用「−」而不是「-」，和正数宽度对齐，扫一眼就知道方向
                 '${carry >= 0 ? '+' : '−'}${_money(carry)}',
                 style: TextStyle(
-                  fontSize: 12.5,
+                  fontSize: 13,
                   fontWeight: FontWeight.w600,
                   color: carry >= 0 ? Palette.income : Palette.expense,
                 ),
@@ -557,14 +557,14 @@ class _CarryNote extends StatelessWidget {
             children: [
               Text('本期可用',
                   style: TextStyle(
-                      fontSize: 12.5,
+                      fontSize: 13,
                       fontWeight: FontWeight.w600,
                       color: Palette.ink(context))),
               const Spacer(),
               Text(
                 _money(effective),
                 style: TextStyle(
-                    fontSize: 13.5, fontWeight: FontWeight.w700, color: brand),
+                    fontSize: 14, fontWeight: FontWeight.w700, color: brand),
               ),
             ],
           ),
@@ -572,7 +572,7 @@ class _CarryNote extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
               '上期超支已扣完本期预算，还差 ${_money(over)}',
-              style: TextStyle(fontSize: 11, color: Palette.expense),
+              style: TextStyle(fontSize: 12, color: Palette.expense),
             ),
           ],
         ],

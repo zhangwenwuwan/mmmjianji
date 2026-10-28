@@ -219,7 +219,7 @@ class _RecycleBinPageState extends ConsumerState<RecycleBinPage> {
                       child: Text(
                         '共 ${list.length} 条 · 恢复后回到原账户与分类，附件一并恢复',
                         style: TextStyle(
-                            fontSize: 11.5, color: Palette.inkSoft(context)),
+                            fontSize: 12, color: Palette.inkSoft(context)),
                       ),
                     ),
                   ],
@@ -227,7 +227,7 @@ class _RecycleBinPageState extends ConsumerState<RecycleBinPage> {
               ),
               Expanded(
                 child: ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(16, 6, 16, 24),
+                  padding: const EdgeInsets.fromLTRB(12, 6, 12, 24),
                   itemCount: list.length,
                   itemBuilder: (context, i) {
                     final e = list[i];

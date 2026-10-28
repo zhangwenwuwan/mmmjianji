@@ -174,7 +174,7 @@ class _WheelDateSheetState extends State<WheelDateSheet> {
                   child: Text(
                     widget.title ?? '选择日期',
                     style: TextStyle(
-                        fontSize: 12.5,
+                        fontSize: 13,
                         fontWeight: FontWeight.w600,
                         color: brand),
                   ),
@@ -184,7 +184,7 @@ class _WheelDateSheetState extends State<WheelDateSheet> {
                       ? '$_year 年 $_month 月 $_day 日'
                       : '$_year 年 $_month 月',
                   style: TextStyle(
-                      fontSize: 12.5, fontWeight: FontWeight.w700, color: brand),
+                      fontSize: 13, fontWeight: FontWeight.w700, color: brand),
                 ),
               ],
             ),
@@ -319,7 +319,7 @@ class _WheelColumn extends StatelessWidget {
           child: Text(
             labelBuilder(i),
             style: TextStyle(
-              fontSize: 14.5,
+              fontSize: 14,
               height: 1.2,
               fontWeight: sel ? FontWeight.w700 : FontWeight.w400,
               color: sel ? brand : faint,
@@ -425,14 +425,14 @@ class _YearSheetState extends State<_YearSheet> {
                   child: Text(
                     widget.title ?? '选择年份',
                     style: TextStyle(
-                        fontSize: 12.5,
+                        fontSize: 13,
                         fontWeight: FontWeight.w600,
                         color: brand),
                   ),
                 ),
                 Text('$_year 年',
                     style: TextStyle(
-                        fontSize: 12.5,
+                        fontSize: 13,
                         fontWeight: FontWeight.w700,
                         color: brand)),
               ],

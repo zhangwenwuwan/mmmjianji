@@ -36,7 +36,7 @@ class AboutPage extends ConsumerWidget {
                 const SizedBox(height: 8),
                 Text('简记',
                     style: TextStyle(
-                      fontSize: 18,
+                      fontSize: 17,
                       fontWeight: FontWeight.w700,
                       color: Palette.ink(context),
                     )),
@@ -101,7 +101,7 @@ class AboutPage extends ConsumerWidget {
                   '应用私有目录下的本地数据库，卸载应用会一并删除。'
                   '自动备份写在应用备份目录里，保留最近 5 份。',
                   style: TextStyle(
-                    fontSize: 12.5,
+                    fontSize: 13,
                     height: 1.6,
                     color: Palette.inkFaint(context),
                   ),
@@ -114,7 +114,7 @@ class AboutPage extends ConsumerWidget {
             child: Text('简记 · 本地优先',
                 textAlign: TextAlign.center,
                 style:
-                    TextStyle(fontSize: 11, color: Palette.inkFaint(context))),
+                    TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
           ),
         ],
       ),
@@ -130,9 +130,9 @@ class AboutPage extends ConsumerWidget {
     VoidCallback? onTap,
   }) {
     return ListTile(
-      leading: Icon(icon, size: 20),
-      title: Text(title, style: const TextStyle(fontSize: 13.5)),
-      subtitle: Text(subtitle, style: const TextStyle(fontSize: 11)),
+      leading: Icon(icon, size: 18),
+      title: Text(title, style: const TextStyle(fontSize: 14)),
+      subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
       trailing: trailing,
       onTap: onTap,
     );

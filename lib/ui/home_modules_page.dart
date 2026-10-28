@@ -44,13 +44,13 @@ class _HomeModulesPageState extends ConsumerState<HomeModulesPage> {
             child: Row(
               children: [
                 Icon(Icons.drag_indicator,
-                    size: 15, color: Palette.inkFaint(context)),
+                    size: 16, color: Palette.inkFaint(context)),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     '按住右侧手柄拖动排序；关掉的模块不会出现在首页',
                     style: TextStyle(
-                        fontSize: 11.5, color: Palette.inkFaint(context)),
+                        fontSize: 12, color: Palette.inkFaint(context)),
                   ),
                 ),
               ],
@@ -58,7 +58,7 @@ class _HomeModulesPageState extends ConsumerState<HomeModulesPage> {
           ),
           Expanded(
             child: ReorderableListView.builder(
-              padding: const EdgeInsets.fromLTRB(16, 6, 16, 32),
+              padding: const EdgeInsets.fromLTRB(12, 6, 12, 32),
               itemCount: order.length,
               buildDefaultDragHandles: false,
               // onReorderItem 已经把"移除旧项后"的索引算好了，
@@ -85,7 +85,7 @@ class _HomeModulesPageState extends ConsumerState<HomeModulesPage> {
                               : Palette.inkFaint(context)),
                       title: Text(m.label,
                           style: TextStyle(
-                            fontSize: 14.5,
+                            fontSize: 14,
                             fontWeight: FontWeight.w600,
                             color: on
                                 ? Palette.ink(context)
@@ -94,7 +94,7 @@ class _HomeModulesPageState extends ConsumerState<HomeModulesPage> {
                       subtitle: Text(
                         m.canHide ? m.hint : '${m.hint} · 固定显示',
                         style: TextStyle(
-                            fontSize: 11.5, color: Palette.inkFaint(context)),
+                            fontSize: 12, color: Palette.inkFaint(context)),
                       ),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -123,7 +123,7 @@ class _HomeModulesPageState extends ConsumerState<HomeModulesPage> {
                                 padding:
                                     const EdgeInsets.only(left: 2, right: 4),
                                 child: Icon(Icons.drag_handle,
-                                    size: 22, color: Palette.inkFaint(context)),
+                                    size: 18, color: Palette.inkFaint(context)),
                               ),
                             ),
                         ],

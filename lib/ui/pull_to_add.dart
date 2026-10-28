@@ -152,7 +152,7 @@ class _PullHint extends StatelessWidget {
           Text(
             armed ? '松开手指，记一笔' : '继续下拉，记一笔',
             style: TextStyle(
-              fontSize: 11.5,
+              fontSize: 12,
               fontWeight: FontWeight.w600,
               color: Theme.of(context).colorScheme.onPrimary,
             ),

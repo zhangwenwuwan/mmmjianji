@@ -95,7 +95,7 @@ class _LogCenterPageState extends ConsumerState<LogCenterPage> {
                         hint: errCount == 0 ? '运行正常时这里是空的' : null,
                       )
                     : ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+                        padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
                         itemCount: list.length,
                         separatorBuilder: (_, __) => const SizedBox(height: 8),
                         itemBuilder: (_, i) => _card(context, list[i]),
@@ -162,7 +162,7 @@ class _LogCenterPageState extends ConsumerState<LogCenterPage> {
                 ),
                 child: Text(e.level,
                     style: TextStyle(
-                        fontSize: 9.5,
+                        fontSize: 10.5,
                         fontWeight: FontWeight.w700,
                         color: color)),
               ),
@@ -177,7 +177,7 @@ class _LogCenterPageState extends ConsumerState<LogCenterPage> {
                 '${e.at.minute.toString().padLeft(2, '0')}:'
                 '${e.at.second.toString().padLeft(2, '0')}',
                 style:
-                    TextStyle(fontSize: 10, color: Palette.inkFaint(context)),
+                    TextStyle(fontSize: 10.5, color: Palette.inkFaint(context)),
               ),
             ],
           ),
@@ -185,7 +185,7 @@ class _LogCenterPageState extends ConsumerState<LogCenterPage> {
           SelectableText(
             e.message,
             style: TextStyle(
-              fontSize: 11.5,
+              fontSize: 12,
               height: 1.45,
               fontFamily: 'monospace',
               color: Palette.ink(context),

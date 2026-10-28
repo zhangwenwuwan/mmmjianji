@@ -199,7 +199,7 @@ class _DonutChartState extends State<DonutChart>
               const SizedBox(height: 2),
               Text(widget.centerTitle,
                   style: TextStyle(
-                      fontSize: 11, color: Palette.inkFaint(context))),
+                      fontSize: 12, color: Palette.inkFaint(context))),
             ],
           ),
         ],

@@ -14,6 +14,7 @@ import 'motion.dart';
 import 'profile_modules.dart';
 import 'reimburse_page.dart';
 import 'report_page.dart';
+import 'tab_header.dart';
 import 'theme.dart';
 
 /// 我的：头像卡 + 八宫格入口 + 数据管理列表（无会员 / 付费入口）。
@@ -29,7 +30,8 @@ class ProfilePage extends ConsumerWidget {
     final count = stats?.count ?? 0;
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(12, 6, 12, 88),
+      // 顶栏浮在内容上，顶部留出它的高度
+      padding: EdgeInsets.fromLTRB(12, TabHeader.heightOf(context) + 6, 12, 88),
       children: [
         const _AvatarCard(),
         const SizedBox(height: 10),
@@ -63,7 +65,7 @@ class ProfilePage extends ConsumerWidget {
             visualDensity: VisualDensity.compact,
             onPressed: () => Navigator.of(context)
                 .push(AppPageRoute(page: const ProfileModulesPage())),
-            icon: Icon(Icons.tune, size: 17, color: Palette.inkFaint(context)),
+            icon: Icon(Icons.tune, size: 18, color: Palette.inkFaint(context)),
           ),
         ),
         _grid(context, ref.watch(settingsProvider).profileHiddenSet),
@@ -91,7 +93,7 @@ class ProfilePage extends ConsumerWidget {
         const SizedBox(height: 12),
         Center(
           child: Text('简记 $appVersion · 数据只存在这台手机上',
-              style: TextStyle(fontSize: 11, color: Palette.inkFaint(context))),
+              style: TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
         ),
       ],
     );
@@ -112,6 +114,13 @@ class ProfilePage extends ConsumerWidget {
         crossAxisCount: 4,
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
+        // ⚠️ 必须显式写 EdgeInsets.zero。
+        // ScrollView 的 padding 为 null 时，会自动把 **MediaQuery.padding** 当成
+        // 自己的内边距。而 Shell 的 Scaffold 开了 extendBody（底栏浮在内容上），
+        // 它给 body 的 MediaQuery.padding.bottom 正好等于整条底栏的高度（62）——
+        // 于是这个网格底下凭空多出 62px 空白，看着像"网格下面漏了一块"。
+        // 4 个入口只占一行，多出来的那一条就是纯白面板。
+        padding: EdgeInsets.zero,
         mainAxisSpacing: 12,
         crossAxisSpacing: 8,
         childAspectRatio: 1.04,
@@ -132,7 +141,7 @@ class ProfilePage extends ConsumerWidget {
       child: ListTile(
         leading: Icon(icon),
         title: Text(title),
-        subtitle: Text(subtitle, style: const TextStyle(fontSize: 11)),
+        subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -177,7 +186,7 @@ class ProfilePage extends ConsumerWidget {
                     )
                   : const SizedBox.shrink(),
             ),
-            const Icon(Icons.chevron_right, size: 20),
+            const Icon(Icons.chevron_right, size: 18),
           ],
         ),
       ),
@@ -225,7 +234,7 @@ class _AvatarCard extends ConsumerWidget {
                           color: Palette.card(context), width: 1.6),
                     ),
                     child: const Icon(Icons.photo_camera,
-                        size: 10.5, color: Colors.white),
+                        size: 14, color: Colors.white),
                   ),
                 ),
               ],
@@ -241,14 +250,14 @@ class _AvatarCard extends ConsumerWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                      fontSize: 16,
+                      fontSize: 17,
                       fontWeight: FontWeight.w700,
                       color: Palette.ink(context)),
                 ),
                 const SizedBox(height: 4),
                 Text('数据只存在这台手机上，没有账号、没有服务器',
                     style: TextStyle(
-                        fontSize: 11.5,
+                        fontSize: 12,
                         height: 1.4,
                         color: Palette.inkSoft(context))),
               ],
@@ -326,9 +335,9 @@ class _AvatarCard extends ConsumerWidget {
   Widget _tile(BuildContext context, IconData icon, String title,
       String subtitle, String value) {
     return ListTile(
-      leading: Icon(icon, size: 20),
-      title: Text(title, style: const TextStyle(fontSize: 14.5)),
-      subtitle: Text(subtitle, style: const TextStyle(fontSize: 11)),
+      leading: Icon(icon, size: 18),
+      title: Text(title, style: const TextStyle(fontSize: 14)),
+      subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
       onTap: () => Navigator.pop(context, value),
     );
   }
@@ -392,7 +401,7 @@ class _MetricCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(label,
-              style: TextStyle(fontSize: 11.5, color: Palette.inkFaint(context))),
+              style: TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
           const SizedBox(height: 4),
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
@@ -408,7 +417,7 @@ class _MetricCard extends StatelessWidget {
                 padding: const EdgeInsets.only(bottom: 4),
                 child: Text(unit,
                     style: TextStyle(
-                        fontSize: 11, color: Palette.inkSoft(context))),
+                        fontSize: 12, color: Palette.inkSoft(context))),
               ),
             ],
           ),
@@ -446,7 +455,7 @@ class _GridItem extends StatelessWidget {
               borderRadius: BorderRadius.circular(10),
             ),
             alignment: Alignment.center,
-            child: Icon(icon, size: 20, color: Palette.brand(context)),
+            child: Icon(icon, size: 18, color: Palette.brand(context)),
           ),
           const SizedBox(height: 5),
           Text(label,

@@ -388,7 +388,7 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
               const Spacer(),
               Text(_currency == null ? settings.symbol : symbolOf(_currency!),
                   style: TextStyle(
-                      fontSize: 18,
+                      fontSize: 17,
                       fontWeight: FontWeight.w600,
                       color: color.withValues(alpha: 0.75))),
               const SizedBox(width: 5),
@@ -405,7 +405,7 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
                     maxLines: 1,
                     softWrap: false,
                     style: TextStyle(
-                      fontSize: 30,
+                      fontSize: 28,
                       fontWeight: FontWeight.w700,
                       color: (_op == null && _amount.isEmpty)
                           ? Palette.inkFaint(context)
@@ -423,7 +423,7 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
           TextField(
             controller: _memoCtrl,
             maxLength: 60,
-            style: const TextStyle(fontSize: 13.5),
+            style: const TextStyle(fontSize: 14),
             decoration: InputDecoration(
               hintText: '备注（这笔钱花在哪了）',
               counterText: '',
@@ -434,7 +434,7 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
                 scale: 0.9,
                 onTap: _pickFrequentMemo,
                 child: Icon(Icons.history,
-                    size: 19, color: Palette.inkSoft(context)),
+                    size: 18, color: Palette.inkSoft(context)),
               ),
               prefixIconConstraints:
                   const BoxConstraints(minWidth: 40, minHeight: 20),
@@ -660,8 +660,32 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
     }
     final pocketId = _pocketId;
     if (pocketId == null) {
+      // 一个账户都没有（新装、或全归档了）时只说「请选择账户」是死路：
+      // 用户根本无处可选。直接把人带去新建账户页，建完回来接着记。
+      final all = ref.read(pocketsProvider).valueOrNull ?? const <Pocket>[];
+      final usable = all.where((p) => !p.archived).toList();
+      if (usable.isEmpty) {
+        await Navigator.of(context)
+            .push(AppPageRoute(page: const AccountEditPage()));
+        if (mounted) bumpRevision(ref);
+        return;
+      }
       _toast('请选择账户');
       return;
+    }
+    // 最后一道防线：本笔币种必须和账户币种一致（转账除外）。
+    // 界面上已经把候选账户过滤成同币种了，但"选了外币、又没有该币种账户"
+    // 时 _pocketId 还指着旧账户 —— 这里拦住，别落一笔错账。
+    if (_flow != 'transfer' && _currency != null) {
+      final accounts =
+          ref.read(pocketsProvider).valueOrNull ?? const <Pocket>[];
+      final p = accounts.where((x) => x.id == pocketId).firstOrNull;
+      if (p != null && p.currency != _currency) {
+        HapticFeedback.mediumImpact();
+        _toast('这一笔是 $_currency，账户却是 ${p.currency}。'
+            '换一个 $_currency 账户，或把币种改回「跟随账户」');
+        return;
+      }
     }
     final tags = _tags
         .split(RegExp(r'[,，]'))
@@ -834,7 +858,7 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
               dense: true,
               leading:
                   Icon(Icons.history, size: 18, color: Palette.inkFaint(ctx)),
-              title: Text(m, style: const TextStyle(fontSize: 13.5)),
+              title: Text(m, style: const TextStyle(fontSize: 14)),
               onTap: () => Navigator.pop(ctx, m),
             ),
         ],
@@ -875,18 +899,56 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
       ),
     );
     if (!mounted) return;
-    setState(() => _currency = picked == '__follow__' ? null : picked);
+    final cur = picked == '__follow__' ? null : picked;
+    setState(() => _currency = cur);
+    if (cur == null) return;
+
+    // 换成外币之后，当前账户必须跟着换：留着 CNY 账户就是一笔错账。
+    final list = ref.read(pocketsProvider).valueOrNull ?? const <Pocket>[];
+    final now = list.where((p) => p.id == _pocketId).firstOrNull;
+    if (now != null && now.currency == cur) return;
+    final same = [
+      for (final p in list)
+        if (p.recordable && p.currency == cur) p,
+    ];
+    if (same.isNotEmpty) {
+      setState(() => _pocketId = same.first.id);
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('还没有 $cur 账户，点账户可以新建一个')),
+      );
+    }
   }
 
   /// 账户选择（一屏面板里只显示一个 chip，具体选哪个摊开成列表）
+  ///
+  /// ⚠️ 显式选了外币时，只能选**同币种**账户。
+  /// 否则一笔 USD 会被记进 CNY 账户，而余额是直接累加 amount_cents 的
+  /// （不折算），统计页却按汇率折算 —— 同一笔钱在首页和资产页是两个数。
+  /// 转账不动：跨币种转账有 to_amount_cents，是设计内的。
   Future<void> _pickPocketForDraft(
       List<Pocket> pockets, String Function(Pocket) ownerLabel) async {
+    final wanted = _flow == 'transfer' ? null : _currency;
+    final scoped = wanted == null
+        ? pockets
+        : [
+            for (final p in pockets)
+              if (p.currency == wanted) p,
+          ];
+
     // 一个账户都没有（新装 App 的初始状态）：别弹「还没有可用账户」就完事，
     // 直接把人带去新建账户页 —— 他要记一笔，缺的正是账户。
-    if (pockets.isEmpty) {
+    if (scoped.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(wanted == null
+              ? '还没有可用账户，先建一个'
+              : '还没有 $wanted 账户，先建一个再记这一笔'),
+        ));
+      }
       // AppPageRoute 的泛型是 dynamic，直接 push，结果按 dynamic 收
-      final created =
-          await Navigator.of(context).push(AppPageRoute(page: const AccountEditPage()));
+      final created = await Navigator.of(context)
+          .push(AppPageRoute(page: const AccountEditPage()));
       if (created == true && mounted) {
         bumpRevision(ref);
         // 建完账户：pocketsProvider 会重读，本页的 _pocketId 由
@@ -897,11 +959,13 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
     }
     final picked = await showAppSheet<int>(
       context: context,
-      title: _flow == 'in' ? '收入到账' : '支出账户',
+      title: _flow == 'in'
+          ? '收入到账${wanted == null ? '' : '（$wanted）'}'
+          : '支出账户${wanted == null ? '' : '（$wanted）'}',
       builder: (ctx) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          for (final p in pockets)
+          for (final p in scoped)
             ListTile(
               dense: true,
               leading: AppGlyph(p.glyph, size: 18),
@@ -913,7 +977,7 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
                   PocketKind.credit => '信用卡 · ${p.currency}',
                   PocketKind.debt => '负债 · ${p.currency}',
                 },
-                style: TextStyle(fontSize: 11),
+                style: TextStyle(fontSize: 12),
               ),
               trailing:
                   p.id == _pocketId ? const Icon(Icons.check, size: 18) : null,
@@ -938,7 +1002,7 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
           children: [
             ListTile(
               dense: true,
-              leading: const Icon(Icons.currency_exchange, size: 20),
+              leading: const Icon(Icons.currency_exchange, size: 18),
               title: Text(
                   _currency == null ? '币种：跟随账户（$fromCur）' : '币种：$_currency'),
               trailing: const Icon(Icons.chevron_right, size: 18),
@@ -950,7 +1014,7 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
             const Divider(height: 1),
             SwitchListTile(
               dense: true,
-              secondary: const Icon(Icons.visibility_off_outlined, size: 20),
+              secondary: const Icon(Icons.visibility_off_outlined, size: 18),
               title: const Text('不计入收支'),
               subtitle: const Text('内部调账、代付等'),
               value: _excludeStats,
@@ -961,7 +1025,7 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
             ),
             SwitchListTile(
               dense: true,
-              secondary: const Icon(Icons.pie_chart_outline, size: 20),
+              secondary: const Icon(Icons.pie_chart_outline, size: 18),
               title: const Text('不计入预算'),
               subtitle: const Text('这笔支出不计入预算完成率'),
               value: _excludeBudget,
@@ -973,7 +1037,7 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
             if (_flow == 'in')
               ListTile(
                 dense: true,
-                leading: const Icon(Icons.undo, size: 20),
+                leading: const Icon(Icons.undo, size: 18),
                 title: Text(_refundOfId == null ? '退款关联' : '已关联原支出'),
                 subtitle: _refundOfId == null ? const Text('') : null,
                 trailing: const Icon(Icons.chevron_right, size: 18),
@@ -985,7 +1049,7 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
             const Divider(height: 1),
             ListTile(
               dense: true,
-              leading: const Icon(Icons.photo_camera_outlined, size: 20),
+              leading: const Icon(Icons.photo_camera_outlined, size: 18),
               title: Text('凭证（${_newAttachments.length}）'),
               subtitle: const Text('拍照或从相册选，保存时挂到这笔账上'),
               onTap: () async {
@@ -1029,7 +1093,7 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
               dense: true,
               leading: Text(
                 e.memo.isEmpty ? '💸' : '💸',
-                style: const TextStyle(fontSize: 16),
+                style: const TextStyle(fontSize: 17),
               ),
               title: Text(
                 e.memo.isEmpty ? '（无备注）' : e.memo,
@@ -1059,13 +1123,13 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
         children: [
           ListTile(
             dense: true,
-            leading: const Icon(Icons.photo_camera_outlined, size: 20),
+            leading: const Icon(Icons.photo_camera_outlined, size: 18),
             title: const Text('拍一张'),
             onTap: () => Navigator.pop(ctx, 'camera'),
           ),
           ListTile(
             dense: true,
-            leading: const Icon(Icons.photo_library_outlined, size: 20),
+            leading: const Icon(Icons.photo_library_outlined, size: 18),
             title: const Text('从相册选'),
             onTap: () => Navigator.pop(ctx, 'gallery'),
           ),
@@ -1206,7 +1270,7 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
     return async.when(
       skipLoadingOnReload: true,
       loading: () => GridView.builder(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 4,
           mainAxisSpacing: 10,
@@ -1235,7 +1299,7 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
         final expandedParent = tops.where((t) => t.id == _expanded).firstOrNull;
 
         return ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
           children: [
             GridView.builder(
               shrinkWrap: true,
@@ -1286,7 +1350,7 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
                                   .firstOrNull ??
                               '',
                           style: TextStyle(
-                              fontSize: 11.5,
+                              fontSize: 12,
                               fontWeight: FontWeight.w600,
                               color: Palette.inkSoft(context)),
                         ),
@@ -1295,7 +1359,7 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
                           scale: 0.9,
                           onTap: () => setState(() => _expanded = null),
                           child: Icon(Icons.close,
-                              size: 15, color: Palette.inkFaint(context)),
+                              size: 16, color: Palette.inkFaint(context)),
                         ),
                       ],
                     ),
@@ -1326,7 +1390,7 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
                                   const SizedBox(width: 5),
                                   Text('记到「${expandedParent.title}」',
                                       style: TextStyle(
-                                          fontSize: 12.5,
+                                          fontSize: 13,
                                           fontWeight: FontWeight.w600,
                                           color: Palette.brand(context))),
                                 ],
@@ -1358,7 +1422,7 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
                                   const SizedBox(width: 5),
                                   Text(c.title,
                                       style: TextStyle(
-                                          fontSize: 12.5,
+                                          fontSize: 13,
                                           fontWeight: c.id == widget.selectedId
                                               ? FontWeight.w600
                                               : FontWeight.w400,
@@ -1385,7 +1449,7 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(Icons.settings_outlined,
-                        size: 15, color: Palette.inkFaint(context)),
+                        size: 16, color: Palette.inkFaint(context)),
                     const SizedBox(width: 5),
                     Text('管理分类',
                         style: TextStyle(
@@ -1689,8 +1753,32 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
     }
     final pocketId = _pocketId;
     if (pocketId == null) {
+      // 一个账户都没有（新装、或全归档了）时只说「请选择账户」是死路：
+      // 用户根本无处可选。直接把人带去新建账户页，建完回来接着记。
+      final all = ref.read(pocketsProvider).valueOrNull ?? const <Pocket>[];
+      final usable = all.where((p) => !p.archived).toList();
+      if (usable.isEmpty) {
+        await Navigator.of(context)
+            .push(AppPageRoute(page: const AccountEditPage()));
+        if (mounted) bumpRevision(ref);
+        return;
+      }
       _toast('请选择账户');
       return;
+    }
+    // 最后一道防线：本笔币种必须和账户币种一致（转账除外）。
+    // 界面上已经把候选账户过滤成同币种了，但"选了外币、又没有该币种账户"
+    // 时 _pocketId 还指着旧账户 —— 这里拦住，别落一笔错账。
+    if (widget.flow != 'transfer' && _currency != null) {
+      final accounts =
+          ref.read(pocketsProvider).valueOrNull ?? const <Pocket>[];
+      final p = accounts.where((x) => x.id == pocketId).firstOrNull;
+      if (p != null && p.currency != _currency) {
+        HapticFeedback.mediumImpact();
+        _toast('这一笔是 $_currency，账户却是 ${p.currency}。'
+            '换一个 $_currency 账户，或把币种改回「跟随账户」');
+        return;
+      }
     }
     if (_isTransfer) {
       if (_toPocketId == null) {
@@ -1951,7 +2039,7 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
               dense: true,
               leading:
                   Icon(Icons.history, size: 18, color: Palette.inkFaint(ctx)),
-              title: Text(m, style: const TextStyle(fontSize: 13.5)),
+              title: Text(m, style: const TextStyle(fontSize: 14)),
               onTap: () => Navigator.pop(ctx, m),
             ),
         ],
@@ -2009,7 +2097,22 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
       ),
     );
     if (picked == null) return;
-    setState(() => _currency = picked == '__follow__' ? null : picked);
+    final cur = picked == '__follow__' ? null : picked;
+    setState(() => _currency = cur);
+    if (cur == null) return;
+
+    // 和记账页同一条规则：换成外币就把转出账户切到同币种账户，
+    // 否则改一次币种就造出一笔"USD 金额记在 CNY 账户"的错账。
+    final list = ref.read(pocketsProvider).valueOrNull ?? const <Pocket>[];
+    final now = list.where((p) => p.id == _pocketId).firstOrNull;
+    if (now != null && now.currency == cur) return;
+    final same = [
+      for (final p in list)
+        if (p.recordable && p.currency == cur) p,
+    ];
+    if (same.isNotEmpty && mounted) {
+      setState(() => _pocketId = same.first.id);
+    }
   }
 
   /// 转账到账金额（转入账户币种）。跨币种时按当前汇率给一个建议值。
@@ -2169,6 +2272,30 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
         .where((p) => p.recordable)
         .where((p) => pocketVisibleInBook(p, currentBookId))
         .toList();
+
+    // 显式选了外币 → 「转出 / 记账」账户只能选同币种（转账的「到」不受限：
+    // 跨币种转账有 to_amount_cents，是设计内的）。
+    // 不这么做的话，一笔 USD 会按 1:1 累加进 CNY 账户余额，
+    // 而统计页是按汇率折算的 —— 同一笔钱两个数。
+    final scopedPockets = (_isTransfer || _currency == null)
+        ? pockets
+        : [
+            for (final p in pockets)
+              if (p.currency == _currency) p,
+          ];
+
+    // 打开一条历史跨币种流水来改：当前账户可能不在候选里，先归位，
+    // 否则用户不改账户只点保存，错账还是错的。
+    if (!_isTransfer &&
+        scopedPockets.isNotEmpty &&
+        !scopedPockets.any((p) => p.id == _pocketId)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (!scopedPockets.any((p) => p.id == _pocketId)) {
+          setState(() => _pocketId = scopedPockets.first.id);
+        }
+      });
+    }
     // 账户是跨账本共享的：非本账本创建的账户在 chips 上标出归属，
     // 否则用户在账本 A 里看到一个陌生账户，完全不知道它是谁的。
     final books = ref.watch(booksProvider).valueOrNull ?? const <Book>[];
@@ -2272,7 +2399,7 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
                     maxLines: 1,
                     softWrap: false,
                     style: TextStyle(
-                      fontSize: 36,
+                      fontSize: 28,
                       fontWeight: FontWeight.w700,
                       color: (_op == null && _amount.isEmpty)
                           ? Palette.inkFaint(context)
@@ -2287,7 +2414,7 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
                   tooltip: '删除',
                   onPressed: _delete,
                   icon: Icon(Icons.delete_outline,
-                      size: 20, color: Palette.expense),
+                      size: 18, color: Palette.expense),
                 ),
             ],
           ),
@@ -2302,7 +2429,7 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
                   TextField(
                     controller: _memoCtrl,
                     maxLength: 60,
-                    style: const TextStyle(fontSize: 13.5),
+                    style: const TextStyle(fontSize: 14),
                     decoration: InputDecoration(
                       hintText: '备注（这笔钱花在哪了）',
                       counterText: '',
@@ -2313,7 +2440,7 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
                         scale: 0.9,
                         onTap: _pickFrequentMemo,
                         child: Icon(Icons.history,
-                            size: 19, color: Palette.inkSoft(context)),
+                            size: 18, color: Palette.inkSoft(context)),
                       ),
                       prefixIconConstraints:
                           const BoxConstraints(minWidth: 40, minHeight: 20),
@@ -2329,11 +2456,24 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
                   // 账户（横滑 chips）
                   _PocketChipRow(
                     label: _isTransfer ? '从' : '账户',
-                    items: pockets,
+                    items: scopedPockets,
                     selectedId: _pocketId,
                     onPick: (id) => setState(() => _pocketId = id),
                     ownerLabel: ownerLabel,
                   ),
+                  // 选了外币但没有该币种账户：说清楚下一步，别让人对着空行发呆
+                  if (!_isTransfer &&
+                      _currency != null &&
+                      scopedPockets.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Text(
+                        '还没有 $_currency 账户。先在「资产」里新建一个该币种的账户，'
+                        '或者把这一笔改成「跟随账户」。',
+                        style: TextStyle(
+                            fontSize: 12, color: Palette.expense),
+                      ),
+                    ),
                   if (_isTransfer) ...[
                     const SizedBox(height: 6),
                     _PocketChipRow(
@@ -2604,7 +2744,7 @@ class _BucketTile extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontSize: 11.5,
+                        fontSize: 12,
                         color: Palette.ink(context),
                       ),
                     ),
@@ -2714,7 +2854,7 @@ class _PocketChipRow extends StatelessWidget {
         SizedBox(
           width: 30,
           child: Text(label,
-              style: TextStyle(fontSize: 11, color: Palette.inkFaint(context))),
+              style: TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
         ),
         Expanded(
           child: SizedBox(

@@ -23,7 +23,7 @@ class AutomationPage extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('自动化')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 32),
         children: [
           Panel(
             padding: EdgeInsets.zero,
@@ -40,9 +40,9 @@ class AutomationPage extends ConsumerWidget {
                       activeReccurring == 0
                           ? '房租、订阅、工资，到日子自动记一笔'
                           : '已启用 $activeReccurring 条规则',
-                      style: const TextStyle(fontSize: 11),
+                      style: const TextStyle(fontSize: 12),
                     ),
-                    trailing: const Icon(Icons.chevron_right, size: 20),
+                    trailing: const Icon(Icons.chevron_right, size: 18),
                   ),
                 ),
                 const Divider(height: 1, indent: 16),
@@ -54,8 +54,8 @@ class AutomationPage extends ConsumerWidget {
                     leading: Icon(Icons.notifications_none),
                     title: Text('记账提醒'),
                     subtitle:
-                        Text('每天固定时间提醒你记账', style: TextStyle(fontSize: 11)),
-                    trailing: Icon(Icons.chevron_right, size: 20),
+                        Text('每天固定时间提醒你记账', style: TextStyle(fontSize: 12)),
+                    trailing: Icon(Icons.chevron_right, size: 18),
                   ),
                 ),
               ],
@@ -72,7 +72,7 @@ class AutomationPage extends ConsumerWidget {
                   child: Text(
                     '自动化的动作只在本机执行，不联网、不推送服务端消息。',
                     style: TextStyle(
-                        fontSize: 11,
+                        fontSize: 12,
                         height: 1.5,
                         color: Palette.inkFaint(context)),
                   ),

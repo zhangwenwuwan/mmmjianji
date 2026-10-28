@@ -38,7 +38,7 @@ class CategoryDetailPage extends ConsumerWidget {
         ),
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
         children: [
           monthlyAsync.when(
             skipLoadingOnReload: true,
@@ -69,20 +69,20 @@ class CategoryDetailPage extends ConsumerWidget {
                   children: [
                     Text('近 6 个月合计',
                         style: TextStyle(
-                            fontSize: 11, color: Palette.inkFaint(context))),
+                            fontSize: 12, color: Palette.inkFaint(context))),
                     const SizedBox(height: 4),
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
                         MoneyText(total,
                             style: const TextStyle(
-                                fontSize: 26, fontWeight: FontWeight.w700)),
+                                fontSize: 28, fontWeight: FontWeight.w700)),
                         Padding(
                           padding: const EdgeInsets.only(left: 8, bottom: 4),
                           child: Text(
                             '平均每月 ${settings.symbol}${centsToText(avg)}',
                             style: TextStyle(
-                                fontSize: 11, color: Palette.inkFaint(context)),
+                                fontSize: 12, color: Palette.inkFaint(context)),
                           ),
                         ),
                       ],
@@ -120,7 +120,7 @@ class CategoryDetailPage extends ConsumerWidget {
                                         ? '${int.parse(p.month.substring(5, 7))}月'
                                         : p.month,
                                     style: TextStyle(
-                                        fontSize: 9,
+                                        fontSize: 10.5,
                                         color: Palette.inkFaint(context)),
                                   ),
                                 ],

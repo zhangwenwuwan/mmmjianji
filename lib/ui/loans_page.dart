@@ -69,7 +69,7 @@ class _LoansPageState extends ConsumerState<LoansPage>
               final lendTotal = lend.fold<int>(0, (s, d) => s + inBase(d));
               final borrowTotal = borrow.fold<int>(0, (s, d) => s + inBase(d));
               return ListView(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 96),
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 96),
                 children: [
                   Row(
                     children: [
@@ -146,7 +146,7 @@ class _LoansPageState extends ConsumerState<LoansPage>
                     title: '还没有结清的记录',
                     hint: '在一笔借贷里点「还款 / 收回」，还清后会归档到这里')
                 : ListView(
-                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 96),
+                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 96),
                     children: [
                       Panel(
                         padding: EdgeInsets.zero,
@@ -174,7 +174,7 @@ class _LoansPageState extends ConsumerState<LoansPage>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(label,
-              style: TextStyle(fontSize: 11, color: Palette.inkFaint(context))),
+              style: TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
           const SizedBox(height: 6),
           FittedBox(
             fit: BoxFit.scaleDown,
@@ -236,7 +236,7 @@ class _LoansPageState extends ConsumerState<LoansPage>
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                          fontSize: 14.5, fontWeight: FontWeight.w500)),
+                          fontSize: 14, fontWeight: FontWeight.w500)),
                   Text(
                     [
                       _channelLabel(d.channel),
@@ -264,7 +264,7 @@ class _LoansPageState extends ConsumerState<LoansPage>
                   left,
                   suffix: amountSuffix(d.currency, base),
                   style: TextStyle(
-                    fontSize: 14.5,
+                    fontSize: 14,
                     fontWeight: FontWeight.w700,
                     color: d.isLend ? Palette.ink(context) : Palette.expense,
                     fontFeatures: const [FontFeature.tabularFigures()],
@@ -273,7 +273,7 @@ class _LoansPageState extends ConsumerState<LoansPage>
                 if (paidCents > 0)
                   Text('共 ${(d.principalCents / 100).toStringAsFixed(0)}',
                       style: TextStyle(
-                          fontSize: 9, color: Palette.inkFaint(context))),
+                          fontSize: 10.5, color: Palette.inkFaint(context))),
               ],
             ),
           ],
@@ -310,7 +310,7 @@ class _LoansPageState extends ConsumerState<LoansPage>
               children: [
                 Text('${d.isLend ? '借给' : '借自'} ${d.counterparty}',
                     style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w700)),
+                        fontSize: 17, fontWeight: FontWeight.w700)),
                 const Spacer(),
                 Text(
                     '${(d.principalCents / 100).toStringAsFixed(2)} ${d.currency}',
@@ -323,7 +323,7 @@ class _LoansPageState extends ConsumerState<LoansPage>
               '${dayKey(d.borrowedOn)} ${d.isLend ? '借出' : '借入'}'
               '${d.dueOn == null ? '' : ' · ${dayKey(d.dueOn!)} 到期'}'
               '${d.note.isEmpty ? '' : ' · ${d.note}'}',
-              style: TextStyle(fontSize: 11, color: Palette.inkFaint(context)),
+              style: TextStyle(fontSize: 12, color: Palette.inkFaint(context)),
             ),
             const SizedBox(height: 10),
             Row(
@@ -333,7 +333,7 @@ class _LoansPageState extends ConsumerState<LoansPage>
                         fontSize: 12, color: Palette.inkFaint(context))),
                 MoneyText(left,
                     style: const TextStyle(
-                        fontSize: 18, fontWeight: FontWeight.w700)),
+                        fontSize: 17, fontWeight: FontWeight.w700)),
                 const Spacer(),
                 TextButton.icon(
                   onPressed: () async {
@@ -367,7 +367,7 @@ class _LoansPageState extends ConsumerState<LoansPage>
                               style: const TextStyle(fontSize: 14)),
                           subtitle: Text(
                               '${dayKey(p.paidOn)}${p.note.isEmpty ? '' : ' · ${p.note}'}',
-                              style: const TextStyle(fontSize: 11)),
+                              style: const TextStyle(fontSize: 12)),
                           trailing: IconButton(
                             icon: const Icon(Icons.close, size: 16),
                             onPressed: () async {
@@ -499,7 +499,7 @@ Future<bool> showDebtEditor(
               Text(
                 direction == 'lend' ? '我借出，等待对方还款' : '我借入，等待我向对方还款',
                 style: TextStyle(
-                  fontSize: 11.5,
+                  fontSize: 12,
                   color: Palette.inkFaint(ctx),
                 ),
               ),

@@ -16,7 +16,7 @@ class InsightHubPage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('财务洞察')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
         children: [
           Panel(
             padding: EdgeInsets.zero,
@@ -55,8 +55,8 @@ class InsightHubPage extends StatelessWidget {
       child: ListTile(
         leading: Icon(icon),
         title: Text(title),
-        subtitle: Text(subtitle, style: const TextStyle(fontSize: 11)),
-        trailing: const Icon(Icons.chevron_right, size: 20),
+        subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
+        trailing: const Icon(Icons.chevron_right, size: 18),
       ),
     );
   }

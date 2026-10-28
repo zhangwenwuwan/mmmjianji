@@ -43,7 +43,7 @@ class WishlistPage extends ConsumerWidget {
           final coolingTotal = waiting.fold<int>(0, (s, w) => s + w.priceCents);
 
           return ListView(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 96),
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 96),
             children: [
               Panel(
                 child: Row(
@@ -114,7 +114,7 @@ class WishlistPage extends ConsumerWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                            fontSize: 14.5,
+                            fontSize: 14,
                             fontWeight: FontWeight.w500,
                             decoration: w.status == 'dropped'
                                 ? TextDecoration.lineThrough
@@ -124,7 +124,7 @@ class WishlistPage extends ConsumerWidget {
                           ? (cooling ? '冷静期还剩 $left 天' : '冷静期已过，可以决定了')
                           : (done ? '已买' : '已放弃'),
                       style: TextStyle(
-                          fontSize: 11,
+                          fontSize: 12,
                           color: cooling ? Palette.brand(context) : color),
                     ),
                   ],
@@ -135,7 +135,7 @@ class WishlistPage extends ConsumerWidget {
                     ? '****'
                     : '${settings.symbol}${centsToText(w.priceCents)}',
                 style: TextStyle(
-                  fontSize: 15,
+                  fontSize: 14,
                   fontWeight: FontWeight.w700,
                   color: w.status == 'dropped'
                       ? Palette.inkFaint(context)

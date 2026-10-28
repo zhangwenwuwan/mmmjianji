@@ -38,7 +38,7 @@ class _CategoryMigrationPageState extends ConsumerState<CategoryMigrationPage> {
     return Scaffold(
       appBar: AppBar(title: const Text('分类迁移')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 32),
         children: [
           // 支出 / 收入切换
           Row(
@@ -69,7 +69,7 @@ class _CategoryMigrationPageState extends ConsumerState<CategoryMigrationPage> {
                       ),
                       child: Text(e.$2,
                           style: TextStyle(
-                            fontSize: 12.5,
+                            fontSize: 13,
                             fontWeight: _flow == e.$1
                                 ? FontWeight.w700
                                 : FontWeight.w500,
@@ -184,7 +184,7 @@ class _CategoryMigrationPageState extends ConsumerState<CategoryMigrationPage> {
                 b.title,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                    fontSize: 13.5,
+                    fontSize: 14,
                     fontWeight:
                         selected ? FontWeight.w600 : FontWeight.w400),
               ),

@@ -8,12 +8,13 @@ import '../core/rules.dart';
 import '../state/ledger_state.dart';
 import '../state/settings.dart';
 import 'budget_page.dart';
-import 'assets_page.dart';
 import 'category_detail_page.dart';
 import 'charts.dart';
 import 'common.dart';
+import 'glass.dart';
 import 'motion.dart';
 import 'sankey.dart';
+import 'tab_header.dart';
 import 'theme.dart';
 import 'wheel_date_picker.dart';
 
@@ -21,11 +22,30 @@ import 'wheel_date_picker.dart';
 ///
 /// 顶部两组胶囊切换（对齐参考版）：口径「支出 / 收入 / 结余」，
 /// 范围「本月 / 本年 / 全部」。切到「本年 / 全部」时月份切换器让位给区间标题。
-class InsightsPage extends ConsumerWidget {
+class InsightsPage extends ConsumerStatefulWidget {
   const InsightsPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<InsightsPage> createState() => _InsightsPageState();
+}
+
+class _InsightsPageState extends ConsumerState<InsightsPage> {
+  /// 顶部筛选块滚过去之后，在顶栏下面浮一条精简版。
+  /// 用 ValueNotifier 而不是 setState：只在跨过阈值时翻一次，
+  /// 不必每帧重建整页（统计页一屏里有图表，重建代价不低）。
+  final _compact = ValueNotifier<bool>(false);
+
+  /// 筛选块的高度（分段 + 区间 + 胶囊三行，约 108）。滚过它就把精简条亮出来。
+  static const _filterBlockHeight = 108.0;
+
+  @override
+  void dispose() {
+    _compact.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     // 「本月」= 首页/预算页那个月（预算卡要它，不能跟着统计页翻）。
     final month = ref.watch(monthProvider);
     // 统计页自己的锚点：带日，因为「周」要知道是哪个星期。
@@ -54,362 +74,407 @@ class InsightsPage extends ConsumerWidget {
 
     final isBalance = type == InsightType.balance;
 
-    return Column(
+    // 整页一起滚（2026-10-28），但多了一条「精简筛选条」：
+    // 顶部三行（周/月/年、区间、支出/收入/结余）滚出去之后，顶栏下面会浮出
+    // 一条 46 高的精简版 —— 只剩当前粒度和三个口径胶囊。这样既能整页滚，
+    // 又不用为了切「年」先滚回顶部。
+    //
+    // 为什么用 Stack 叠一条而不是 SliverPersistentHeader：
+    // 顶栏（TabHeader）本身浮在内容上，pinned sliver 会停在 y=0 被它盖住；
+    // 叠一层才能精确落在「顶栏下沿」。
+    final headerH = TabHeader.heightOf(context);
+    return Stack(
       children: [
-        // 周期粒度：周 / 月 / 年 / 全部 / 范围
-        // 2026-10-26 用户要求照参考版改：原来是「月份条 + 本月/上月/选月份 +
-        // 支出/收入/结余 + 范围按钮」四行，重点在哪个月上；现在周期本身就是
-        // 一级分类，压成一段分段控件，日期只在下面一行。
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-          child: _ScopeSegments(
-            scope: scope,
-            onChanged: (s) => _setScope(ref, s),
-          ),
-        ),
-        // 区间：2026/10/20  ~  2026/10/26
-        // 周/月/年：右端只读（是算出来的区间末），左端点开改锚点；
-        // 范围：两端都能点；全部：没有端点可选。
-        Padding(
-          padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
-          child: _RangeLine(
-            scope: scope,
-            range: range,
-            onFrom: () => _pickStart(context, ref),
-            onTo: scope == InsightScope.custom
-                ? () => _pickEnd(context, ref)
-                : null,
-          ),
-        ),
-        // 口径：支出 / 收入 / 结余（天天点的一级切换，保留三个胶囊）
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-          child: _CapsuleRow(
-            children: [
-              _Capsule(
-                label: '支出',
-                selected: type == InsightType.expense,
-                onTap: () => ref.read(insightTypeProvider.notifier).state =
-                    InsightType.expense,
-              ),
-              _Capsule(
-                label: '收入',
-                selected: type == InsightType.income,
-                onTap: () => ref.read(insightTypeProvider.notifier).state =
-                    InsightType.income,
-              ),
-              _Capsule(
-                label: '结余',
-                selected: isBalance,
-                onTap: () => ref.read(insightTypeProvider.notifier).state =
-                    InsightType.balance,
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(12, 6, 12, 88),
-            children: [
-              // 收支总览（和明细页汇总卡同一套品牌色淡渐变，视觉统一）
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      Palette.brand(context).withValues(alpha: 0.11),
-                      Palette.brand(context).withValues(alpha: 0.03),
+        NotificationListener<ScrollNotification>(
+          onNotification: (n) {
+            final v = n.metrics.pixels > _filterBlockHeight - 24;
+            if (_compact.value != v) _compact.value = v;
+            return false;
+          },
+          child: CustomScrollView(
+            slivers: [
+              // 筛选块：跟着滚，滚出去就不回来（精简条接手）
+              SliverPadding(
+                padding: EdgeInsets.fromLTRB(12, headerH + 8, 12, 0),
+                sliver: SliverToBoxAdapter(
+                  child: Column(
+                    children: [
+                      // 周期粒度：周 / 月 / 年 / 全部 / 范围
+                      _ScopeSegments(
+                        scope: scope,
+                        onChanged: (s) => _setScope(ref, s),
+                      ),
+                      // 区间：2026/10/20  ~  2026/10/26
+                      // 周/月/年：右端只读（是算出来的区间末），左端点开改锚点；
+                      // 范围：两端都能点；全部：没有端点可选。
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(6, 12, 6, 0),
+                        child: _RangeLine(
+                          scope: scope,
+                          range: range,
+                          onFrom: () => _pickStart(context, ref),
+                          onTo: scope == InsightScope.custom
+                              ? () => _pickEnd(context, ref)
+                              : null,
+                        ),
+                      ),
+                      // 口径：支出 / 收入 / 结余
+                      Padding(
+                        padding: const EdgeInsets.only(top: 12),
+                        child: _CapsuleRow(
+                          children: [
+                            _Capsule(
+                              label: '支出',
+                              selected: type == InsightType.expense,
+                              onTap: () => ref
+                                  .read(insightTypeProvider.notifier)
+                                  .state = InsightType.expense,
+                            ),
+                            _Capsule(
+                              label: '收入',
+                              selected: type == InsightType.income,
+                              onTap: () => ref
+                                  .read(insightTypeProvider.notifier)
+                                  .state = InsightType.income,
+                            ),
+                            _Capsule(
+                              label: '结余',
+                              selected: isBalance,
+                              onTap: () => ref
+                                  .read(insightTypeProvider.notifier)
+                                  .state = InsightType.balance,
+                            ),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
-                  borderRadius: BorderRadius.circular(AppRadius.card),
-                  border: Border.all(
-                      color: Palette.brand(context).withValues(alpha: 0.20)),
-                ),
-                child: Row(
-                  children: [
-                    _cell(context, '收入', totals.incomeCents, Palette.income,
-                        'in'),
-                    _div(context),
-                    _cell(context, '支出', totals.expenseCents, Palette.expense,
-                        'out'),
-                    _div(context),
-                    _cell(
-                        context,
-                        '结余',
-                        totals.incomeCents - totals.expenseCents,
-                        Palette.brand(context),
-                        null),
-                  ],
                 ),
               ),
-              const SizedBox(height: 10),
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(12, 6, 12, 88),
+                sliver: SliverList(
+                  delegate: SliverChildListDelegate([
+                  // 收支总览（和明细页汇总卡同一套品牌色淡渐变，视觉统一）
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Palette.brand(context).withValues(alpha: 0.11),
+                          Palette.brand(context).withValues(alpha: 0.03),
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(AppRadius.card),
+                      border: Border.all(
+                          color: Palette.brand(context).withValues(alpha: 0.20)),
+                    ),
+                    child: Row(
+                      children: [
+                        _cell(context, '收入', totals.incomeCents, Palette.income,
+                            'in'),
+                        _div(context),
+                        _cell(context, '支出', totals.expenseCents, Palette.expense,
+                            'out'),
+                        _div(context),
+                        _cell(
+                            context,
+                            '结余',
+                            totals.incomeCents - totals.expenseCents,
+                            Palette.brand(context),
+                            null),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 10),
 
-              // 分类占比 / 净额
-              Panel(
-                child: isBalance
-                    ? _netView(context, settings, totals)
-                    : slicesAsync.when(
-                        skipLoadingOnReload: true,
-                        loading: () => const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 10),
-                          child: Row(
-                            children: [
-                              Skeleton(width: 148, height: 148, radius: 74),
-                              SizedBox(width: 14),
-                              Expanded(
-                                child: Column(
-                                  children: [
-                                    Skeleton(height: 16, radius: 6),
-                                    SizedBox(height: 12),
-                                    Skeleton(height: 16, radius: 6),
-                                    SizedBox(height: 12),
-                                    Skeleton(height: 16, radius: 6),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        error: (e, _) => ErrorRetryView(
-                          message: '统计失败',
-                          detail: '$e',
-                          onRetry: () async =>
-                              ref.invalidate(insightSlicesProvider),
-                        ),
-                        data: (slices) {
-                          if (slices.isEmpty) {
-                            return SizedBox(
-                              height: 96,
-                              child: Center(
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(Icons.donut_large,
-                                        size: 26,
-                                        color: Palette.inkFaint(context)),
-                                    const SizedBox(height: 6),
-                                    Text('这个区间还没有${_flowName(type)}',
-                                        style: TextStyle(
-                                            fontSize: 12,
-                                            color: Palette.inkFaint(context))),
-                                  ],
-                                ),
-                              ),
-                            );
-                          }
-                          final totalCents = type == InsightType.income
-                              ? totals.incomeCents
-                              : totals.expenseCents;
-                          final showAmount = ref.watch(donutShowAmountProvider);
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
+                  // 分类占比 / 净额
+                  Panel(
+                    child: isBalance
+                        ? _netView(context, settings, totals)
+                        : slicesAsync.when(
+                            skipLoadingOnReload: true,
+                            loading: () => const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 10),
+                              child: Row(
                                 children: [
-                                  DonutChart(
-                                    slices: slices,
-                                    totalCents: totalCents,
-                                    symbol: settings.symbol,
-                                    hideAmounts: settings.hideAmounts,
-                                    centerTitle: _flowName(type),
-                                  ),
-                                  const SizedBox(width: 14),
+                                  Skeleton(width: 148, height: 148, radius: 74),
+                                  SizedBox(width: 14),
                                   Expanded(
                                     child: Column(
-                                      mainAxisSize: MainAxisSize.min,
                                       children: [
-                                        for (var i = 0; i < slices.length; i++)
-                                          _legendRow(
-                                              context, slices[i], totalCents, i,
-                                              symbol: settings.symbol,
-                                              hide: settings.hideAmounts,
-                                              showAmount: showAmount),
+                                        Skeleton(height: 16, radius: 6),
+                                        SizedBox(height: 12),
+                                        Skeleton(height: 16, radius: 6),
+                                        SizedBox(height: 12),
+                                        Skeleton(height: 16, radius: 6),
                                       ],
                                     ),
                                   ),
                                 ],
                               ),
-                              const SizedBox(height: 6),
-                              // 「只显示金额」：一木把这个开关放在环形图右下角
-                              Align(
-                                alignment: Alignment.centerRight,
-                                child: _AmountOnlyToggle(
-                                  value: showAmount,
-                                  onChanged: (v) => ref
-                                      .read(donutShowAmountProvider.notifier)
-                                      .state = v,
+                            ),
+                            error: (e, _) => ErrorRetryView(
+                              message: '统计失败',
+                              detail: '$e',
+                              onRetry: () async =>
+                                  ref.invalidate(insightSlicesProvider),
+                            ),
+                            data: (slices) {
+                              if (slices.isEmpty) {
+                                return SizedBox(
+                                  height: 96,
+                                  child: Center(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.donut_large,
+                                            size: 26,
+                                            color: Palette.inkFaint(context)),
+                                        const SizedBox(height: 6),
+                                        Text('这个区间还没有${_flowName(type)}',
+                                            style: TextStyle(
+                                                fontSize: 12,
+                                                color: Palette.inkFaint(context))),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              }
+                              final totalCents = type == InsightType.income
+                                  ? totals.incomeCents
+                                  : totals.expenseCents;
+                              final showAmount = ref.watch(donutShowAmountProvider);
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      DonutChart(
+                                        slices: slices,
+                                        totalCents: totalCents,
+                                        symbol: settings.symbol,
+                                        hideAmounts: settings.hideAmounts,
+                                        centerTitle: _flowName(type),
+                                      ),
+                                      const SizedBox(width: 14),
+                                      Expanded(
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            for (var i = 0; i < slices.length; i++)
+                                              _legendRow(
+                                                  context, slices[i], totalCents, i,
+                                                  symbol: settings.symbol,
+                                                  hide: settings.hideAmounts,
+                                                  showAmount: showAmount),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 6),
+                                  // 「只显示金额」：一木把这个开关放在环形图右下角
+                                  Align(
+                                    alignment: Alignment.centerRight,
+                                    child: _AmountOnlyToggle(
+                                      value: showAmount,
+                                      onChanged: (v) => ref
+                                          .read(donutShowAmountProvider.notifier)
+                                          .state = v,
+                                    ),
+                                  ),
+                                ],
+                              );
+                            },
+                          ),
+                  ),
+                  const SizedBox(height: 14),
+
+                  // 钱从哪来、到哪去（桑基图）：
+                  // 环形图回答「支出由什么构成」，这张图回答「进来多少、出去多少、
+                  // 剩多少」—— 两个问题不一样，缺一张就总觉得账看不透。
+                  const SankeyPanel(),
+                  const SizedBox(height: 14),
+
+                  // 分类排行（对齐原版 category_rank_row：一行一个分类，可展开子分类）
+                  if (!isBalance)
+                    Panel(
+                      padding: const EdgeInsets.fromLTRB(14, 14, 14, 6),
+                      child: _RankList(
+                        symbol: settings.symbol,
+                        hide: settings.hideAmounts,
+                        type: type,
+                      ),
+                    ),
+                  if (!isBalance) const SizedBox(height: 14),
+
+                  // 与上月同期比：只在「本月」口径下有对照意义（上月整月对本月半个月是假的）
+                  if (!isBalance && scope == InsightScope.month) ...[
+                    Panel(
+                      padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
+                      child: _PrevComparePanel(
+                        symbol: settings.symbol,
+                        hide: settings.hideAmounts,
+                        type: type,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                  ],
+
+                  // 净资产走势：只在**资产页**保留（资产页那张是主视角）。
+                  // 2026-10-28 用户反馈统计页与资产页两张图重复，统计页这里删掉。
+
+                  // 标签占比 / 账户收支：对齐一木统计页的另外两个维度。
+                  // 放在分类排行之后——分类是主视角，这两个是补充视角。
+                  if (!isBalance) ...[
+                    _TagRankPanel(
+                        symbol: settings.symbol, hide: settings.hideAmounts),
+                    const SizedBox(height: 14),
+                    _PocketSplitPanel(
+                        symbol: settings.symbol, hide: settings.hideAmounts),
+                    const SizedBox(height: 14),
+                  ],
+
+                  // 预算
+                  Panel(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text('本月预算',
+                                style: TextStyle(
+                                    fontSize: 12, color: Palette.inkSoft(context))),
+                            const Spacer(),
+                            TextButton(
+                              onPressed: () => Navigator.of(context)
+                                  .push(AppPageRoute(page: const BudgetPage())),
+                              style: TextButton.styleFrom(
+                                  padding: EdgeInsets.zero,
+                                  minimumSize: const Size(0, 0),
+                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                              child:
+                                  const Text('管理', style: TextStyle(fontSize: 12)),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        if (!progress.configured)
+                          Text('还没设预算，点右上「管理」设一个',
+                              style: TextStyle(
+                                  fontSize: 12, color: Palette.inkFaint(context)))
+                        else ...[
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  '${settings.symbol}${centsToText(progress.remainCents.abs())}',
+                                  maxLines: 1,
+                                  softWrap: false,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.w700,
+                                    color: progress.overflow
+                                        ? Palette.expense
+                                        : Palette.ink(context),
+                                    fontFeatures: const [
+                                      FontFeature.tabularFigures()
+                                    ],
+                                  ),
                                 ),
                               ),
-                            ],
-                          );
-                        },
-                      ),
-              ),
-              const SizedBox(height: 14),
-
-              // 钱从哪来、到哪去（桑基图）：
-              // 环形图回答「支出由什么构成」，这张图回答「进来多少、出去多少、
-              // 剩多少」—— 两个问题不一样，缺一张就总觉得账看不透。
-              const SankeyPanel(),
-              const SizedBox(height: 14),
-
-              // 分类排行（对齐原版 category_rank_row：一行一个分类，可展开子分类）
-              if (!isBalance)
-                Panel(
-                  padding: const EdgeInsets.fromLTRB(14, 14, 14, 6),
-                  child: _RankList(
-                    symbol: settings.symbol,
-                    hide: settings.hideAmounts,
-                    type: type,
-                  ),
-                ),
-              if (!isBalance) const SizedBox(height: 14),
-
-              // 与上月同期比：只在「本月」口径下有对照意义（上月整月对本月半个月是假的）
-              if (!isBalance && scope == InsightScope.month) ...[
-                Panel(
-                  padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
-                  child: _PrevComparePanel(
-                    symbol: settings.symbol,
-                    hide: settings.hideAmounts,
-                    type: type,
-                  ),
-                ),
-                const SizedBox(height: 14),
-              ],
-
-              // 净资产走势：复用资产页同一个组件，别在统计页再画一版（口径会走样）
-              const NetWorthTrend(),
-              const SizedBox(height: 14),
-
-              // 标签占比 / 账户收支：对齐一木统计页的另外两个维度。
-              // 放在分类排行之后——分类是主视角，这两个是补充视角。
-              if (!isBalance) ...[
-                _TagRankPanel(
-                    symbol: settings.symbol, hide: settings.hideAmounts),
-                const SizedBox(height: 14),
-                _PocketSplitPanel(
-                    symbol: settings.symbol, hide: settings.hideAmounts),
-                const SizedBox(height: 14),
-              ],
-
-              // 预算
-              Panel(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text('本月预算',
-                            style: TextStyle(
-                                fontSize: 12, color: Palette.inkSoft(context))),
-                        const Spacer(),
-                        TextButton(
-                          onPressed: () => Navigator.of(context)
-                              .push(AppPageRoute(page: const BudgetPage())),
-                          style: TextButton.styleFrom(
-                              padding: EdgeInsets.zero,
-                              minimumSize: const Size(0, 0),
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                          child:
-                              const Text('管理', style: TextStyle(fontSize: 12)),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    if (!progress.configured)
-                      Text('还没设预算，点右上「管理」设一个',
-                          style: TextStyle(
-                              fontSize: 12, color: Palette.inkFaint(context)))
-                    else ...[
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Flexible(
-                            child: Text(
-                              '${settings.symbol}${centsToText(progress.remainCents.abs())}',
-                              maxLines: 1,
-                              softWrap: false,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 21,
-                                fontWeight: FontWeight.w700,
-                                color: progress.overflow
-                                    ? Palette.expense
-                                    : Palette.ink(context),
-                                fontFeatures: const [
-                                  FontFeature.tabularFigures()
-                                ],
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 4, left: 6),
+                                child: Text(progress.overflow ? '已超支' : '还能花',
+                                    style: TextStyle(
+                                        fontSize: 12,
+                                        color: Palette.inkSoft(context))),
                               ),
+                              const Spacer(),
+                              if (progress.daysLeft > 0)
+                                Text(
+                                    '每天约 ${settings.symbol}${centsToText(progress.safeDailyCents)}',
+                                    style: TextStyle(
+                                        fontSize: 12,
+                                        color: Palette.inkFaint(context))),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(5),
+                            child: LinearProgressIndicator(
+                              value: progress.ratio,
+                              minHeight: 8,
+                              backgroundColor: Palette.hairline(context),
+                              valueColor: AlwaysStoppedAnimation(progress.overflow
+                                  ? Palette.expense
+                                  : Palette.brand(context)),
                             ),
                           ),
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 4, left: 6),
-                            child: Text(progress.overflow ? '已超支' : '还能花',
-                                style: TextStyle(
-                                    fontSize: 11,
-                                    color: Palette.inkSoft(context))),
-                          ),
-                          const Spacer(),
-                          if (progress.daysLeft > 0)
-                            Text(
-                                '每天约 ${settings.symbol}${centsToText(progress.safeDailyCents)}',
-                                style: TextStyle(
-                                    fontSize: 11,
-                                    color: Palette.inkFaint(context))),
                         ],
-                      ),
-                      const SizedBox(height: 10),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(5),
-                        child: LinearProgressIndicator(
-                          value: progress.ratio,
-                          minHeight: 8,
-                          backgroundColor: Palette.hairline(context),
-                          valueColor: AlwaysStoppedAnimation(progress.overflow
-                              ? Palette.expense
-                              : Palette.brand(context)),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              const SizedBox(height: 10),
-
-              // 本月总结（手写）：全是一堆数字太冷，给用户一个回看/留话的地方
-              if (scope == InsightScope.month)
-                _MonthNoteCard(month: anchor),
-              const SizedBox(height: 10),
-
-              // 外币折算脚注（对齐原版 _buildConvertedFootnote）：
-              // 账本里有非主币种账户时，说明统计口径，避免用户以为算错
-              if (_hasForeign(context, ref))
-                Padding(
-                  padding: const EdgeInsets.only(top: 2, bottom: 10),
-                  child: Text(
-                    '含外币账户，金额已按当前汇率折算为主币种统计',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        fontSize: 10.5, color: Palette.inkFaint(context)),
+                      ],
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 10),
 
-              // 趋势
-              Panel(
-                child:
-                    _Trend(symbol: settings.symbol, hide: settings.hideAmounts),
-              ),
-              const SizedBox(height: 14),
-              Center(
-                child: Text('更多分析工具在「我的 → 财务洞察」',
-                    style: TextStyle(
-                        fontSize: 11, color: Palette.inkFaint(context))),
+                  // 本月总结（手写）：全是一堆数字太冷，给用户一个回看/留话的地方
+                  if (scope == InsightScope.month)
+                    _MonthNoteCard(month: anchor),
+                  const SizedBox(height: 10),
+
+                  // 外币折算脚注（对齐原版 _buildConvertedFootnote）：
+                  // 账本里有非主币种账户时，说明统计口径，避免用户以为算错
+                  if (_hasForeign(context, ref))
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2, bottom: 10),
+                      child: Text(
+                        '含外币账户，金额已按当前汇率折算为主币种统计',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                            fontSize: 10.5, color: Palette.inkFaint(context)),
+                      ),
+                    ),
+
+                  // 趋势
+                  Panel(
+                    child:
+                        _Trend(symbol: settings.symbol, hide: settings.hideAmounts),
+                  ),
+                  const SizedBox(height: 14),
+                  Center(
+                    child: Text('更多分析工具在「我的 → 财务洞察」',
+                        style: TextStyle(
+                            fontSize: 12, color: Palette.inkFaint(context))),
+                  ),
+                  ]),
+                ),
               ),
             ],
+          ),
+        ),
+        // 精简筛选条：只在筛选块滚出去后出现，浮在顶栏下沿
+        Positioned(
+          top: headerH,
+          left: 0,
+          right: 0,
+          child: ValueListenableBuilder<bool>(
+            valueListenable: _compact,
+            builder: (c, on, _) => IgnorePointer(
+              ignoring: !on,
+              child: AnimatedOpacity(
+                opacity: on ? 1 : 0,
+                duration: const Duration(milliseconds: 160),
+                child: _CompactFilterBar(
+                  onOpenScope: () => _pickScopeSheet(context, ref),
+                ),
+              ),
+            ),
           ),
         ),
       ],
@@ -423,6 +488,43 @@ class InsightsPage extends ConsumerWidget {
     final pockets =
         ref.watch(allPocketsProvider).valueOrNull ?? const <Pocket>[];
     return pockets.any((p) => p.currency != base);
+  }
+
+  /// 周期的中文名。精简筛选条和选择面板都要用。
+  static String _scopeName(InsightScope s) => switch (s) {
+        InsightScope.week => '周',
+        InsightScope.month => '月',
+        InsightScope.year => '年',
+        InsightScope.all => '全部',
+        InsightScope.custom => '自定义范围',
+      };
+
+  /// 精简条上点「月 ⌄」：弹一个五选一的面板。
+  ///
+  /// 为什么不做成点一下切下一个：五个粒度循环切是"瞎猜"，用户不知道
+  /// 还要点几下才到「年」；列出来一眼就能挑。
+  static Future<void> _pickScopeSheet(
+      BuildContext context, WidgetRef ref) async {
+    final current = ref.read(insightScopeProvider);
+    final picked = await showAppSheet<InsightScope>(
+      context: context,
+      title: '统计周期',
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final s in InsightScope.values)
+            ListTile(
+              title: Text(_scopeName(s)),
+              trailing: s == current
+                  ? Icon(Icons.check, size: 18, color: Palette.brand(ctx))
+                  : null,
+              onTap: () => Navigator.of(ctx).pop(s),
+            ),
+          const SizedBox(height: 6),
+        ],
+      ),
+    );
+    if (picked != null) _setScope(ref, picked);
   }
 
   // ------------------------------------------------------------ 周期与区间
@@ -531,7 +633,7 @@ class InsightsPage extends ConsumerWidget {
             maxLines: 1,
             softWrap: false,
             style: TextStyle(
-              fontSize: 24,
+              fontSize: 20,
               fontWeight: FontWeight.w700,
               color: net >= 0 ? Palette.income : Palette.expense,
               fontFeatures: const [FontFeature.tabularFigures()],
@@ -548,7 +650,7 @@ class InsightsPage extends ConsumerWidget {
                 softWrap: false,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                    fontSize: 11.5,
+                    fontSize: 12,
                     color: Palette.inkFaint(context),
                     fontFeatures: const [FontFeature.tabularFigures()]),
               ),
@@ -561,7 +663,7 @@ class InsightsPage extends ConsumerWidget {
                 softWrap: false,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                    fontSize: 11.5,
+                    fontSize: 12,
                     color: Palette.inkFaint(context),
                     fontFeatures: const [FontFeature.tabularFigures()]),
               ),
@@ -581,7 +683,7 @@ class InsightsPage extends ConsumerWidget {
       child: Column(
         children: [
           Text(label,
-              style: TextStyle(fontSize: 11, color: Palette.inkFaint(context))),
+              style: TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
           const SizedBox(height: 5),
           FittedBox(
             fit: BoxFit.scaleDown,
@@ -589,7 +691,7 @@ class InsightsPage extends ConsumerWidget {
               cents,
               flow: flow,
               style: TextStyle(
-                fontSize: 16,
+                fontSize: 17,
                 fontWeight: FontWeight.w700,
                 color: color,
                 fontFeatures: const [FontFeature.tabularFigures()],
@@ -634,7 +736,7 @@ class InsightsPage extends ConsumerWidget {
           ),
           Text(trailing,
               style: TextStyle(
-                  fontSize: 11.5,
+                  fontSize: 12,
                   fontWeight: FontWeight.w600,
                   color: Palette.inkSoft(context),
                   fontFeatures: const [FontFeature.tabularFigures()])),
@@ -755,7 +857,7 @@ class _RankListState extends ConsumerState<_RankList> {
               Padding(
                 padding: const EdgeInsets.only(right: 4),
                 child: Icon(Icons.subdirectory_arrow_right,
-                    size: 12, color: Palette.inkFaint(context)),
+                    size: 14, color: Palette.inkFaint(context)),
               ),
             AppGlyph(n.glyph, size: depth == 0 ? 14 : 12),
             const SizedBox(width: 6),
@@ -770,7 +872,7 @@ class _RankListState extends ConsumerState<_RankList> {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                                fontSize: depth == 0 ? 12.5 : 11.5,
+                                fontSize: depth == 0 ? 13 : 12,
                                 color: depth == 0
                                     ? Palette.ink(context)
                                     : Palette.inkSoft(context))),
@@ -780,7 +882,7 @@ class _RankListState extends ConsumerState<_RankList> {
                             ? '****'
                             : '${widget.symbol}${centsToText(n.cents)}',
                         style: TextStyle(
-                            fontSize: 11.5,
+                            fontSize: 12,
                             fontWeight: FontWeight.w600,
                             color: Palette.inkSoft(context),
                             fontFeatures: const [FontFeature.tabularFigures()]),
@@ -830,6 +932,90 @@ class _RankListState extends ConsumerState<_RankList> {
 /// 周期粒度分段控件：周 / 月 / 年 / 全部 / 范围。
 ///
 /// 照参考版做的「轨道 + 白色滑块」：未选中透明，选中白底圆角 + 一点投影。
+/// 滚过顶部筛选块之后浮在顶栏下面的精简条：
+/// 左边是当前周期（点开可改），右边是三个口径胶囊。
+///
+/// 46 高，玻璃底 —— 它在滚动内容之上，所以必须带模糊 + 一条细底边，
+/// 否则快速滚动时上面的数字会透过它和胶囊打架。
+class _CompactFilterBar extends ConsumerWidget {
+  const _CompactFilterBar({required this.onOpenScope});
+
+  final VoidCallback onOpenScope;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final scope = ref.watch(insightScopeProvider);
+    final type = ref.watch(insightTypeProvider);
+    final brand = Palette.brand(context);
+    return Glass(
+      // 0.88 而不是默认的 0.66：精简条是「钉住的控制条」，不是装饰性玻璃。
+      // 0.66 那版在真机上一滚就能看见下面的区间行「~」透出来，像屏幕脏了一个点。
+      tint: (Palette.isDark(context) ? const Color(0xFF151C18) : Colors.white)
+          .withValues(alpha: 0.88),
+      blur: 18,
+      border: Border(
+        bottom: BorderSide(color: Palette.hairline(context), width: 0.5),
+      ),
+      child: SizedBox(
+        height: 46,
+        child: Row(
+          children: [
+            const SizedBox(width: 12),
+            InkWell(
+              onTap: onOpenScope,
+              borderRadius: BorderRadius.circular(AppRadius.pill),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _InsightsPageState._scopeName(scope),
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: brand,
+                      ),
+                    ),
+                    Icon(Icons.keyboard_arrow_down, size: 18, color: brand),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: _CapsuleRow(
+                children: [
+                  _Capsule(
+                    label: '支出',
+                    selected: type == InsightType.expense,
+                    onTap: () => ref.read(insightTypeProvider.notifier).state =
+                        InsightType.expense,
+                  ),
+                  _Capsule(
+                    label: '收入',
+                    selected: type == InsightType.income,
+                    onTap: () => ref.read(insightTypeProvider.notifier).state =
+                        InsightType.income,
+                  ),
+                  _Capsule(
+                    label: '结余',
+                    selected: type == InsightType.balance,
+                    onTap: () => ref.read(insightTypeProvider.notifier).state =
+                        InsightType.balance,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 9),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// 用 AnimatedContainer 而不是自己算位置：5 段平分，宽度由 Expanded 决定，
 /// 动画只动底色，不会出现滑块和文字错位。
 class _ScopeSegments extends StatelessWidget {
@@ -885,7 +1071,7 @@ class _ScopeSegments extends StatelessWidget {
                   child: Text(
                     e.value,
                     style: TextStyle(
-                      fontSize: 13.5,
+                      fontSize: 14,
                       fontWeight:
                           e.key == scope ? FontWeight.w700 : FontWeight.w500,
                       color: e.key == scope
@@ -930,13 +1116,13 @@ class _RangeLine extends StatelessWidget {
         children: [
           Text('全部时间',
               style: TextStyle(
-                  fontSize: 16,
+                  fontSize: 17,
                   fontWeight: FontWeight.w600,
                   color: Palette.ink(context))),
           const SizedBox(width: 8),
           Text('所有历史流水',
               style:
-                  TextStyle(fontSize: 11.5, color: Palette.inkFaint(context))),
+                  TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
         ],
       );
     }
@@ -952,7 +1138,7 @@ class _RangeLine extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 6),
           child: Text('~',
               style: TextStyle(
-                  fontSize: 15,
+                  fontSize: 14,
                   fontWeight: FontWeight.w600,
                   color: Palette.inkFaint(context))),
         ),
@@ -977,7 +1163,7 @@ class _RangeLine extends StatelessWidget {
           Text(
             _fmt(d),
             style: TextStyle(
-              fontSize: 16,
+              fontSize: 17,
               fontWeight: FontWeight.w600,
               // 不能点的一端压暗，一眼能看出哪个是"算出来的"
               color: enabled ? Palette.ink(context) : Palette.inkSoft(context),
@@ -1050,7 +1236,7 @@ class _Capsule extends StatelessWidget {
           child: Text(
             label,
             style: TextStyle(
-              fontSize: 12.5,
+              fontSize: 13,
               fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
               color: selected ? brand : Palette.inkSoft(context),
             ),
@@ -1175,7 +1361,7 @@ class _Trend extends ConsumerWidget {
                           const SizedBox(height: 4),
                           Text('${p.month.month}',
                               style: TextStyle(
-                                  fontSize: 9,
+                                  fontSize: 10.5,
                                   color: Palette.inkFaint(context))),
                         ],
                       ),
@@ -1277,7 +1463,7 @@ class _AmountOnlyToggle extends StatelessWidget {
             const SizedBox(width: 4),
             Text('只显示金额',
                 style:
-                    TextStyle(fontSize: 11, color: Palette.inkSoft(context))),
+                    TextStyle(fontSize: 12, color: Palette.inkSoft(context))),
           ],
         ),
       ),
@@ -1315,7 +1501,7 @@ class _ModeChip extends StatelessWidget {
         child: Text(
           label,
           style: TextStyle(
-            fontSize: 11,
+            fontSize: 12,
             fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
             color: selected ? color : Palette.inkSoft(context),
           ),
@@ -1370,7 +1556,7 @@ class _MiniRankPanel extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style:
-                        TextStyle(fontSize: 12.5, color: Palette.ink(context)),
+                        TextStyle(fontSize: 13, color: Palette.ink(context)),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -1400,7 +1586,7 @@ class _MiniRankPanel extends StatelessWidget {
           if (footnote != null)
             Text(footnote!,
                 style:
-                    TextStyle(fontSize: 11, color: Palette.inkFaint(context))),
+                    TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
         ],
       ),
     );
@@ -1513,7 +1699,7 @@ class _PrevComparePanel extends ConsumerWidget {
     return Row(
       children: [
         Text('合计',
-            style: TextStyle(fontSize: 12.5, color: Palette.inkSoft(context))),
+            style: TextStyle(fontSize: 13, color: Palette.inkSoft(context))),
         const SizedBox(width: 8),
         Text(hide ? '****' : '$symbol${centsToText(cur)}',
             style: TextStyle(
@@ -1523,7 +1709,7 @@ class _PrevComparePanel extends ConsumerWidget {
         const SizedBox(width: 6),
         Text(hide ? '****' : '上月 $symbol${centsToText(prev)}',
             style: TextStyle(
-                fontSize: 11, color: Palette.inkFaint(context))),
+                fontSize: 12, color: Palette.inkFaint(context))),
         const Spacer(),
         if (delta != null) _deltaChip(context, delta),
       ],
@@ -1546,7 +1732,7 @@ class _PrevComparePanel extends ConsumerWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                        fontSize: 12.5, color: Palette.ink(context))),
+                        fontSize: 13, color: Palette.ink(context))),
                 Text(hide ? '****' : '上月 $symbol${centsToText(prevCents)}',
                     style: TextStyle(
                         fontSize: 10.5, color: Palette.inkFaint(context))),
@@ -1557,7 +1743,7 @@ class _PrevComparePanel extends ConsumerWidget {
           const SizedBox(width: 8),
           Text(hide ? '****' : '$symbol${centsToText(n.cents)}',
               style: TextStyle(
-                  fontSize: 12.5,
+                  fontSize: 13,
                   fontWeight: FontWeight.w600,
                   color: Palette.ink(context))),
         ],
@@ -1590,7 +1776,7 @@ class _PrevComparePanel extends ConsumerWidget {
       child: Text(
         '${d.up ? '↑' : '↓'}${d.pct}%',
         style: TextStyle(
-            fontSize: 10, fontWeight: FontWeight.w700, color: color),
+            fontSize: 10.5, fontWeight: FontWeight.w700, color: color),
       ),
     );
   }
@@ -1623,7 +1809,7 @@ class _MonthNoteCard extends ConsumerWidget {
                 const Spacer(),
                 Text(note.isEmpty ? '写一句' : '修改',
                     style: TextStyle(
-                        fontSize: 11.5,
+                        fontSize: 12,
                         fontWeight: FontWeight.w600,
                         color: Palette.brand(context))),
               ],

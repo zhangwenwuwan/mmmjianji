@@ -21,6 +21,7 @@ import 'loans_page.dart';
 import 'motion.dart';
 import 'pocket_manage_page.dart' show showPocketEditor;
 import 'reimburse_page.dart';
+import 'tab_header.dart';
 import 'theme.dart';
 
 /// 一行账户余额（provider 返回的记录类型）
@@ -61,7 +62,8 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
     return balancesAsync.when(
       skipLoadingOnReload: true,
       loading: () => ListView(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 88),
+        // 顶栏是浮在内容上的，顶部得留出它的高度
+        padding: EdgeInsets.fromLTRB(12, TabHeader.heightOf(context) + 8, 12, 88),
         children: const [
           Skeleton(height: 112, radius: 8),
           SizedBox(height: 10),
@@ -80,14 +82,18 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
         onRetry: () async {
           ref.invalidate(balancesProvider);
           ref.invalidate(netWorthSeriesProvider(6));
+          ref.invalidate(netWorthCandlesProvider(6));
           ref.invalidate(goalsProvider);
         },
       ),
       data: (list) {
-        // 净资产要把外币折算成主币
+        // 净资产要把外币折算成主币。
+        // 「不计入总资产」的账户仍在列表里（它的余额要能看、能校准），
+        // 但**不进任何合计** —— 这是这个开关唯一的语义。
         var assets = 0;
         var liabilities = 0;
         for (final b in list) {
+          if (!b.pocket.includeInAssets) continue;
           final baseCents =
               toBaseCents(b.balanceCents, b.pocket.currency, base, rates);
           if (b.pocket.kind.isLiability) {
@@ -101,12 +107,14 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
         final hidden = list.where((b) => b.pocket.archived).toList();
         var hiddenTotal = 0;
         for (final b in hidden) {
+          if (!b.pocket.includeInAssets) continue;
           hiddenTotal +=
               toBaseCents(b.balanceCents, b.pocket.currency, base, rates);
         }
 
         return ListView(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 88),
+          // 顶栏是浮在内容上的，顶部得留出它的高度
+        padding: EdgeInsets.fromLTRB(12, TabHeader.heightOf(context) + 8, 12, 88),
           children: [
             // 净资产
             Container(
@@ -154,7 +162,7 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                                     '${glyphLabel(bookAsync.valueOrNull?.glyph ?? '')} '
                                     '${bookAsync.valueOrNull?.title ?? ''}',
                                     style: TextStyle(
-                                        fontSize: 11,
+                                        fontSize: 12,
                                         color:
                                             Colors.white.withValues(alpha: 0.9))),
                                 Icon(Icons.chevron_right,
@@ -177,7 +185,7 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                           maxLines: 1,
                           softWrap: false,
                           style: const TextStyle(
-                            fontSize: 26,
+                            fontSize: 28,
                             fontWeight: FontWeight.w700,
                             color: Colors.white,
                             fontFeatures: [FontFeature.tabularFigures()],
@@ -216,11 +224,11 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                   child: Row(
                     children: [
                       Icon(Icons.receipt_long_outlined,
-                          size: 17, color: Palette.brand(context)),
+                          size: 18, color: Palette.brand(context)),
                       const SizedBox(width: 8),
                       Text('待报销（应收）',
                           style: TextStyle(
-                              fontSize: 12.5,
+                              fontSize: 13,
                               fontWeight: FontWeight.w600,
                               color: Palette.brand(context))),
                       const Spacer(),
@@ -262,7 +270,12 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                       settings: settings,
                       base: base,
                       rates: rates,
-                      accounts: visible,
+                      // 构成图也是一张"钱从哪来"的汇总图，
+                      // 不计入总资产的账户同样不该出现在里面。
+                      accounts: [
+                        for (final b in visible)
+                          if (b.pocket.includeInAssets) b,
+                      ],
                     ),
             ),
             const SizedBox(height: 18),
@@ -282,7 +295,7 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                         const SizedBox(width: 8),
                         Text('还没有账户',
                             style: TextStyle(
-                                fontSize: 13.5,
+                                fontSize: 14,
                                 fontWeight: FontWeight.w600,
                                 color: Palette.ink(context))),
                       ],
@@ -319,6 +332,7 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                   if (rows.isEmpty) continue;
                   var subtotal = 0;
                   for (final r in rows) {
+                    if (!r.pocket.includeInAssets) continue;
                     subtotal += toBaseCents(
                         r.balanceCents, r.pocket.currency, base, rates);
                   }
@@ -354,14 +368,14 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                       onTap: () => setState(() => _showHidden = !_showHidden),
                       child: ListTile(
                         leading: Icon(Icons.visibility_off_outlined,
-                            size: 20, color: Palette.inkFaint(context)),
+                            size: 18, color: Palette.inkFaint(context)),
                         title: Text('已隐藏 ${hidden.length} 个账户',
                             style: TextStyle(
                                 fontSize: 13, color: Palette.inkSoft(context))),
                         subtitle: Text(
                           '合计 ${settings.hideAmounts ? '****' : '${settings.symbol}${centsToText(hiddenTotal)}'}',
                           style: TextStyle(
-                              fontSize: 11, color: Palette.inkFaint(context)),
+                              fontSize: 12, color: Palette.inkFaint(context)),
                         ),
                         trailing: Icon(
                           _showHidden ? Icons.expand_less : Icons.expand_more,
@@ -380,7 +394,7 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                                 const EdgeInsets.symmetric(horizontal: 16),
                             leading: AppGlyph(b.pocket.glyph, size: 15),
                             title: Text(b.pocket.displayName,
-                                style: const TextStyle(fontSize: 13.5)),
+                                style: const TextStyle(fontSize: 14)),
                             subtitle: Text('已归档',
                                 style: TextStyle(
                                     fontSize: 10.5,
@@ -416,7 +430,7 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                 child: Row(
                   children: [
                     Icon(Icons.flag_outlined,
-                        size: 20, color: Palette.inkFaint(context)),
+                        size: 18, color: Palette.inkFaint(context)),
                     const SizedBox(width: 10),
                     Text('给想买的东西攒钱',
                         style: TextStyle(
@@ -445,7 +459,7 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                               Expanded(
                                 child: Text(g.title,
                                     style: const TextStyle(
-                                        fontSize: 13.5,
+                                        fontSize: 14,
                                         fontWeight: FontWeight.w500)),
                               ),
                               Text(
@@ -511,7 +525,7 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
               children: [
                 Text(title,
                     style: TextStyle(
-                      fontSize: 12.5,
+                      fontSize: 13,
                       fontWeight: FontWeight.w600,
                       color: Palette.inkSoft(context),
                     )),
@@ -562,7 +576,7 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                 style: TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
             const SizedBox(height: 4),
             Text('点右上角 + 新增一个，之后记账时就能选到它',
-                style: TextStyle(fontSize: 11, color: Palette.inkFaint(context))),
+                style: TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
           ],
         ),
       );
@@ -594,7 +608,8 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
     if (!IconService.isImage(p.glyph)) {
       return Icon(fallback, size: size, color: color);
     }
-    final radius = size * 0.24;
+    // 按尺寸分两档，别再按比例算：同样的 34 格子在两页里弧度要一样。
+    final radius = size >= 36 ? AppRadius.tileLg : AppRadius.tileSm;
     return SizedBox(
       width: size,
       height: size,
@@ -612,13 +627,16 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
   /// 信贷列的自定义账户同样顶着「信用卡」——换类型文案不跟着变。
   String _accountTag(Pocket p) {
     final t = pocketTypeOf(p.typeId);
-    if (t != null) return t.label;
-    return switch (p.kind) {
-      PocketKind.cash => '现金',
-      PocketKind.bank => '储蓄卡',
-      PocketKind.credit => '信用卡',
-      PocketKind.debt => '负债',
-    };
+    final label = t?.label ??
+        switch (p.kind) {
+          PocketKind.cash => '现金',
+          PocketKind.bank => '储蓄卡',
+          PocketKind.credit => '信用卡',
+          PocketKind.debt => '负债',
+        };
+    // 「不计入总资产」的账户仍然显示在列表里（余额要能看、能校准），
+    // 只是不进任何合计。不标一下的话，用户会以为"它能显示却不参与总计"是 bug。
+    return p.includeInAssets ? label : '$label · 不计入';
   }
 
   Widget _accountCard(BuildContext context, _BalanceRow row, String base) {
@@ -683,10 +701,10 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                     ),
                     child: Text(_accountTag(p),
                         style: const TextStyle(
-                            fontSize: 9, color: Colors.white70)),                  ),
+                            fontSize: 10.5, color: Colors.white70)),                  ),
                   Text(nameOf(p.currency),
                       style:
-                          const TextStyle(fontSize: 10, color: Colors.white54)),
+                          const TextStyle(fontSize: 10.5, color: Colors.white54)),
                 ],
               ),
               const SizedBox(height: 10),
@@ -695,7 +713,7 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                 children: [
                   Text('还欠 ',
                       style: TextStyle(
-                          fontSize: 11,
+                          fontSize: 12,
                           color: Colors.white.withValues(alpha: 0.65))),
                   DefaultTextStyle.merge(
                     style: const TextStyle(color: Colors.white),
@@ -723,13 +741,13 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                   children: [
                     Text('额度 ${centsToText(limit)}',
                         style: TextStyle(
-                            fontSize: 10,
+                            fontSize: 10.5,
                             color: Colors.white.withValues(alpha: 0.62))),
                     const Spacer(),
                     Text(
                       '可用 ${available == null ? '-' : centsToText(available)}',
                       style: TextStyle(
-                          fontSize: 10,
+                          fontSize: 10.5,
                           fontWeight: FontWeight.w600,
                           color: Colors.white.withValues(alpha: 0.85)),
                     ),
@@ -740,7 +758,7 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                   padding: const EdgeInsets.only(top: 6),
                   child: Text('没设额度，点进账户详情可以补上',
                       style: TextStyle(
-                          fontSize: 10,
+                          fontSize: 10.5,
                           color: Colors.white.withValues(alpha: 0.5))),
                 ),
             ],
@@ -800,7 +818,7 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
                                         style: const TextStyle(
-                                            fontSize: 13.5,
+                                            fontSize: 14,
                                             fontWeight: FontWeight.w600)),
                                   ),
                                   const SizedBox(width: 5),
@@ -814,7 +832,7 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                                     ),
                                     child: Text(_accountTag(p),
                                         style: const TextStyle(
-                                            fontSize: 9,
+                                            fontSize: 10.5,
                                             color: Color(0xFF3E7BB6))),
                                   ),
                                 ],
@@ -822,7 +840,7 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                               if (p.currency != base)
                                 Text(p.currency,
                                     style: TextStyle(
-                                        fontSize: 10,
+                                        fontSize: 10.5,
                                         color: Palette.inkFaint(context))),
                             ],
                           ),
@@ -871,7 +889,7 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                  fontSize: 13.5, fontWeight: FontWeight.w600)),
+                                  fontSize: 14, fontWeight: FontWeight.w600)),
                         ),
                         const SizedBox(width: 5),
                         Container(
@@ -883,13 +901,13 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                           ),
                           child: Text(_accountTag(p),
                               style: TextStyle(
-                                  fontSize: 9, color: Palette.expense)),
+                                  fontSize: 10.5, color: Palette.expense)),
                         ),
                       ],
                     ),
                     Text('还欠',
                         style: TextStyle(
-                            fontSize: 10, color: Palette.inkFaint(context))),
+                            fontSize: 10.5, color: Palette.inkFaint(context))),
                   ],
                 ),
               ),
@@ -932,12 +950,12 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                            fontSize: 13.5, fontWeight: FontWeight.w500)),
+                            fontSize: 14, fontWeight: FontWeight.w500)),
                   ),
                   const SizedBox(width: 5),
                   Text(_accountTag(p),
                       style: TextStyle(
-                          fontSize: 9.5, color: Palette.inkFaint(context))),
+                          fontSize: 10.5, color: Palette.inkFaint(context))),
                 ],
               ),
             ),
@@ -954,7 +972,7 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
       children: [
         Text(label,
             style: TextStyle(
-                fontSize: 10, color: Colors.white.withValues(alpha: 0.65))),
+                fontSize: 10.5, color: Colors.white.withValues(alpha: 0.65))),
         const SizedBox(height: 2),
         Text(
           settings.hideAmounts
@@ -999,7 +1017,7 @@ class _SegmentedSwitch extends StatelessWidget {
               child: Text(
                 label,
                 style: TextStyle(
-                  fontSize: 12.5,
+                  fontSize: 13,
                   fontWeight: value == v ? FontWeight.w700 : FontWeight.w500,
                   color: value == v ? brand : Palette.inkSoft(context),
                 ),
@@ -1067,7 +1085,7 @@ class _Composition extends StatelessWidget {
                 style: TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
             const SizedBox(height: 4),
             Text('给账户填上期初余额，这里就会出现占比图',
-                style: TextStyle(fontSize: 11, color: Palette.inkFaint(context))),
+                style: TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
           ],
         ),
       );
@@ -1146,7 +1164,7 @@ class _Composition extends StatelessWidget {
                           ? '****'
                           : '${settings.symbol}${centsToText(it.cents)}',
                       style: TextStyle(
-                          fontSize: 11.5,
+                          fontSize: 12,
                           fontWeight: FontWeight.w600,
                           color: Palette.inkSoft(context),
                           fontFeatures: const [FontFeature.tabularFigures()]),
@@ -1154,7 +1172,7 @@ class _Composition extends StatelessWidget {
                     const SizedBox(width: 6),
                     Text('${(it.cents / total * 100).round()}%',
                         style: TextStyle(
-                            fontSize: 11, color: Palette.inkFaint(context))),
+                            fontSize: 12, color: Palette.inkFaint(context))),
                   ],
                 ),
               ),
@@ -1166,7 +1184,7 @@ class _Composition extends StatelessWidget {
                   '其他 ${items.length - shown.length} 个账户合计 '
                   '${settings.hideAmounts ? '****' : '${settings.symbol}${centsToText(rest)}'}',
                   style: TextStyle(
-                      fontSize: 11, color: Palette.inkFaint(context))),
+                      fontSize: 12, color: Palette.inkFaint(context))),
             ),
         ],
       ),
@@ -1182,7 +1200,7 @@ class NetWorthTrend extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final async = ref.watch(netWorthSeriesProvider(6));
+    final async = ref.watch(netWorthCandlesProvider(6));
     return Panel(
       child: async.when(
         skipLoadingOnReload: true,
@@ -1190,12 +1208,14 @@ class NetWorthTrend extends ConsumerWidget {
         error: (e, _) => ErrorRetryView(
           message: '读取失败',
           detail: '$e',
-          onRetry: () async => ref.invalidate(netWorthSeriesProvider(6)),
+          onRetry: () async => ref.invalidate(netWorthCandlesProvider(6)),
         ),
-        data: (points) {
+        data: (candles) {
           // 只有一两个月有数据时画出来就是几根平线，不如直说
-          final withData = points.where((p) => p.netCents != 0).toList();
-          if (withData.length < 2) {
+          // 有蜡烛可看 = 至少两个月、且其中至少一个月净值真的动过。
+          // 全是平线（只有期初、从没记过账）时不画，免得像坏了。
+          final moved = candles.where((c) => c.highCents != c.lowCents).length;
+          if (candles.length < 2 || moved == 0) {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1218,13 +1238,14 @@ class NetWorthTrend extends ConsumerWidget {
               ],
             );
           }
-          final maxAbs = points.fold<int>(1, (m, p) {
-            final v = p.netCents.abs();
-            return v > m ? v : m;
-          });
-          final first = points.first.netCents;
-          final last = points.last.netCents;
+          final first = candles.first.openCents;
+          final last = candles.last.closeCents;
           final diff = last - first;
+          // 涨红跌绿（中国股市习惯）。净资产是「值」，跟涨跌走，不跟收支走 ——
+          // 想换回「绿涨红跌」只要把下面两个颜色对调（rise/fall），一处就够。
+          final rise = Palette.expense;
+          final fall = Palette.income;
+          final diffColor = diff >= 0 ? rise : fall;
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -1233,60 +1254,53 @@ class NetWorthTrend extends ConsumerWidget {
                   Text('净资产走势',
                       style: TextStyle(
                           fontSize: 12, color: Palette.inkSoft(context))),
+                  const SizedBox(width: 6),
+                  Text('月K',
+                      style: TextStyle(
+                          fontSize: 10.5, color: Palette.inkFaint(context))),
                   const Spacer(),
                   Text(
                     '${diff >= 0 ? '↑' : '↓'} ${centsToText(diff.abs())}',
                     style: TextStyle(
-                      fontSize: 11.5,
+                      fontSize: 12,
                       fontWeight: FontWeight.w600,
-                      color: diff >= 0 ? Palette.income : Palette.expense,
+                      color: diffColor,
                     ),
                   ),
                 ],
               ),
               const SizedBox(height: 10),
               SizedBox(
-                height: 74,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    for (final p in points)
-                      Expanded(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            TweenAnimationBuilder<double>(
-                              tween: Tween<double>(
-                                begin: 0,
-                                end: (p.netCents.abs() / maxAbs * 52)
-                                    .clamp(3, 52)
-                                    .toDouble(),
-                              ),
-                              duration: Motion.d(context, Motion.panel),
-                              curve: XCurve.easeOut,
-                              builder: (context, v, _) => Container(
-                                height: v,
-                                margin:
-                                    const EdgeInsets.symmetric(horizontal: 5),
-                                decoration: BoxDecoration(
-                                  color: p.netCents >= 0
-                                      ? Palette.brand(context)
-                                          .withValues(alpha: 0.8)
-                                      : Palette.expense.withValues(alpha: 0.8),
-                                  borderRadius: BorderRadius.circular(3),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text('${p.month.month}',
-                                style: TextStyle(
-                                    fontSize: 9,
-                                    color: Palette.inkFaint(context))),
-                          ],
-                        ),
-                      ),
-                  ],
+                height: 92,
+                child: TweenAnimationBuilder<double>(
+                  tween: Tween<double>(begin: 0, end: 1),
+                  duration: Motion.d(context, Motion.panel),
+                  curve: XCurve.easeOut,
+                  builder: (context, t, _) => CustomPaint(
+                    size: Size.infinite,
+                    painter: _NetWorthCandlePainter(
+                      candles: candles,
+                      rise: rise,
+                      fall: fall,
+                      zeroLine: Palette.hairline(context),
+                      progress: t,
+                    ),
+                  ),
                 ),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  for (final c in candles)
+                    Expanded(
+                      child: Center(
+                        child: Text('${c.month.month}',
+                            style: TextStyle(
+                                fontSize: 10.5,
+                                color: Palette.inkFaint(context))),
+                      ),
+                    ),
+                ],
               ),
             ],
           );
@@ -1294,6 +1308,122 @@ class NetWorthTrend extends ConsumerWidget {
       ),
     );
   }
+}
+
+/// 净资产蜡烛图（月 K）。
+///
+/// 形态：实体 = 开→收，上下影线 = 当月净值最高/最低。
+/// 数据由 [NetWorthTrend] 背后的逐日净值按月切出来，**不是估算的影线**。
+///
+/// 为什么自定义画而不是用图表库：只有一个序列、一种形态，引一个几百 KB 的
+/// 图表库不划算；这里 60 行就能画完，还能跟着 App 的圆角/描边风格走。
+class _NetWorthCandlePainter extends CustomPainter {
+  const _NetWorthCandlePainter({
+    required this.candles,
+    required this.rise,
+    required this.fall,
+    required this.zeroLine,
+    required this.progress,
+  });
+
+  final List<NetWorthCandle> candles;
+  final Color rise;
+  final Color fall;
+  final Color zeroLine;
+
+  /// 0→1 的入场进度：所有影线从「开盘价」长到最终形态。
+  final double progress;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (candles.isEmpty || size.width <= 0 || size.height <= 0) return;
+
+    var minV = candles.first.lowCents.toDouble();
+    var maxV = candles.first.highCents.toDouble();
+    for (final c in candles) {
+      final lo = c.lowCents.toDouble();
+      final hi = c.highCents.toDouble();
+      if (lo < minV) minV = lo;
+      if (hi > maxV) maxV = hi;
+    }
+    // 全是同一个值（比如只有期初、没记过账）：撑开一点，否则除零
+    if (maxV - minV < 1) {
+      maxV += 100;
+      minV -= 100;
+    }
+    // 上下各留 8%：影线不顶到边，看着才像行情图
+    final pad = (maxV - minV) * 0.08;
+    minV -= pad;
+    maxV += pad;
+
+    const inset = 1.0;
+    final h = size.height - inset * 2;
+    double y(double v) => inset + (maxV - v) / (maxV - minV) * h;
+
+    // 零轴：跨零时给一条细线，正负一眼分得清
+    if (minV < 0 && maxV > 0) {
+      canvas.drawLine(
+        Offset(0, y(0)),
+        Offset(size.width, y(0)),
+        Paint()
+          ..color = zeroLine
+          ..strokeWidth = 1,
+      );
+    }
+
+    final slot = size.width / candles.length;
+    final bodyW = (slot * 0.56).clamp(3.0, 18.0);
+    final wick = Paint()
+      ..strokeWidth = 1.3
+      ..strokeCap = StrokeCap.round;
+
+    for (var i = 0; i < candles.length; i++) {
+      final c = candles[i];
+      final cx = slot * (i + 0.5);
+      // 入场动画：从开盘价往最终值插值
+      double at(int v) => c.openCents + (v - c.openCents) * progress;
+
+      final open = at(c.openCents);
+      final close = at(c.closeCents);
+      final high = at(c.highCents);
+      final low = at(c.lowCents);
+      final rising = c.closeCents >= c.openCents;
+      final color = rising ? rise : fall;
+
+      wick.color = color;
+      canvas.drawLine(Offset(cx, y(high)), Offset(cx, y(low)), wick);
+
+      final top = y(math.max(open, close));
+      final bottom = y(math.min(open, close));
+      if (bottom - top < 1.2) {
+        // 十字星：开收几乎相等，画一根粗横线代替实体
+        canvas.drawLine(
+          Offset(cx - bodyW / 2, top),
+          Offset(cx + bodyW / 2, top),
+          Paint()
+            ..color = color
+            ..strokeWidth = 2
+            ..strokeCap = StrokeCap.round,
+        );
+      } else {
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromLTRB(cx - bodyW / 2, top, cx + bodyW / 2, bottom),
+            const Radius.circular(1.5),
+          ),
+          Paint()..color = color,
+        );
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _NetWorthCandlePainter old) =>
+      old.progress != progress ||
+      !identical(old.candles, candles) ||
+      old.rise != rise ||
+      old.fall != fall ||
+      old.zeroLine != zeroLine;
 }
 
 /// 资产页快捷入口：报销 / 借贷 / 理财目标（参考版资产 tab 的三宫格）。
@@ -1442,7 +1572,7 @@ class _AssetQuickRow extends ConsumerWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              fontSize: 11.5,
+              fontSize: 12,
               fontWeight: FontWeight.w600,
               color: color,
               fontFeatures: const [FontFeature.tabularFigures()],

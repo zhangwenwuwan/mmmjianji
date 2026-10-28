@@ -196,7 +196,7 @@ class _BucketList extends ConsumerWidget {
         ];
 
         return ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
           children: [
             Panel(
               padding: EdgeInsets.zero,
@@ -222,7 +222,7 @@ class _BucketList extends ConsumerWidget {
                 child: Text(
                   '想把分类归到某个大类下？编辑时选「上级分类」即可变成二级分类。',
                   style:
-                      TextStyle(fontSize: 11, color: Palette.inkFaint(context)),
+                      TextStyle(fontSize: 12, color: Palette.inkFaint(context)),
                 ),
               ),
             // 归档曾是单向的：一旦归档就从列表消失，且没有任何反向入口。
@@ -246,7 +246,7 @@ class _BucketList extends ConsumerWidget {
                                 fontSize: 14,
                                 color: Palette.inkSoft(context))),
                         subtitle: const Text('已归档',
-                            style: TextStyle(fontSize: 11)),
+                            style: TextStyle(fontSize: 12)),
                         trailing: TextButton(
                           onPressed: () async {
                             final store =
@@ -277,7 +277,7 @@ class _BucketList extends ConsumerWidget {
         children: [
           if (isChild) ...[
             Icon(Icons.subdirectory_arrow_right,
-                size: 13, color: Palette.inkFaint(context)),
+                size: 14, color: Palette.inkFaint(context)),
             const SizedBox(width: 3),
           ],
           Flexible(
@@ -285,7 +285,7 @@ class _BucketList extends ConsumerWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                    fontSize: isChild ? 13.5 : 14.5,
+                    fontSize: isChild ? 13 : 14,
                     color: isChild
                         ? Palette.inkSoft(context)
                         : Palette.ink(context))),
@@ -295,7 +295,7 @@ class _BucketList extends ConsumerWidget {
       onTap: () => Navigator.of(context)
           .push(AppPageRoute(page: CategoryDetailPage(bucket: b))),
       trailing: PopupMenuButton<String>(
-        icon: const Icon(Icons.more_horiz, size: 20),
+        icon: const Icon(Icons.more_horiz, size: 18),
         onSelected: (v) async {
           if (v == 'edit') {
             onEdit(b);

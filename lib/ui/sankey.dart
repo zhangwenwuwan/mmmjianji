@@ -441,7 +441,7 @@ class _SankeyPainter extends CustomPainter {
         text: hideAmounts
             ? '$symbol***'
             : '$symbol${centsToText(n.flow.cents)}',
-        style: TextStyle(fontSize: 9.5, height: 1.3, color: faint),
+        style: TextStyle(fontSize: 10.5, height: 1.3, color: faint),
       ),
       maxLines: 1,
       ellipsis: '…',

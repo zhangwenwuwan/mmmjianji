@@ -21,7 +21,7 @@ class ExportPage extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('导出数据')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 32),
         children: [
           Text(
             '三种导出用途不同，按需要选：',
@@ -78,7 +78,7 @@ class ExportPage extends ConsumerWidget {
                   child: Text(
                     '导出全程在本机完成，文件由你自己决定发给谁。',
                     style: TextStyle(
-                        fontSize: 11,
+                        fontSize: 12,
                         height: 1.5,
                         color: Palette.inkFaint(context)),
                   ),
@@ -106,7 +106,7 @@ class ExportPage extends ConsumerWidget {
         children: [
           Row(
             children: [
-              Icon(icon, size: 20, color: Palette.brand(context)),
+              Icon(icon, size: 18, color: Palette.brand(context)),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(title,
@@ -125,7 +125,7 @@ class ExportPage extends ConsumerWidget {
                   ),
                   child: Text(badge,
                       style: TextStyle(
-                          fontSize: 10,
+                          fontSize: 10.5,
                           fontWeight: FontWeight.w600,
                           color: Palette.brand(context))),
                 ),

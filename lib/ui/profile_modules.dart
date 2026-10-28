@@ -164,7 +164,7 @@ class ProfileModulesPage extends ConsumerWidget {
                     '关掉的入口不会消失，只是不在「我的」页显示。'
                     '全部关掉后，点「常用」右边的齿轮图标还能打开本页。',
                     style: TextStyle(
-                        fontSize: 11.5,
+                        fontSize: 12,
                         height: 1.5,
                         color: Palette.inkFaint(context)),
                   ),
@@ -221,7 +221,7 @@ class ProfileModulesPage extends ConsumerWidget {
                 children: [
                   Text(m.label,
                       style: TextStyle(
-                        fontSize: 13.5,
+                        fontSize: 14,
                         fontWeight: FontWeight.w600,
                         color: on ? Palette.ink(context) : Palette.inkSoft(context),
                       )),

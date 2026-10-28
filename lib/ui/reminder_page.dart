@@ -75,7 +75,7 @@ class _ReminderPageState extends State<ReminderPage> {
       body: _loading
           ? const SkeletonList(count: 3, height: 64)
           : ListView(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 32),
               children: [
                 Panel(
                   padding: EdgeInsets.zero,
@@ -86,7 +86,7 @@ class _ReminderPageState extends State<ReminderPage> {
                         title: const Text('每天提醒我记账'),
                         subtitle: Text(
                           _enabled ? '每天 $_timeText 提醒一次' : '当前未开启',
-                          style: const TextStyle(fontSize: 11),
+                          style: const TextStyle(fontSize: 12),
                         ),
                         trailing: JellySwitch(
                           value: _enabled,
@@ -102,8 +102,8 @@ class _ReminderPageState extends State<ReminderPage> {
                             leading: const Icon(Icons.schedule_outlined),
                             title: const Text('提醒时间'),
                             subtitle: Text(_timeText,
-                                style: const TextStyle(fontSize: 11)),
-                            trailing: const Icon(Icons.chevron_right, size: 20),
+                                style: const TextStyle(fontSize: 12)),
+                            trailing: const Icon(Icons.chevron_right, size: 18),
                           ),
                         ),
                       ],
@@ -117,7 +117,7 @@ class _ReminderPageState extends State<ReminderPage> {
                     children: [
                       Text('关于权限',
                           style: TextStyle(
-                              fontSize: 12.5,
+                              fontSize: 13,
                               fontWeight: FontWeight.w700,
                               color: Palette.ink(context))),
                       const SizedBox(height: 6),
@@ -126,7 +126,7 @@ class _ReminderPageState extends State<ReminderPage> {
                         '拒绝也不影响记账，只是不会弹提醒。'
                         '通知内容只在本机生成，不经过任何服务器。',
                         style: TextStyle(
-                            fontSize: 11.5,
+                            fontSize: 12,
                             height: 1.6,
                             color: Palette.inkSoft(context)),
                       ),
@@ -144,7 +144,7 @@ class _ReminderPageState extends State<ReminderPage> {
                         child: Text(
                           '部分手机的省电策略会清掉定时通知，建议把简记加入「不受限制」名单。',
                           style: TextStyle(
-                              fontSize: 11,
+                              fontSize: 12,
                               height: 1.5,
                               color: Palette.inkFaint(context)),
                         ),

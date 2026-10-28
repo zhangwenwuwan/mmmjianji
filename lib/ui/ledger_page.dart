@@ -14,11 +14,13 @@ import '../state/ledger_state.dart';
 import '../state/settings.dart';
 import 'book_manage_page.dart';
 import 'report_page.dart';
+import 'boot_reveal.dart';
 import 'budget_page.dart';
 import 'common.dart';
 import 'editor_page.dart';
 import 'wheel_date_picker.dart';
 import 'export_page.dart';
+import 'glass.dart';
 import 'illustrations.dart';
 import 'motion.dart';
 import 'pull_to_add.dart';
@@ -120,17 +122,39 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
             // 下拉刷新 / 重算时保留旧列表，不闪骨架屏
             skipLoadingOnReload: true,
             loading: () => [
+              // 骨架也占第 1 个序号：数据还没到时幕已经开了，
+              // 让骨架自己浮上来，比"空一下突然出现"顺。
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(12, 8, 12, 88),
                 sliver: SliverList(
                   delegate: SliverChildListDelegate([
-                    const Skeleton(height: 64, radius: 16),
+                    BootRevealItem(
+                      index: 1,
+                      // 圆角必须和真卡片一致（Panel = AppRadius.card = 8）。
+                      // 原来是 16，加载完圆角一下收一半，看着像跳了一下。
+                      child: const Skeleton(height: 64, radius: AppRadius.card),
+                    ),
                     const SizedBox(height: 14),
-                    for (int i = 0; i < 6; i++) ...[
+                    // 流水骨架画成「一张卡 + 分隔线」。
+                    // 真实流水是一整张 Panel 里的平铺行（只有外层 8 圆角），
+                    // 之前每行都画成 radius 14 的独立药丸，加载完成的瞬间
+                    // 六七个药丸"啪"地并成一张卡 —— 这一跳比数字刷新还显眼。
+                    for (var g = 0; g < 2; g++) ...[
                       const Skeleton(height: 14, expand: true, radius: 7),
                       const SizedBox(height: 8),
-                      const Skeleton(height: 58, radius: 14),
-                      const SizedBox(height: 8),
+                      Panel(
+                        padding: EdgeInsets.zero,
+                        child: Column(
+                          children: [
+                            for (var i = 0; i < 3; i++) ...[
+                              if (i > 0)
+                                const Divider(height: 1, indent: 56),
+                              const Skeleton(height: 64, radius: 0),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 14),
                     ],
                   ]),
                 ),
@@ -146,6 +170,8 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
               ),
             ],
             data: (entries) => [
+              // 冷启动时这几块按 [BootRevealItem] 的序号依次浮上来：
+              // 顶栏 → 本月概览 → 各模块 → 流水。序号让 _stagger 排。
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(12, 8, 12, 88),
                 sliver: SliverList(
@@ -154,26 +180,40 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
                     // 2026-10-26 用户要求「本月概览固定显示」——删掉顶栏那条
                     // 重复的收支三段后，这张卡就是首页唯一的数据概览，
                     // 允许它被拖到列表中间或被关掉都很荒唐。
-                    _HomeHeroCard(
-                      expenseCents: totals.expenseCents,
-                      incomeCents: totals.incomeCents,
-                      budgetCents: budget,
+                    BootRevealItem(
+                      index: 1,
+                      child: _HomeHeroCard(
+                        expenseCents: totals.expenseCents,
+                        incomeCents: totals.incomeCents,
+                        budgetCents: budget,
+                      ),
                     ),
                     const SizedBox(height: 8),
                     // 首页模块的顺序和显隐由「首页模块」设置页决定，
                     // 清单见 core/home_modules.dart。
-                    ..._homeModuleWidgets(
-                      modules: settings.modulesVisible,
-                      month: month,
-                      totals: totals,
-                      budget: budget,
+                    ..._stagger(
+                      _homeModuleWidgets(
+                        modules: settings.modulesVisible,
+                        month: month,
+                        totals: totals,
+                        budget: budget,
+                      ),
+                      2,
                     ),
                     if (visibleNow.isEmpty)
-                      _EmptyHome(
-                        onAction: () => openEntryEditor(context, ref),
+                      BootRevealItem(
+                        index: 6,
+                        child: _EmptyHome(
+                          onAction: () => openEntryEditor(context, ref),
+                        ),
                       )
                     else
-                      ..._buildGroups(context, visibleNow, toBaseOf),
+                      // 流水从模块后面接着排（序号封顶见
+                      // BootRevealTimeline.maxIndex，20 组的月份也不会排到天边）。
+                      ..._stagger(
+                        _buildGroups(context, visibleNow, toBaseOf),
+                        2 + settings.modulesVisible.length,
+                      ),
                   ]),
                 ),
               ),
@@ -206,6 +246,15 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
       ],
     );
   }
+
+  /// 给一组块编上连续的出场序号（冷启动时依次浮上来）。
+  ///
+  /// 只在启动那一次有效：时间线失效后 [BootRevealItem] 自己会直接显示，
+  /// 这里不用判断时机。
+  List<Widget> _stagger(List<Widget> blocks, int from) => [
+        for (var i = 0; i < blocks.length; i++)
+          BootRevealItem(index: from + i, child: blocks[i]),
+      ];
 
   // ---------------------------------------------------------------- 批量选择
 
@@ -633,7 +682,7 @@ class _SafeToSpendCard extends ConsumerWidget {
                   const SizedBox(width: 8),
                   Text('今日安全可花',
                       style: TextStyle(
-                          fontSize: 12.5,
+                          fontSize: 13,
                           fontWeight: FontWeight.w600,
                           color: Palette.inkSoft(context))),
                   const Spacer(),
@@ -650,7 +699,7 @@ class _SafeToSpendCard extends ConsumerWidget {
                   Text(
                     '${over ? '-' : ''}${settings.symbol}$text',
                     style: TextStyle(
-                      fontSize: 26,
+                      fontSize: 28,
                       fontWeight: FontWeight.w700,
                       color: over ? Palette.expense : Palette.ink(context),
                       fontFeatures: const [FontFeature.tabularFigures()],
@@ -662,7 +711,7 @@ class _SafeToSpendCard extends ConsumerWidget {
                     child: Text(
                       over ? '今天已超支' : '还剩 $daysLeft 天',
                       style: TextStyle(
-                          fontSize: 11.5, color: Palette.inkSoft(context)),
+                          fontSize: 12, color: Palette.inkSoft(context)),
                     ),
                   ),
                 ],
@@ -740,24 +789,27 @@ class _LedgerHeader extends SliverPersistentHeaderDelegate {
         ? Colors.white.withValues(alpha: 0.82)
         : Palette.inkFaint(context);
 
-    return ClipRect(
-      child: Container(
-        // 有封面时底色交给封面自己画；这里给深色兜底，
-        // 封面文件被删掉 / 恢复备份后丢失时白字仍然读得出来。
-        // 内容滚到顶栏下面时再补一条细阴影分层。
-        decoration: BoxDecoration(
-          color: hasCover ? const Color(0xFF1F2422) : Palette.paper(context),
-          boxShadow: overlapsContent
-              ? [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.05),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ]
-              : null,
-        ),
-        child: Stack(
+    // 顶栏是第 0 块：它浮得最早、幅度也最小 —— 它是"钉"在顶上的，
+    // 下沉 22px 会在它上方露出一条背景色的缝。
+    // 无封面时顶栏是**玻璃**：下面就是流水列表，滚动时金额会从玻璃底下走过去。
+    // 有封面时封面本身就是底图，再叠模糊只会把照片糊掉，保持实色。
+    final bar = Container(
+      // 有封面时底色交给封面自己画；这里给深色兜底，
+      // 封面文件被删掉 / 恢复备份后丢失时白字仍然读得出来。
+      // 内容滚到顶栏下面时再补一条细阴影分层。
+      decoration: BoxDecoration(
+        color: hasCover ? const Color(0xFF1F2422) : Colors.transparent,
+        boxShadow: overlapsContent
+            ? [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.05),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ]
+            : null,
+      ),
+      child: Stack(
           children: [
             if (hasCover)
               Positioned.fill(
@@ -791,7 +843,7 @@ class _LedgerHeader extends SliverPersistentHeaderDelegate {
                       tooltip: '搜索',
                       visualDensity: VisualDensity.compact,
                       onPressed: onSearch,
-                      icon: Icon(Icons.search, size: 20, color: coverInkSoft),
+                      icon: Icon(Icons.search, size: 18, color: coverInkSoft),
                     ),
                     const SizedBox(width: 4),
                   ],
@@ -800,7 +852,12 @@ class _LedgerHeader extends SliverPersistentHeaderDelegate {
             ),
           ],
         ),
-      ),
+    );
+
+    return BootRevealItem(
+      index: 0,
+      y: 8,
+      child: hasCover ? ClipRect(child: bar) : Glass(blur: 18, child: bar),
     );
   }
 }
@@ -892,10 +949,10 @@ class _BudgetHintCardState extends State<_BudgetHintCard> {
           child: Row(
             children: [
               Icon(Icons.pie_chart_outline,
-                  size: 20, color: Palette.brand(context)),
+                  size: 18, color: Palette.brand(context)),
               const SizedBox(width: 10),
               const Expanded(
-                child: Text('设个月度预算，超支前会提醒你', style: TextStyle(fontSize: 12.5)),
+                child: Text('设个月度预算，超支前会提醒你', style: TextStyle(fontSize: 13)),
               ),
               TextButton(
                 onPressed: () => Navigator.of(context)
@@ -960,10 +1017,10 @@ class _BackupHintCardState extends ConsumerState<_BackupHintCard> {
           child: Row(
             children: [
               Icon(Icons.backup_outlined,
-                  size: 20, color: Palette.brand(context)),
+                  size: 18, color: Palette.brand(context)),
               const SizedBox(width: 10),
               Expanded(
-                  child: Text(text, style: const TextStyle(fontSize: 12.5))),
+                  child: Text(text, style: const TextStyle(fontSize: 13))),
               TextButton(
                 onPressed: () => Navigator.of(context)
                     .push(AppPageRoute(page: const ExportPage())),
@@ -1158,11 +1215,11 @@ class _BatchBar extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 19, color: color),
+              Icon(icon, size: 18, color: color),
               const SizedBox(height: 1),
               Text(label,
                   maxLines: 1,
-                  style: TextStyle(fontSize: 9, height: 1.1, color: color)),
+                  style: TextStyle(fontSize: 10.5, height: 1.1, color: color)),
             ],
           ),
         ),
@@ -1300,7 +1357,7 @@ class EntryRow extends ConsumerWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                                fontSize: 14.5,
+                                fontSize: 14,
                                 fontWeight: FontWeight.w500,
                                 color: Palette.ink(context))),
                       ),
@@ -1333,7 +1390,7 @@ class EntryRow extends ConsumerWidget {
                       if (attachCount > 0) ...[
                         const SizedBox(width: 5),
                         Icon(Icons.photo_outlined,
-                            size: 12, color: Palette.inkFaint(context)),
+                            size: 14, color: Palette.inkFaint(context)),
                       ],
                     ],
                   ),
@@ -1345,7 +1402,7 @@ class EntryRow extends ConsumerWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                            fontSize: 11.5,
+                            fontSize: 12,
                             color: Palette.inkFaint(context)),
                       ),
                     ),
@@ -1360,7 +1417,7 @@ class EntryRow extends ConsumerWidget {
               // 流水行不带币种符号：符号占位、显重，且整列都是同一币种时纯噪音。
               showSymbol: false,
               style: const TextStyle(
-                fontSize: 15,
+                fontSize: 14,
                 fontWeight: FontWeight.w600,
                 fontFeatures: [FontFeature.tabularFigures()],
               ),
@@ -1416,7 +1473,7 @@ class EntryRow extends ConsumerWidget {
       child: Text(
         text,
         style: TextStyle(
-          fontSize: 9,
+          fontSize: 10.5,
           fontWeight: FontWeight.w600,
           color: base,
         ),
@@ -1454,7 +1511,7 @@ class _HomeHeroCard extends ConsumerWidget {
                 children: [
                   Text('本月支出',
                       style: TextStyle(
-                          fontSize: 12.5, color: Palette.inkSoft(context))),
+                          fontSize: 13, color: Palette.inkSoft(context))),
                   const Spacer(),
                   if (budgetCents > 0)
                     Container(
@@ -1479,7 +1536,7 @@ class _HomeHeroCard extends ConsumerWidget {
                 expenseCents,
                 flow: 'out',
                 style: TextStyle(
-                  fontSize: 26,
+                  fontSize: 28,
                   fontWeight: FontWeight.w700,
                   color: Palette.expense,
                   fontFeatures: const [FontFeature.tabularFigures()],
@@ -1509,7 +1566,7 @@ class _HomeHeroCard extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(label,
-              style: TextStyle(fontSize: 11, color: Palette.inkFaint(context))),
+              style: TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
           const SizedBox(height: 3),
           // 走 MoneyText：hidden 状态和「结余为负」都由它处理。
           // 原来这里手写 `centsToText(cents.abs())`，-12 会显示成「¥12」——
@@ -1550,11 +1607,11 @@ class _AddEntryButton extends StatelessWidget {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.add, color: Colors.white, size: 20),
+            const Icon(Icons.add, color: Colors.white, size: 18),
             const SizedBox(width: 6),
             Text('添加一条新记账',
                 style: TextStyle(
-                    fontSize: 13.5,
+                    fontSize: 14,
                     fontWeight: FontWeight.w700,
                     color: Colors.white)),
           ],

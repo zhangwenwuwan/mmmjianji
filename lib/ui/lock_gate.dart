@@ -246,7 +246,7 @@ class _LockGateState extends ConsumerState<LockGate>
                   obscureText: true,
                   keyboardType: TextInputType.number,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 22, letterSpacing: 8),
+                  style: const TextStyle(fontSize: 20, letterSpacing: 8),
                   onChanged: _onPinChanged,
                   onSubmitted: (_) => _submit(),
                   decoration: InputDecoration(
@@ -276,11 +276,11 @@ class _LockGateState extends ConsumerState<LockGate>
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(Icons.fingerprint,
-                              size: 20, color: Palette.brand(context)),
+                              size: 18, color: Palette.brand(context)),
                           const SizedBox(width: 6),
                           Text('用指纹 / 面容解锁',
                               style: TextStyle(
-                                  fontSize: 12.5,
+                                  fontSize: 13,
                                   color: Palette.brand(context))),
                         ],
                       ),
@@ -289,7 +289,7 @@ class _LockGateState extends ConsumerState<LockGate>
                   if (_bioHint != null)
                     Text(_bioHint!,
                         style: TextStyle(
-                            fontSize: 11.5,
+                            fontSize: 12,
                             color: Theme.of(context).colorScheme.error)),
                 ],
               ],

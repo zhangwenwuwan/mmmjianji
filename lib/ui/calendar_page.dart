@@ -92,13 +92,13 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
         children: [
           ListTile(
             leading: Icon(Icons.today_outlined,
-                size: 20, color: Palette.inkSoft(ctx)),
+                size: 18, color: Palette.inkSoft(ctx)),
             title: const Text('回到今天'),
             onTap: () => Navigator.pop(ctx, 'today'),
           ),
           ListTile(
             leading: Icon(Icons.event_outlined,
-                size: 20, color: Palette.inkSoft(ctx)),
+                size: 18, color: Palette.inkSoft(ctx)),
             title: const Text('选择年月'),
             onTap: () => Navigator.pop(ctx, 'month'),
           ),
@@ -230,7 +230,7 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
                     Text(
                       '${month.year}年${month.month}月',
                       style: TextStyle(
-                        fontSize: 21,
+                        fontSize: 20,
                         fontWeight: FontWeight.w700,
                         letterSpacing: -0.2,
                         color: Palette.ink(context),
@@ -238,7 +238,7 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
                     ),
                     const SizedBox(width: 2),
                     Icon(Icons.expand_more,
-                        size: 17, color: Palette.inkFaint(context)),
+                        size: 18, color: Palette.inkFaint(context)),
                   ],
                 ),
               ),
@@ -309,12 +309,12 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(label,
-            style: TextStyle(fontSize: 11, color: Palette.inkFaint(context))),
+            style: TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
         const SizedBox(width: 3),
         Text(
           text,
           style: TextStyle(
-            fontSize: 11,
+            fontSize: 12,
             fontWeight: FontWeight.w600,
             color: color,
             fontFeatures: const [FontFeature.tabularFigures()],
@@ -335,7 +335,7 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
                 child: Text(
                   w,
                   style: TextStyle(
-                    fontSize: 11.5,
+                    fontSize: 12,
                     fontWeight: FontWeight.w500,
                     color: Palette.inkFaint(context),
                   ),
@@ -527,7 +527,7 @@ class _DayCell extends StatelessWidget {
                 Text(
                   '$day',
                   style: TextStyle(
-                    fontSize: 15.5,
+                    fontSize: 14,
                     height: 1.05,
                     fontWeight: (selected || isToday)
                         ? FontWeight.w700
@@ -548,7 +548,7 @@ class _DayCell extends StatelessWidget {
                         subtitle,
                         maxLines: 1,
                         style: TextStyle(
-                          fontSize: 8.5,
+                          fontSize: 10.5,
                           height: 1.1,
                           color: subFg,
                         ),
@@ -572,7 +572,7 @@ class _DayCell extends StatelessWidget {
         hide ? '**' : text,
         maxLines: 1,
         style: TextStyle(
-          fontSize: 8.5,
+          fontSize: 10.5,
           height: 1.1,
           fontWeight: FontWeight.w600,
           color: selected
@@ -666,7 +666,7 @@ class _DayEntriesPanel extends StatelessWidget {
                       Text(
                         '这一天你还没有记账',
                         style: TextStyle(
-                          fontSize: 12.5,
+                          fontSize: 13,
                           color: Palette.inkFaint(context),
                         ),
                       ),
@@ -752,7 +752,7 @@ class _DayHead extends StatelessWidget {
             Text(
               rel,
               style: TextStyle(
-                fontSize: 11.5,
+                fontSize: 12,
                 color: Palette.inkFaint(context),
               ),
             ),
@@ -761,7 +761,7 @@ class _DayHead extends StatelessWidget {
           Text(
             '周${weekdays[day.weekday - 1]}',
             style: TextStyle(
-              fontSize: 11.5,
+              fontSize: 12,
               color: Palette.inkFaint(context),
             ),
           ),
@@ -770,7 +770,7 @@ class _DayHead extends StatelessWidget {
             Text(
               hidden ? '收 ****' : '收 +${centsToText(incomeCents)}',
               style: const TextStyle(
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: FontWeight.w600,
                 color: Palette.income,
                 fontFeatures: [FontFeature.tabularFigures()],
@@ -782,7 +782,7 @@ class _DayHead extends StatelessWidget {
             Text(
               hidden ? '支 ****' : '支 -${centsToText(expenseCents)}',
               style: const TextStyle(
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: FontWeight.w600,
                 color: Palette.expense,
                 fontFeatures: [FontFeature.tabularFigures()],

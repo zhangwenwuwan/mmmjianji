@@ -46,7 +46,7 @@ class RecurringPage extends ConsumerWidget {
       body: async.when(
         skipLoadingOnReload: true,
         loading: () => ListView(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 96),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 96),
           children: const [
             Skeleton(height: 64, radius: 14),
             SizedBox(height: 8),
@@ -60,7 +60,7 @@ class RecurringPage extends ConsumerWidget {
             ? const EmptyView(
                 icon: Icons.repeat, title: '还没有周期账单', hint: '房租、会员订阅、工资都可以加成周期')
             : ListView(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 96),
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 96),
                 children: [
                   Panel(
                     padding: EdgeInsets.zero,
@@ -75,7 +75,7 @@ class RecurringPage extends ConsumerWidget {
                               '${list[i].flow == 'in' ? '收入' : '支出'} '
                               '${(list[i].amountCents / 100).toStringAsFixed(2)}'
                               '${list[i].lastRunMonth.isEmpty ? '' : ' · 上次生成 ${list[i].lastRunMonth}'}',
-                              style: const TextStyle(fontSize: 11),
+                              style: const TextStyle(fontSize: 12),
                             ),
                             trailing: Row(
                               mainAxisSize: MainAxisSize.min,
@@ -101,7 +101,7 @@ class RecurringPage extends ConsumerWidget {
                                   },
                                 ),
                                 IconButton(
-                                  icon: const Icon(Icons.more_horiz, size: 20),
+                                  icon: const Icon(Icons.more_horiz, size: 18),
                                   onPressed: () => _menu(context, ref, list[i]),
                                 ),
                               ],
@@ -116,7 +116,7 @@ class RecurringPage extends ConsumerWidget {
                     '打开 App 时会自动补齐到期账单；同一个月不会重复生成。'
                     '关掉开关即暂停，已生成的记录不受影响。',
                     style: TextStyle(
-                        fontSize: 11,
+                        fontSize: 12,
                         height: 1.5,
                         color: Palette.inkFaint(context)),
                   ),

@@ -159,7 +159,7 @@ class AmountKeypad extends StatelessWidget {
                 child: Text(
                   label ?? value,
                   style: TextStyle(
-                    fontSize: isAction ? 16 : 21,
+                    fontSize: isAction ? 17 : 20,
                     fontWeight: isOp ? FontWeight.w700 : FontWeight.w600,
                     color: fg,
                     fontFeatures: const [FontFeature.tabularFigures()],
@@ -239,7 +239,7 @@ Future<int?> showAmountKeypad(
                   child: Text(
                     '${symbol ?? ''}${ctl.display}',
                     style: TextStyle(
-                      fontSize: 34,
+                      fontSize: 28,
                       fontWeight: FontWeight.w700,
                       color: Palette.ink(ctx),
                       fontFeatures: const [FontFeature.tabularFigures()],
@@ -351,7 +351,7 @@ class AmountField extends StatelessWidget {
                   child: Text(
                     has ? centsToText(cents) : hint,
                     style: TextStyle(
-                      fontSize: 16,
+                      fontSize: 17,
                       fontWeight: FontWeight.w600,
                       color: has
                           ? Palette.ink(context)
@@ -363,7 +363,7 @@ class AmountField extends StatelessWidget {
               ),
               const SizedBox(width: 6),
               Icon(Icons.keyboard_alt_outlined,
-                  size: 17, color: Palette.inkFaint(context)),
+                  size: 18, color: Palette.inkFaint(context)),
             ],
           ),
         ),

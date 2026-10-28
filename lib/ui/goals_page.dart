@@ -36,7 +36,7 @@ class GoalsPage extends ConsumerWidget {
                 title: '还没有目标',
                 hint: '比如「旅行基金 5000」')
             : ListView(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 96),
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 96),
                 children: [
                   for (final g in goals) ...[
                     _GoalCard(goal: g, onEdit: () => _edit(context, ref, g)),
@@ -151,10 +151,10 @@ class _GoalCard extends ConsumerWidget {
               Expanded(
                 child: Text(goal.title,
                     style: const TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.w600)),
+                        fontSize: 14, fontWeight: FontWeight.w600)),
               ),
               PopupMenuButton<String>(
-                icon: const Icon(Icons.more_horiz, size: 20),
+                icon: const Icon(Icons.more_horiz, size: 18),
                 onSelected: (v) async {
                   if (v == 'edit') {
                     if (context.mounted) onEdit();
@@ -179,7 +179,7 @@ class _GoalCard extends ConsumerWidget {
             children: [
               MoneyText(goal.savedCents,
                   style: const TextStyle(
-                      fontSize: 22, fontWeight: FontWeight.w700)),
+                      fontSize: 20, fontWeight: FontWeight.w700)),
               Padding(
                 padding: const EdgeInsets.only(bottom: 3, left: 4),
                 child: Text(' / ${_yuan(goal.targetCents)}',
@@ -209,7 +209,7 @@ class _GoalCard extends ConsumerWidget {
             const SizedBox(height: 8),
             Text('目标日期 ${dayLabel(goal.dueDay!)}',
                 style:
-                    TextStyle(fontSize: 11, color: Palette.inkFaint(context))),
+                    TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
           ],
         ],
       ),

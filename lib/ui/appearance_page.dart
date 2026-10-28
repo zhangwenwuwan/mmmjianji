@@ -39,7 +39,7 @@ class AppearancePage extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('外观与显示')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
         children: [
           SectionLabel('配色'),
           Panel(
@@ -82,14 +82,14 @@ class AppearancePage extends ConsumerWidget {
                     child: ListTile(
                       leading: const Icon(Icons.timer_outlined),
                       title: const Text('多久后重新锁定',
-                          style: TextStyle(fontSize: 13.5)),
+                          style: TextStyle(fontSize: 14)),
                       subtitle: Text(
                         settings.lockGraceSeconds <= 0
                             ? '每次切回后台都要解锁'
                             : '切后台超过 ${_graceLabel(settings.lockGraceSeconds)}回来要输 PIN',
-                        style: const TextStyle(fontSize: 11),
+                        style: const TextStyle(fontSize: 12),
                       ),
-                      trailing: const Icon(Icons.chevron_right, size: 20),
+                      trailing: const Icon(Icons.chevron_right, size: 18),
                     ),
                   ),
                   if (biometricSupported) const Divider(height: 1, indent: 16),
@@ -126,7 +126,7 @@ class AppearancePage extends ConsumerWidget {
                 leading: const Icon(Icons.format_size_outlined),
                 title: const Text('字体大小'),
                 subtitle: Text(_fontScaleLabel(settings.fontScale)),
-                trailing: const Icon(Icons.chevron_right, size: 20),
+                trailing: const Icon(Icons.chevron_right, size: 18),
               ),
             ),
           ),
@@ -161,7 +161,7 @@ class AppearancePage extends ConsumerWidget {
                           ListTile(
                             title: Text(entry.$2),
                             subtitle: Text(entry.$3,
-                                style: const TextStyle(fontSize: 11)),
+                                style: const TextStyle(fontSize: 12)),
                             trailing: settings.noteDisplay == entry.$1
                                 ? const Icon(Icons.check)
                                 : null,
@@ -179,7 +179,7 @@ class AppearancePage extends ConsumerWidget {
                     title: const Text('列表行主标题'),
                     subtitle: Text(
                         settings.noteDisplay == 'category' ? '分类名优先' : '备注优先'),
-                    trailing: const Icon(Icons.chevron_right, size: 20),
+                    trailing: const Icon(Icons.chevron_right, size: 18),
                   ),
                 ),
                 const Divider(height: 1, indent: 16),
@@ -199,7 +199,7 @@ class AppearancePage extends ConsumerWidget {
                     leading: const Icon(Icons.payments_outlined),
                     title: const Text('货币符号'),
                     subtitle: Text('当前：${settings.symbol}'),
-                    trailing: const Icon(Icons.chevron_right, size: 20),
+                    trailing: const Icon(Icons.chevron_right, size: 18),
                   ),
                 ),
               ],
@@ -221,7 +221,7 @@ class AppearancePage extends ConsumerWidget {
                         ? '原账户已删除 · 记账时自动取第一个'
                         : '${glyphLabel(defaultPocket.glyph)} '
                             '${defaultPocket.displayName}'),
-                trailing: const Icon(Icons.chevron_right, size: 20),
+                trailing: const Icon(Icons.chevron_right, size: 18),
               ),
             ),
           ),
@@ -388,7 +388,7 @@ class AppearancePage extends ConsumerWidget {
             leading: const Icon(Icons.autorenew, size: 18),
             title: const Text('不指定（用第一个账户）'),
             subtitle: const Text('换账本或不常改账户时选这个',
-                style: TextStyle(fontSize: 11)),
+                style: TextStyle(fontSize: 12)),
             trailing: current == 0 ? const Icon(Icons.check) : null,
             onTap: () => Navigator.pop(ctx, 0),
           ),
@@ -407,7 +407,7 @@ class AppearancePage extends ConsumerWidget {
               ),
               subtitle: p.currency == 'CNY'
                   ? null
-                  : Text(p.currency, style: const TextStyle(fontSize: 11)),
+                  : Text(p.currency, style: const TextStyle(fontSize: 12)),
               trailing: p.id == current ? const Icon(Icons.check) : null,
               onTap: () => Navigator.pop(ctx, p.id),
             ),
@@ -431,7 +431,7 @@ class AppearancePage extends ConsumerWidget {
         children: [
           for (final s in options)
             ListTile(
-              title: Text(s, style: const TextStyle(fontSize: 18)),
+              title: Text(s, style: const TextStyle(fontSize: 17)),
               trailing: s == current ? const Icon(Icons.check) : null,
               onTap: () => Navigator.pop(ctx, s),
             ),

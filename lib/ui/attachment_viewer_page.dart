@@ -136,7 +136,7 @@ class AttachmentThumb extends StatelessWidget {
                     border:
                         Border.all(color: Palette.card(context), width: 1.5),
                   ),
-                  child: const Icon(Icons.close, size: 11, color: Colors.white),
+                  child: const Icon(Icons.close, size: 14, color: Colors.white),
                 ),
               ),
             ),

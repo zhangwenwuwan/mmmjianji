@@ -231,7 +231,7 @@ class _ReportPageState extends ConsumerState<ReportPage> {
           }
           final r = snap.data!;
           return ListView(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 32),
             children: [
               RepaintBoundary(
                 key: _posterKey,
@@ -246,7 +246,7 @@ class _ReportPageState extends ConsumerState<ReportPage> {
                   padding: const EdgeInsets.only(bottom: 12),
                   child: Text(
                     '注意：有外币账户没填汇率，这部分按 1:1 计入，金额可能不准。可在「账本与汇率」里补。',
-                    style: TextStyle(fontSize: 11, color: Palette.expense),
+                    style: TextStyle(fontSize: 12, color: Palette.expense),
                   ),
                 ),
               _RecentMonths(
@@ -267,7 +267,7 @@ class _ReportPageState extends ConsumerState<ReportPage> {
               Center(
                 child: Text('数据只来自这台手机 · 简记 $appVersion',
                     style: TextStyle(
-                        fontSize: 11, color: Palette.inkFaint(context))),
+                        fontSize: 12, color: Palette.inkFaint(context))),
               ),
             ],
           );
@@ -324,7 +324,7 @@ class _Poster extends StatelessWidget {
               const Text('简记',
                   style: TextStyle(
                       color: Colors.white,
-                      fontSize: 15,
+                      fontSize: 14,
                       fontWeight: FontWeight.w700,
                       letterSpacing: 2)),
               const Spacer(),
@@ -341,7 +341,7 @@ class _Poster extends StatelessWidget {
               Text(_m(net.abs()),
                   style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 30,
+                      fontSize: 28,
                       fontWeight: FontWeight.w700,
                       fontFeatures: [FontFeature.tabularFigures()])),
               Padding(
@@ -374,7 +374,7 @@ class _Poster extends StatelessWidget {
                 Text('${t.label} ${_m(t.cents)}',
                     style: TextStyle(
                         color: Colors.white.withValues(alpha: 0.9),
-                        fontSize: 11)),
+                        fontSize: 12)),
             ],
           ),
         ],
@@ -388,7 +388,7 @@ class _Poster extends StatelessWidget {
       children: [
         Text(label,
             style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.65), fontSize: 10)),
+                color: Colors.white.withValues(alpha: 0.65), fontSize: 10.5)),
         const SizedBox(height: 2),
         Text(value,
             style: const TextStyle(
@@ -445,7 +445,7 @@ class _MonthlyBars extends StatelessWidget {
                           const SizedBox(height: 4),
                           Text('${m + 1}',
                               style: TextStyle(
-                                  fontSize: 9,
+                                  fontSize: 10.5,
                                   color: Palette.inkFaint(context))),
                         ],
                       ),
@@ -570,7 +570,7 @@ class _RecentMonths extends ConsumerWidget {
                   if (mom != null)
                     Text(mom,
                         style: TextStyle(
-                            fontSize: 11,
+                            fontSize: 12,
                             fontWeight: FontWeight.w600,
                             color: momUp ? Palette.expense : Palette.income)),
                 ],
@@ -600,7 +600,7 @@ class _RecentMonths extends ConsumerWidget {
                               const SizedBox(height: 5),
                               Text('${p.month.month}月',
                                   style: TextStyle(
-                                      fontSize: 9.5,
+                                      fontSize: 10.5,
                                       color: Palette.inkFaint(context))),
                             ],
                           ),
@@ -619,7 +619,7 @@ class _RecentMonths extends ConsumerWidget {
                   if (!hide && cur.expenseCents > 0)
                     Text('本月支出 $symbol${centsToText(cur.expenseCents)}',
                         style: TextStyle(
-                            fontSize: 11, color: Palette.inkFaint(context))),
+                            fontSize: 12, color: Palette.inkFaint(context))),
                 ],
               ),
             ],
@@ -653,7 +653,7 @@ class _RecentMonths extends ConsumerWidget {
         ),
         const SizedBox(width: 4),
         Text(label,
-            style: TextStyle(fontSize: 10, color: Palette.inkFaint(context))),
+            style: TextStyle(fontSize: 10.5, color: Palette.inkFaint(context))),
       ],
     );
   }
@@ -726,7 +726,7 @@ class _YearFacts extends StatelessWidget {
           const Spacer(),
           Text(value,
               style:
-                  const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+                  const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
         ],
       ),
     );

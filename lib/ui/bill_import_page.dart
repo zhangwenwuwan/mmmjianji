@@ -196,7 +196,7 @@ class _BillImportPageState extends ConsumerState<BillImportPage> {
     return Scaffold(
       appBar: AppBar(title: const Text('账单导入')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
         children: [
           Panel(
             child: Column(
@@ -218,7 +218,7 @@ class _BillImportPageState extends ConsumerState<BillImportPage> {
                   '支付宝：我的 → 账单 → 右上角 … → 开具交易流水证明 → 用于个人对账\n'
                   '拿到 CSV 后解压，用文本/表格打开全选复制，粘到下面即可。',
                   style: TextStyle(
-                      fontSize: 11.5,
+                      fontSize: 12,
                       height: 1.6,
                       color: Palette.inkSoft(context)),
                 ),
@@ -274,7 +274,7 @@ class _BillImportPageState extends ConsumerState<BillImportPage> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(Icons.folder_open,
-                      size: 17, color: Palette.brand(context)),
+                      size: 18, color: Palette.brand(context)),
                   const SizedBox(width: 8),
                   Text('选择 CSV 文件',
                       style: TextStyle(
@@ -305,7 +305,7 @@ class _BillImportPageState extends ConsumerState<BillImportPage> {
             // 没有 onChanged 的话，直接 Ctrl+V 粘进来不会重建本页，
             // 下面「解析」按钮一直停在 onPressed: null 的禁用态，整条导入链路点不动。
             onChanged: (_) => setState(() {}),
-            style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+            style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
             decoration: const InputDecoration(
               hintText: '把账单 CSV 内容粘到这里…',
               alignLabelWithHint: true,
@@ -333,7 +333,7 @@ class _BillImportPageState extends ConsumerState<BillImportPage> {
                       const Spacer(),
                       Text(_sourceLabel(result.source),
                           style: TextStyle(
-                              fontSize: 11, color: Palette.inkFaint(context))),
+                              fontSize: 12, color: Palette.inkFaint(context))),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -345,7 +345,7 @@ class _BillImportPageState extends ConsumerState<BillImportPage> {
                     '收入 ${_yuan(result.totalIn)} · 支出 ${_yuan(result.totalOut)}'
                     '${result.skipped > 0 ? ' · 跳过 ${result.skipped} 行' : ''}',
                     style: TextStyle(
-                        fontSize: 11.5, color: Palette.inkSoft(context)),
+                        fontSize: 12, color: Palette.inkSoft(context)),
                   ),
                   if (result.warnings.isNotEmpty) ...[
                     const SizedBox(height: 8),
@@ -371,7 +371,7 @@ class _BillImportPageState extends ConsumerState<BillImportPage> {
                     Expanded(
                       child: Text('还没有账户，先建一个再导入',
                           style: TextStyle(
-                              fontSize: 12.5, color: Palette.inkSoft(context))),
+                              fontSize: 13, color: Palette.inkSoft(context))),
                     ),
                     TextButton(
                       onPressed: () => showPocketEditor(context, ref, null),
@@ -415,7 +415,7 @@ class _BillImportPageState extends ConsumerState<BillImportPage> {
               '重复的会自动跳过（同一天 + 同金额 + 同备注视为同一条）。'
               '分类名能对上就自动归类，对不上记为「未分类」。',
               style: TextStyle(
-                  fontSize: 11, height: 1.5, color: Palette.inkFaint(context)),
+                  fontSize: 12, height: 1.5, color: Palette.inkFaint(context)),
             ),
           ],
         ],

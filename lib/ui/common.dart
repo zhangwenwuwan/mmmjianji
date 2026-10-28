@@ -68,7 +68,7 @@ class MoneyText extends ConsumerWidget {
     final settings = ref.watch(settingsProvider);
     final base = style ??
         TextStyle(
-          fontSize: 16,
+          fontSize: 17,
           fontWeight: FontWeight.w600,
           color: Palette.ink(context),
           fontFeatures: const [FontFeature.tabularFigures()],
@@ -182,7 +182,7 @@ class _RollingMoneyState extends ConsumerState<RollingMoney>
     final settings = ref.watch(settingsProvider);
     final base = widget.style ??
         TextStyle(
-          fontSize: 16,
+          fontSize: 17,
           fontWeight: FontWeight.w600,
           color: Palette.ink(context),
           fontFeatures: const [FontFeature.tabularFigures()],
@@ -363,7 +363,7 @@ class AppTextField extends StatelessWidget {
           hintText: hint,
           counterText: '',
           hintStyle: TextStyle(
-            fontSize: 12.5,
+            fontSize: 13,
             fontWeight: FontWeight.w400,
             color: Palette.inkFaint(context),
           ),
@@ -438,7 +438,7 @@ class AppDropdown<T> extends StatelessWidget {
                 ? null
                 : Text(hint!,
                     style: TextStyle(
-                        fontSize: 13.5, color: Palette.inkFaint(context))),
+                        fontSize: 14, color: Palette.inkFaint(context))),
             items: items,
             onChanged: onChanged,
             isExpanded: true,
@@ -529,7 +529,7 @@ class GlyphPicker extends StatelessWidget {
             child: custom
                 ? AppGlyph(value, size: 20, fill: true, radius: 8)
                 : Icon(Icons.add_photo_alternate_outlined,
-                    size: 17, color: Palette.inkFaint(context)),
+                    size: 18, color: Palette.inkFaint(context)),
           ),
           for (final g in glyphs)
             box(
@@ -598,13 +598,13 @@ class EmptyView extends StatelessWidget {
           Icon(icon, size: 30, color: Palette.inkFaint(context)),
           const SizedBox(height: 8),
           Text(title,
-              style: TextStyle(fontSize: 13.5, color: Palette.inkSoft(context))),
+              style: TextStyle(fontSize: 14, color: Palette.inkSoft(context))),
           if (hint != null) ...[
             const SizedBox(height: 4),
             Text(hint!,
                 textAlign: TextAlign.center,
                 style:
-                    TextStyle(fontSize: 11.5, color: Palette.inkFaint(context))),
+                    TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
           ],
           if (actionLabel != null && onAction != null) ...[
             const SizedBox(height: 12),
@@ -671,7 +671,7 @@ class LoadError extends StatelessWidget {
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.error_outline, size: 15, color: Palette.expense),
+              Icon(Icons.error_outline, size: 16, color: Palette.expense),
               const SizedBox(width: 6),
               Text('数据读取失败',
                   style: TextStyle(
@@ -701,7 +701,7 @@ class LoadError extends StatelessWidget {
                 SelectableText(
                   '$error',
                   style:
-                      TextStyle(fontSize: 10, color: Palette.inkFaint(context)),
+                      TextStyle(fontSize: 10.5, color: Palette.inkFaint(context)),
                 ),
               ],
             ),
@@ -760,7 +760,7 @@ class _ErrorRetryViewState extends State<ErrorRetryView> {
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,
                 style:
-                    TextStyle(fontSize: 11, color: Palette.inkFaint(context))),
+                    TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
           ],
           const SizedBox(height: 16),
           SizedBox(
@@ -868,7 +868,7 @@ class MonthStrip extends ConsumerWidget {
           child: Text(
             label,
             style: TextStyle(
-              fontSize: 11.5,
+              fontSize: 12,
               fontWeight: sel ? FontWeight.w700 : FontWeight.w500,
               color: sel ? brand : Palette.inkSoft(context),
             ),
@@ -905,11 +905,11 @@ class MonthStrip extends ConsumerWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(Icons.calendar_month_outlined,
-                        size: 13, color: Palette.inkSoft(context)),
+                        size: 14, color: Palette.inkSoft(context)),
                     const SizedBox(width: 3),
                     Text('选月份',
                         style: TextStyle(
-                            fontSize: 11.5, color: Palette.inkSoft(context))),
+                            fontSize: 12, color: Palette.inkSoft(context))),
                   ],
                 ),
               ),
@@ -994,7 +994,7 @@ class MonthBar extends ConsumerWidget {
                         softWrap: false,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                            fontSize: 18,
+                            fontSize: 17,
                             fontWeight: FontWeight.w700,
                             color: Palette.ink(context)),
                       ),
@@ -1007,7 +1007,7 @@ class MonthBar extends ConsumerWidget {
                 if (!isCurrent)
                   Text('点此回到本月',
                       style: TextStyle(
-                          fontSize: 10, color: Palette.inkFaint(context))),
+                          fontSize: 10.5, color: Palette.inkFaint(context))),
               ],
             ),
           ),

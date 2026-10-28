@@ -38,7 +38,7 @@ class BookManagePage extends ConsumerWidget {
         loading: () => const SkeletonList(),
         error: (e, _) => Center(child: LoadError(error: e)),
         data: (books) => ListView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 96),
           children: [
             SectionLabel('账本'),
             Panel(
@@ -51,9 +51,9 @@ class BookManagePage extends ConsumerWidget {
                       leading: AppGlyph(books[i].glyph, size: 20),
                       title: Text(books[i].title),
                       subtitle: Text('主币种 ${nameOf(books[i].baseCurrency)}',
-                          style: const TextStyle(fontSize: 11)),
+                          style: const TextStyle(fontSize: 12)),
                       trailing: PopupMenuButton<String>(
-                        icon: const Icon(Icons.more_horiz, size: 20),
+                        icon: const Icon(Icons.more_horiz, size: 18),
                         onSelected: (v) async {
                           if (v == 'edit') {
                             await _editBook(context, ref, books[i]);
@@ -78,7 +78,7 @@ class BookManagePage extends ConsumerWidget {
             const SizedBox(height: 6),
             Text('删除账本会连同它的账户、分类、流水、预算一起删掉，不可恢复。',
                 style:
-                    TextStyle(fontSize: 11, color: Palette.inkFaint(context))),
+                    TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
             const SizedBox(height: 20),
             SectionLabel('汇率（1 外币 = ? 主币）'),
             Panel(
@@ -98,7 +98,7 @@ class BookManagePage extends ConsumerWidget {
                           r.key),
                     ),
                   ListTile(
-                    leading: const Icon(Icons.add, size: 20),
+                    leading: const Icon(Icons.add, size: 18),
                     title: const Text('添加 / 修改汇率'),
                     onTap: () async {
                       final book = await ref.read(activeBookProvider.future);
@@ -113,7 +113,7 @@ class BookManagePage extends ConsumerWidget {
             Text(
               '外币账户的流水会按这里的汇率折算进统计；没填汇率的币种按 1:1 计（会在报告里标注）。',
               style: TextStyle(
-                  fontSize: 11, height: 1.5, color: Palette.inkFaint(context)),
+                  fontSize: 12, height: 1.5, color: Palette.inkFaint(context)),
             ),
           ],
         ),

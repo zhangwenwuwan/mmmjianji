@@ -68,7 +68,7 @@ class PocketManagePage extends ConsumerWidget {
           final active = pockets.where((p) => !p.archived).toList();
           final archived = pockets.where((p) => p.archived).toList();
           return ListView(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 96),
             children: [
               SectionLabel('使用中的账户'),
               Panel(
@@ -107,7 +107,7 @@ class PocketManagePage extends ConsumerWidget {
               Text(
                 '有流水的账户不能删除，只能归档（历史记录还要指着它显示名字）。',
                 style:
-                    TextStyle(fontSize: 11, color: Palette.inkFaint(context)),
+                    TextStyle(fontSize: 12, color: Palette.inkFaint(context)),
               ),
             ],
           );
@@ -152,7 +152,7 @@ class PocketManagePage extends ConsumerWidget {
       subtitle: Text(
         '${p.kind.label} · ${nameOf(p.currency)}$limitText'
         '${archived ? ' · 已归档' : ''}',
-        style: const TextStyle(fontSize: 11),
+        style: const TextStyle(fontSize: 12),
       ),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
@@ -168,7 +168,7 @@ class PocketManagePage extends ConsumerWidget {
             ),
           const SizedBox(width: 4),
           PopupMenuButton<String>(
-            icon: const Icon(Icons.more_horiz, size: 20),
+            icon: const Icon(Icons.more_horiz, size: 18),
             onSelected: (v) async {
               switch (v) {
                 case 'edit':

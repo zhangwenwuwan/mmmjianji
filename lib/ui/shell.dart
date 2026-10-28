@@ -5,8 +5,10 @@ import '../services/auto_backup.dart';
 import '../services/widget_bridge.dart';
 import '../state/ledger_state.dart';
 import 'assets_page.dart';
+import 'boot_reveal.dart';
 import 'book_manage_page.dart';
 import 'calendar_page.dart';
+import 'glass.dart';
 import 'insight_hub_page.dart';
 import 'insights_page.dart';
 import 'ledger_page.dart';
@@ -14,6 +16,7 @@ import 'lock_gate.dart';
 import 'motion.dart';
 import 'pocket_manage_page.dart';
 import 'profile_page.dart';
+import 'tab_header.dart';
 import 'theme.dart';
 
 /// 主框架：首页 / 统计 / 记账(+) / 资产 / 我的
@@ -109,6 +112,34 @@ class _ShellState extends ConsumerState<Shell> {
     Navigator.of(context).push(AppPageRoute(page: const BookManagePage()));
   }
 
+  /// 顶栏右侧动作。和原来 AppBar 里的 actions 一一对应，只是搬了个位置。
+  List<Widget> _headerActions() {
+    return switch (_index) {
+      // 统计页：财务洞察（它是统计的延伸，和统计放一起才找得到）
+      1 => [
+          IconButton(
+            tooltip: '财务洞察',
+            onPressed: () => _openPage(const InsightHubPage()),
+            icon: const Icon(Icons.insights_outlined),
+          ),
+        ],
+      // 资产页：加账户 / 账本与汇率
+      2 => [
+          IconButton(
+            tooltip: '添加账户',
+            onPressed: _addPocket,
+            icon: const Icon(Icons.add),
+          ),
+          IconButton(
+            tooltip: '账本与汇率',
+            onPressed: _openBooks,
+            icon: const Icon(Icons.settings_outlined),
+          ),
+        ],
+      _ => const [],
+    };
+  }
+
   bool _widgetSynced = false;
 
   @override
@@ -121,39 +152,20 @@ class _ShellState extends ConsumerState<Shell> {
           .addPostFrameCallback((_) => WidgetBridge.sync(ref, force: true));
     }
     return LockGate(
+      // ⚠️ extendBody 是"真悬浮"的开关：不加它，Scaffold 会在底栏上方
+      // 留出一整块空白，胶囊只是画在那块空白里的一个圆角矩形 —— 看着就是
+      // "底板上贴了块板"。加了它，body 撑到屏幕底，流水会滚到胶囊**底下**，
+      // 隔着半透明玻璃透出来，这才是悬浮。
+      //
+      // 代价：四个页面的滚动区必须留够底部内边距，否则最后一条账目会被
+      // 胶囊压住且永远滚不出来。目前四个页面统一是 88（胶囊总高 62，
+      // 滚到底时最后一项停在胶囊上方 26）。改胶囊高度就要同步改这个值。
       child: Scaffold(
-        // 明细 tab 自带折叠头部（对齐原版 PrimaryHeader），所以不要外层 AppBar；
-        // 其余 tab 用普通 AppBar。
-        appBar: _index == 0
-            ? null
-            : AppBar(
-                title: Text(_titles[_index]),
-                actions: switch (_index) {
-                  // 统计页：财务洞察（它是统计的延伸，和统计放一起才找得到）
-                  1 => [
-                      IconButton(
-                        tooltip: '财务洞察',
-                        onPressed: () =>
-                            _openPage(const InsightHubPage()),
-                        icon: const Icon(Icons.insights_outlined),
-                      ),
-                    ],
-                  // 资产页：加账户 / 账本与汇率
-                  2 => [
-                      IconButton(
-                        tooltip: '添加账户',
-                        onPressed: _addPocket,
-                        icon: const Icon(Icons.add),
-                      ),
-                      IconButton(
-                        tooltip: '账本与汇率',
-                        onPressed: _openBooks,
-                        icon: const Icon(Icons.settings_outlined),
-                      ),
-                    ],
-                  _ => null,
-                },
-              ),
+        extendBody: true,
+        // 不再用 Material AppBar（2026-10-28 统一顶栏）：
+        // 四个 tab 现在共用自绘的 TabHeader（玻璃 + 48 高 + 17px 标题），
+        // 它叠在 body 的 Stack 里、浮在内容上面，页面自己留顶部内边距。
+        // 首页（index 0）不用它 —— 首页顶栏还要放账本 chip 和封面。
         // 动效只作用在「单个页面」上，被选中的那一个播一次轻移。
         //
         // ⚠️ 不要用 AnimatedSwitcher 去包这个栈：那样新旧两个栈都带着
@@ -182,31 +194,52 @@ class _ShellState extends ConsumerState<Shell> {
                   ),
                 ),
               ),
+            // 顶栏浮在页面之上（玻璃），内容从它下面滚过去。
+            // ⚠️ 页面里的滚动区必须留出 TabHeader.heightOf(context) 的顶部
+            // 内边距，否则第一张卡会被压在条底下。
+            if (_index != 0)
+              Positioned(
+                left: 0,
+                right: 0,
+                top: 0,
+                child: TabHeader(
+                  title: _titles[_index],
+                  actions: _headerActions(),
+                ),
+              ),
           ],
         ),
-        bottomNavigationBar: _BottomBar(
-          selectedSlot: _pageToSlot[_index]!,
-          onSelect: (slot) {
-            // 中间那格是动作不是页面：直接开记账页，选中态不变
-            if (slot == 2) {
-              openEntryEditor(context, ref);
-              return;
-            }
-            final page = _slotToPage[slot];
-            if (page == null) return;
-            // 回首页 = 回本月。首页 2026-10-26 起不再有月份切换（顶栏只剩
-            // 账本 + 三个图标），一旦在预算页/日历页把月份改成历史月，
-            // 回来就会看到一个"没有出口的 9 月"。这里和 LedgerPage.initState
-            // 一起兜住：进首页一律归位到当月。
-            if (page == 0) {
-              resetMonthToNow(ref);
-            }
-            if (page == _index) return;
-            setState(() {
-              _prevIndex = _index;
-              _index = page;
-            });
-          },
+        // 底栏和顶栏同为第 0 块：冷启动时和首页一起从下浮上来，
+        // 否则幕张开的一瞬间底栏是"焊死"的、内容是浮的，两截。
+        // 悬浮胶囊从下方浮上来：幅度给到 22，比页面内容的 22 稍大一点，
+        // 才看得出它是"浮"起来的（和顶栏的下沉方向相反，一进一出一收一放）。
+        bottomNavigationBar: BootRevealItem(
+          index: 0,
+          y: 22,
+          child: _BottomBar(
+            selectedSlot: _pageToSlot[_index]!,
+            onSelect: (slot) {
+              // 中间那格是动作不是页面：直接开记账页，选中态不变
+              if (slot == 2) {
+                openEntryEditor(context, ref);
+                return;
+              }
+              final page = _slotToPage[slot];
+              if (page == null) return;
+              // 回首页 = 回本月。首页 2026-10-26 起不再有月份切换（顶栏只剩
+              // 账本 + 三个图标），一旦在预算页/日历页把月份改成历史月，
+              // 回来就会看到一个"没有出口的 9 月"。这里和 LedgerPage.initState
+              // 一起兜住：进首页一律归位到当月。
+              if (page == 0) {
+                resetMonthToNow(ref);
+              }
+              if (page == _index) return;
+              setState(() {
+                _prevIndex = _index;
+                _index = page;
+              });
+            },
+          ),
         ),
       ),
     );
@@ -303,13 +336,25 @@ class _TabPageState extends State<_TabPage>
   }
 }
 
-/// 自定义底栏：首页 / 统计 / **+** / 资产 / 我的。
+/// 悬浮胶囊底栏：首页 / 统计 / **+** / 资产 / 我的。
 ///
-/// 中间那格是动作键（直接开会话）而不是页面，所以不参与选中态；
+/// 2026-10-27 照一木记账的样式重做（原来是一条顶到两边、上方带分割线的实心条）：
+/// - **悬浮胶囊**：左右各留 14、底部留 8、整条圆角 24、带柔和投影，
+///   压在薄荷纸面上像一片浮起来的板，而不是"钉"在屏幕底边。
+/// - **选中态是浅绿圆角块**，把图标和文字**一起**包住（原来只包图标那一小条）。
+/// - **图标恒为描边**：选中只换颜色、不换成实心，和薄荷底一起看才轻。
+///
+/// 中间那格是动作键（直接开记账页）而不是页面，所以不参与选中态；
 /// 选中态只在前四个页面槽位上流动。
 ///
-/// ui-motion：选中项背后有胶囊色块像水滴一样"流"过去（弹簧，前沿快后沿慢半拍）；
-/// 选中图标弹性放大、其余缩一点；所有格子都有按下缩放手感。
+  /// 关于毛玻璃：**必须**是半透明的，否则"悬浮"只是个圆角矩形。
+  /// 开了 extendBody 之后流水会滚到它底下，隔着 16 的模糊透出来，
+  /// 才看得出内容是从它下面走过去的（而不是被它挡住）。
+  /// tint 给到 0.74：比顶栏的 0.66 实一点，因为底下压的是金额数字，
+  /// 透得太清楚会和图标叠在一起读不清。
+  ///
+  /// ui-motion：选中项背后有圆角块像水滴一样"流"过去（弹簧，前沿快后沿慢半拍）；
+  /// 选中图标放大一点点；所有格子都有按下缩放手感。
 class _BottomBar extends StatelessWidget {
   const _BottomBar({required this.selectedSlot, required this.onSelect});
 
@@ -317,18 +362,57 @@ class _BottomBar extends StatelessWidget {
   final int selectedSlot;
   final ValueChanged<int> onSelect;
 
+  /// 胶囊高度 / 圆角 / 外边距。圆角取 24（略小于半高 27），
+  /// 半高会在端头显得"尖"，24 更接近一木那种圆角方块。
+  static const double _height = 54;
+  static const double _radius = 24;
+  static const double _insetH = 14;
+  static const double _insetB = 8;
+
   @override
   Widget build(BuildContext context) {
-    final brand = Palette.brand(context);
-    return Container(
-      decoration: BoxDecoration(
-        color: Palette.card(context),
-        border: Border(top: BorderSide(color: Palette.hairline(context))),
-      ),
-      child: SafeArea(
-        top: false,
-        child: SizedBox(
-          height: 52,
+    final dark = Palette.isDark(context);
+    // minimum 是关键：手势导航的机器 SafeArea 底部内边距是 0，
+    // 少了这个 minimum，胶囊会直接贴到屏幕底边，"悬浮"感立刻没了。
+    return SafeArea(
+      top: false,
+      minimum: const EdgeInsets.fromLTRB(_insetH, 0, _insetH, _insetB),
+      child: Container(
+        height: _height,
+        // 阴影画在外层容器上：阴影画在玻璃那一层会被它的 ClipRRect 裁掉，
+        // 而且会通过半透明底透出一道脏边。外层容器只负责阴影，不填色。
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(_radius),
+          boxShadow: [
+            // 主投影：往下 4，浅色下压得很淡（0.07），太重就成"厚塑料板"了
+            BoxShadow(
+              color: dark
+                  ? Colors.black.withValues(alpha: 0.34)
+                  : Colors.black.withValues(alpha: 0.07),
+              blurRadius: 16,
+              offset: const Offset(0, 4),
+            ),
+            // 上缘一点品牌色微光：让它在薄荷纸面上像"浮着"而不是"扣着"
+            if (!dark)
+              BoxShadow(
+                color: Palette.brand(context).withValues(alpha: 0.05),
+                blurRadius: 10,
+                offset: const Offset(0, -2),
+              ),
+          ],
+        ),
+        child: Glass(
+          // 参数是拿真图量出来的（test 里渲染成 PNG 采样，不是拍脑袋）：
+          //   模糊 20 / 白 0.56 → 后面饱和的红条只剩 (246,242,241)，肉眼就是白板；
+          //   模糊 8  / 白 0.35 → 能看到粉影，但灰字图标开始被后面的内容干扰；
+          //   模糊 12 / 白 0.42 → 粉影清楚、图标依然读得清（选这档）。
+          // 另外模糊本身也会"摊平"颜色：sigma 越大，细条形（金额、文字）透出来越淡，
+          // 所以想更透要先降 sigma，再降 alpha，别只降 alpha。
+          blur: 12,
+          borderRadius: BorderRadius.circular(_radius),
+          tint: (dark ? const Color(0xFF151C18) : Colors.white)
+              .withValues(alpha: 0.42),
+          border: Border.all(color: Palette.glassEdge(context), width: 0.8),
           // ⚠️ LayoutBuilder 必须包在 Stack **外面**，不能塞在 Positioned 里面：
           // 塞里面的话，Positioned 会把 StackParentData 挂到 LayoutBuilder 的
           // RenderObject 上（它只认 BoxParentData），运行时直接断言
@@ -345,26 +429,25 @@ class _BottomBar extends StatelessWidget {
                   AnimatedPositioned(
                     duration: Motion.d(c, const Duration(milliseconds: 340)),
                     curve: XCurve.spring,
-                    left: slotW * selectedSlot + slotW * 0.14,
-                    right: constraints.maxWidth - slotW * (selectedSlot + 0.86),
-                    top: 10,
-                    height: 30,
+                    left: slotW * selectedSlot + slotW * 0.12,
+                    right: constraints.maxWidth - slotW * (selectedSlot + 0.88),
+                    top: 7,
+                    height: 40,
                     child: Container(
                       decoration: BoxDecoration(
-                        color: brand.withValues(alpha: 0.12),
+                        color: Palette.mint(context),
                         borderRadius: BorderRadius.circular(15),
                       ),
                     ),
                   ),
                   Row(
                     children: [
-                      _tab(context, 0, Icons.home_outlined, Icons.home, '首页'),
-                      _tab(context, 1, Icons.pie_chart_outline, Icons.pie_chart,
-                          '统计'),
+                      _tab(context, 0, Icons.home_outlined, '首页'),
+                      _tab(context, 1, Icons.pie_chart_outline, '统计'),
                       _addButton(context),
-                      _tab(context, 3, Icons.account_balance_wallet_outlined,
-                          Icons.account_balance_wallet, '资产'),
-                      _tab(context, 4, Icons.person_outline, Icons.person, '我的'),
+                      _tab(
+                          context, 3, Icons.account_balance_wallet_outlined, '资产'),
+                      _tab(context, 4, Icons.person_outline, '我的'),
                     ],
                   ),
                 ],
@@ -376,8 +459,8 @@ class _BottomBar extends StatelessWidget {
     );
   }
 
-  Widget _tab(BuildContext context, int slot, IconData icon, IconData activeIcon,
-      String label) {
+  Widget _tab(
+      BuildContext context, int slot, IconData icon, String label) {
     final selected = selectedSlot == slot;
     final color = selected ? Palette.brand(context) : Palette.inkFaint(context);
     return Expanded(
@@ -388,15 +471,15 @@ class _BottomBar extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             AnimatedScale(
-              scale: selected ? 1.0 : 0.86,
+              scale: selected ? 1.0 : 0.94,
               duration: Motion.d(context, const Duration(milliseconds: 200)),
               curve: XCurve.spring,
-              child: Icon(selected ? activeIcon : icon, size: 20, color: color),
+              child: Icon(icon, size: 21, color: color),
             ),
-            const SizedBox(height: 1),
+            const SizedBox(height: 2),
             Text(label,
                 style: TextStyle(
-                    fontSize: 10,
+                    fontSize: 10.5,
                     fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
                     color: color)),
           ],
@@ -409,6 +492,8 @@ class _BottomBar extends StatelessWidget {
   ///
   /// 不给文字标签 —— 实心色块本身就是最强提示，加个字反而和旁边四个 tab
   /// 混成一排，失去"这是动作不是页面"的区别。
+  /// 高度收在 30（比胶囊内高 54 矮一半），不凸出到栏外：一木的五个格子是
+  /// 一样大的，凸出的 FAB 会把悬浮胶囊的干净感破坏掉。
   Widget _addButton(BuildContext context) {
     final brand = Palette.brand(context);
     return Expanded(
@@ -417,21 +502,21 @@ class _BottomBar extends StatelessWidget {
         onTap: () => onSelect(2),
         child: Center(
           child: Container(
-            width: 46,
+            width: 44,
             height: 30,
             alignment: Alignment.center,
             decoration: BoxDecoration(
               color: brand,
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(11),
               boxShadow: [
                 BoxShadow(
-                  color: brand.withValues(alpha: 0.28),
+                  color: brand.withValues(alpha: 0.30),
                   blurRadius: 8,
                   offset: const Offset(0, 2),
                 ),
               ],
             ),
-            child: const Icon(Icons.add, size: 20, color: Colors.white),
+            child: const Icon(Icons.add, size: 18, color: Colors.white),
           ),
         ),
       ),
