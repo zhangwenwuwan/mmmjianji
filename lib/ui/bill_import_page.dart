@@ -171,10 +171,8 @@ class _BillImportPageState extends ConsumerState<BillImportPage> {
       });
       // 导入完回明细页，让用户马上看到新记录
       Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('导入 $inserted 笔'
-            '${duplicated > 0 ? '，跳过重复 $duplicated 笔' : ''}'),
-      ));
+      ScaffoldMessenger.of(context).toast('导入 $inserted 笔'
+            '${duplicated > 0 ? '，跳过重复 $duplicated 笔' : ''}');
     } catch (e) {
       if (!mounted) return;
       setState(() => _importing = false);
@@ -184,7 +182,7 @@ class _BillImportPageState extends ConsumerState<BillImportPage> {
   }
 
   void _toast(String text) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    ScaffoldMessenger.of(context).toast(text);
   }
 
   @override

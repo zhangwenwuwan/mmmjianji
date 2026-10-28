@@ -10,6 +10,7 @@ import '../state/ledger_state.dart';
 import '../services/attachment_service.dart';
 import '../state/settings.dart';
 import 'theme.dart';
+import 'common.dart';
 
 /// 数据相关的共用动作：导出备份 / 导出 CSV / 从剪贴板导入 / 清空。
 ///
@@ -111,7 +112,7 @@ Future<void> wipeAll(BuildContext context, WidgetRef ref) async {
 }
 
 void _toast(BuildContext context, String text) {
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  ScaffoldMessenger.of(context).toast(text);
 }
 
 /// 导出「配置」（不含流水）：偏好设置 + 分类结构 + 账户结构。
@@ -294,7 +295,5 @@ Future<void> importConfig(BuildContext context, WidgetRef ref) async {
   }
 
   bumpRevision(ref);
-  messenger.showSnackBar(
-    SnackBar(content: Text('已导入：$addedBuckets 个分类、$addedPockets 个账户')),
-  );
+  messenger.toast('已导入：$addedBuckets 个分类、$addedPockets 个账户');
 }

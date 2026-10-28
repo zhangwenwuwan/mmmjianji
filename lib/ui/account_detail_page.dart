@@ -181,9 +181,7 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
 
   void _toast(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(msg)));
+    ScaffoldMessenger.of(context).toast(msg);
   }
 
   @override

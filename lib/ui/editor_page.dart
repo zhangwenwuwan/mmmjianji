@@ -754,9 +754,7 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
 
   void _toast(String text) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(text)));
+    ScaffoldMessenger.of(context).toast(text);
   }
 
   Future<void> _pickDay() async {
@@ -914,9 +912,7 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
     if (same.isNotEmpty) {
       setState(() => _pocketId = same.first.id);
     } else if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('还没有 $cur 账户，点账户可以新建一个')),
-      );
+      ScaffoldMessenger.of(context).toast('还没有 $cur 账户，点账户可以新建一个');
     }
   }
 
@@ -940,11 +936,9 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
     // 直接把人带去新建账户页 —— 他要记一笔，缺的正是账户。
     if (scoped.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(wanted == null
+        ScaffoldMessenger.of(context).toast(wanted == null
               ? '还没有可用账户，先建一个'
-              : '还没有 $wanted 账户，先建一个再记这一笔'),
-        ));
+              : '还没有 $wanted 账户，先建一个再记这一笔');
       }
       // AppPageRoute 的泛型是 dynamic，直接 push，结果按 dynamic 收
       final created = await Navigator.of(context)
@@ -1945,9 +1939,8 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
   }
 
   void _toast(String text) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(text), duration: const Duration(seconds: 2)),
-    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).toast(text);
   }
 
   Future<void> _pickDay() async {

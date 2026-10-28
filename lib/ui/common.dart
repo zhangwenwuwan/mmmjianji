@@ -40,6 +40,32 @@ String moneyLabel(
   return '$sign$symbol$body$suffix';
 }
 
+/// 短提示：先收掉当前那条，再弹一条 2 秒的。
+///
+/// 为什么不直接 `showSnackBar`：
+/// 1. 它会**排队** —— 连点两次保存，第一条要播满（默认 4 秒）才轮到第二条，
+///    用户看到的是"上一条还没走、又冒一条"，像卡住了；全 App 原来 47 处弹提示，
+///    只有 8 处会先收掉上一条。
+/// 2. 默认 4 秒对「已保存 / 已移入回收站」这种确认太久了。
+///
+/// 用法就是把 `showSnackBar(SnackBar(content: Text(x)))` 换成 `toast(x)`，
+/// receiver 不用动（`ScaffoldMessenger.of(context).toast(...)`、
+/// `messenger.toast(...)`、级联 `..toast(...)` 都成立）。
+///
+/// 需要「撤销」这类按钮的提示**不要**用它 —— 那条要留 4 秒给人点，
+/// 见 ledger_page 的删除提示。
+extension ToastMessenger on ScaffoldMessengerState {
+  void toast(String message) {
+    // clearSnackBars 而不是 hideCurrentSnackBar：后者只是开始退场动画，
+    // 新的一条要排队等它退完；连续提示时会明显慢半拍。
+    clearSnackBars();
+    showSnackBar(SnackBar(
+      content: Text(message),
+      duration: const Duration(seconds: 2),
+    ));
+  }
+}
+
 /// 金额文字。统一处理：整数分 → 文本、隐藏金额打码、收支配色、等宽数字。
 class MoneyText extends ConsumerWidget {
   const MoneyText(

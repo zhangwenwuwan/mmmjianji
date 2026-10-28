@@ -53,9 +53,7 @@ class _ReminderPageState extends State<ReminderPage> {
     if (!mounted) return;
     if (nextEnabled && !ok) {
       setState(() => _enabled = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('没有拿到通知权限，提醒已关闭')),
-      );
+      ScaffoldMessenger.of(context).toast('没有拿到通知权限，提醒已关闭');
     }
   }
 

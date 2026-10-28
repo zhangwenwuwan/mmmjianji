@@ -247,7 +247,7 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
   }
 
   void _toast(String text) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    ScaffoldMessenger.of(context).toast(text);
   }
 
   // ---------------------------------------------------------------- build

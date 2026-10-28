@@ -31,9 +31,7 @@ class RecurringPage extends ConsumerWidget {
               final n = await store.applyDueRecurring(book.id, DateTime.now());
               bumpRevision(ref);
               if (!context.mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text(n == 0 ? '没有需要补记的账单' : '已补记 $n 笔')),
-              );
+              ScaffoldMessenger.of(context).toast(n == 0 ? '没有需要补记的账单' : '已补记 $n 笔');
             },
             icon: const Icon(Icons.play_circle_outline),
           ),
@@ -162,8 +160,7 @@ class RecurringPage extends ConsumerWidget {
     // 直接告诉用户先去建账户（静默 return 用户会以为按钮坏了）。
     if (pockets.isEmpty) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('先建一个账户，才能设周期账单')));
+        ScaffoldMessenger.of(context).toast('先建一个账户，才能设周期账单');
       }
       return;
     }

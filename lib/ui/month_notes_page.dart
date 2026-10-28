@@ -44,16 +44,14 @@ class _MonthNotesPageState extends ConsumerState<MonthNotesPage> {
         .join('\n\n');
     await Clipboard.setData(ClipboardData(text: text));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已复制 ${list.length} 条总结')),
-    );
+    ScaffoldMessenger.of(context).toast('已复制 ${list.length} 条总结');
   }
 
   Future<void> _copyOne(String note) async {
     await Clipboard.setData(ClipboardData(text: note));
     if (!mounted) return;
     ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('已复制')));
+        .toast('已复制');
   }
 
   static String _titleOf(String month) {

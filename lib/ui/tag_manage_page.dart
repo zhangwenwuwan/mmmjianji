@@ -104,7 +104,7 @@ class TagManagePage extends ConsumerWidget {
     bumpRevision(ref);
     if (!context.mounted) return;
     ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text('已改名，更新了 $n 笔')));
+        .toast('已改名，更新了 $n 笔');
   }
 
   Future<void> _delete(BuildContext context, WidgetRef ref, String tag) async {
@@ -130,7 +130,7 @@ class TagManagePage extends ConsumerWidget {
     bumpRevision(ref);
     if (!context.mounted) return;
     ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text('已从 $n 笔流水上移除')));
+        .toast('已从 $n 笔流水上移除');
   }
 }
 

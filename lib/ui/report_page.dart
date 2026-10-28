@@ -200,7 +200,7 @@ class _ReportPageState extends ConsumerState<ReportPage> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('分享失败，可先截图保存')));
+          .toast('分享失败，可先截图保存');
     }
   }
 

@@ -202,9 +202,7 @@ class PocketManagePage extends ConsumerWidget {
     final hasEntries = await store.pocketHasEntries(p.id);
     if (!context.mounted) return;
     if (hasEntries) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('该账户还有流水，不能删除。可以改成归档。')),
-      );
+      ScaffoldMessenger.of(context).toast('该账户还有流水，不能删除。可以改成归档。');
       return;
     }
     final ok = await showDialog<bool>(

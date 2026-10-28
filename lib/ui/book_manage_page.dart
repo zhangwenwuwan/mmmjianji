@@ -343,7 +343,7 @@ class BookManagePage extends ConsumerWidget {
     } on StateError catch (e) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(e.message)));
+          .toast(e.message);
     }
   }
 }

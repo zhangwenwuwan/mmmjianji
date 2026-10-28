@@ -52,9 +52,7 @@ class _RecycleBinPageState extends ConsumerState<RecycleBinPage> {
     await store.purgeEntry(id);
     bumpRevision(ref);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('已永久删除')),
-    );
+    ScaffoldMessenger.of(context).toast('已永久删除');
   }
 
   Future<void> _restoreSelected() async {
@@ -68,7 +66,7 @@ class _RecycleBinPageState extends ConsumerState<RecycleBinPage> {
       _selected.clear();
     });
     ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text('已恢复 $n 条')));
+        .toast('已恢复 $n 条');
   }
 
   Future<void> _purgeSelected() async {
@@ -109,9 +107,7 @@ class _RecycleBinPageState extends ConsumerState<RecycleBinPage> {
       _batch = false;
       _selected.clear();
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已永久删除 $n 条')),
-    );
+    ScaffoldMessenger.of(context).toast('已永久删除 $n 条');
   }
 
   Future<void> _purgeAll() async {
@@ -140,7 +136,7 @@ class _RecycleBinPageState extends ConsumerState<RecycleBinPage> {
     bumpRevision(ref);
     if (!mounted) return;
     ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text('已清空 $n 条')));
+        .toast('已清空 $n 条');
   }
 
   @override

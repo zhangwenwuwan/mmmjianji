@@ -375,9 +375,7 @@ class _AvatarCard extends ConsumerWidget {
   }
 
   void _toast(BuildContext context, String msg) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(msg)));
+    ScaffoldMessenger.of(context).toast(msg);
   }
 }
 

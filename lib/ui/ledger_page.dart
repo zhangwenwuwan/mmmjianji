@@ -385,9 +385,7 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
 
   void _toast(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(msg)));
+    ScaffoldMessenger.of(context).toast(msg);
   }
 
   /// 按用户配置顺序生成首页卡片。

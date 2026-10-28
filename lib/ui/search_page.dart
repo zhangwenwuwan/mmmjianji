@@ -287,9 +287,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
   void _toast(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(msg)));
+    ScaffoldMessenger.of(context).toast(msg);
   }
 
   Future<void> _pickBucket() async {
@@ -753,7 +751,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       _selected.clear();
     });
     ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text('已移入回收站 $count 条')));
+        .toast('已移入回收站 $count 条');
     await _run();
   }
 
@@ -799,9 +797,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     final targets = _ids.where((id) => !transferIds.contains(id)).toList();
     if (targets.isEmpty) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('选中的都是转账，转账没有分类')),
-      );
+      ScaffoldMessenger.of(context).toast('选中的都是转账，转账没有分类');
       return;
     }
     final store = await ref.read(storeProvider.future);
@@ -813,11 +809,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       _batch = false;
       _selected.clear();
     });
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(transferIds.isEmpty
+    ScaffoldMessenger.of(context).toast(transferIds.isEmpty
           ? '已修改 $count 条'
-          : '已修改 $count 条，跳过 ${transferIds.length} 条转账'),
-    ));
+          : '已修改 $count 条，跳过 ${transferIds.length} 条转账');
     await _run();
   }
 
@@ -853,7 +847,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       _selected.clear();
     });
     ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text('已修改 $count 条')));
+        .toast('已修改 $count 条');
     await _run();
   }
 

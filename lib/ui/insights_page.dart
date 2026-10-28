@@ -1868,8 +1868,6 @@ class _MonthNoteCard extends ConsumerWidget {
     bumpRevision(ref);
     ref.invalidate(monthNoteProvider);
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(saved.trim().isEmpty ? '已清除本月总结' : '已保存本月总结'),
-    ));
+    ScaffoldMessenger.of(context).toast(saved.trim().isEmpty ? '已清除本月总结' : '已保存本月总结');
   }
 }

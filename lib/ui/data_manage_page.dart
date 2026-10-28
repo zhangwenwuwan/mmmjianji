@@ -76,9 +76,7 @@ class _DataManagePageState extends ConsumerState<DataManagePage> {
     final file = await AutoBackup.run(store);
     await _loadBackups();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(file == null ? '今天已经备份过了' : '已备份一份'),
-    ));
+    ScaffoldMessenger.of(context).toast(file == null ? '今天已经备份过了' : '已备份一份');
   }
 
   Future<void> _restore(String path) async {
@@ -106,11 +104,11 @@ class _DataManagePageState extends ConsumerState<DataManagePage> {
       if (!mounted) return;
       bumpRevision(ref);
       ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('已恢复')));
+          .toast('已恢复');
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('恢复失败，详情见日志中心')));
+          .toast('恢复失败，详情见日志中心');
     }
   }
 
@@ -378,8 +376,7 @@ class _DataManagePageState extends ConsumerState<DataManagePage> {
                               await ref.read(activeBookProvider.future);
                           final n = await store.fixOrphans(book.id);
                           bumpRevision(ref);
-                          messenger.showSnackBar(
-                              SnackBar(content: Text('已修复 $n 条')));
+                          messenger.toast('已修复 $n 条');
                         },
                         child: const Text('一键修复'),
                       ),

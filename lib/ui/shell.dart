@@ -8,6 +8,7 @@ import '../state/ledger_state.dart';
 import 'assets_page.dart';
 import 'boot_reveal.dart';
 import 'book_manage_page.dart';
+import 'common.dart';
 import 'calendar_page.dart';
 import 'glass.dart';
 import 'insight_hub_page.dart';
@@ -98,9 +99,7 @@ class _ShellState extends ConsumerState<Shell> {
       if (n > 0) {
         bumpRevision(ref);
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('已按周期自动记了 $n 笔')),
-        );
+        ScaffoldMessenger.of(context).toast('已按周期自动记了 $n 笔');
       }
     } catch (_) {
       // 自动补记失败不该挡住用户用 App
@@ -177,14 +176,10 @@ class _ShellState extends ConsumerState<Shell> {
       return;
     }
     _lastBackAt = now;
-    // 用 SnackBar 而不是 Toast：它跟着 Scaffold 走，位置在悬浮底栏**上方**，
-    // 不会被胶囊盖住半截；时长与判定窗口一致，提示消失即窗口关闭。
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(const SnackBar(
-        content: Text('再返回一次退出'),
-        duration: _exitWindow,
-      ));
+    // 用 SnackBar（toast）而不是系统 Toast：它跟着 Scaffold 走，位置在悬浮
+    // 底栏**上方**，不会被胶囊盖住半截；时长 2 秒正好等于判定窗口，
+    // 提示消失即窗口关闭。
+    ScaffoldMessenger.of(context).toast('再返回一次退出');
   }
 
   @override

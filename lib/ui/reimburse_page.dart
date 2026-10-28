@@ -72,9 +72,7 @@ class _ReimbursePageState extends ConsumerState<ReimbursePage>
         pockets.where((p) => p.currency == subject).toList();
 
     if (candidates.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('还没有 $subject 账户，先到资产页建一个再报销')),
-      );
+      ScaffoldMessenger.of(context).toast('还没有 $subject 账户，先到资产页建一个再报销');
       return;
     }
 
@@ -121,9 +119,7 @@ class _ReimbursePageState extends ConsumerState<ReimbursePage>
     await _load();
     if (!mounted) return;
     final name = candidates.firstWhere((p) => p.id == picked).displayName;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$amount 已记入「$name」，可随时撤回')),
-    );
+    ScaffoldMessenger.of(context).toast('$amount 已记入「$name」，可随时撤回');
   }
 
   /// 撤回报销：连同当初自动记入的那笔收入一起撤掉（否则余额会多出来）。
@@ -133,9 +129,7 @@ class _ReimbursePageState extends ConsumerState<ReimbursePage>
     bumpRevision(ref);
     await _load();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('已撤回，入账的那笔收入也删掉了')),
-    );
+    ScaffoldMessenger.of(context).toast('已撤回，入账的那笔收入也删掉了');
   }
 
   @override

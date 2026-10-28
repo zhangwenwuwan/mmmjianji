@@ -141,8 +141,7 @@ class ProfileModulesPage extends ConsumerWidget {
             onPressed: () async {
               await ref.read(settingsProvider.notifier).resetProfileModules();
               if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                    content: Text('已恢复默认（恢复后新增的入口会显示出来）')));
+                ScaffoldMessenger.of(context).toast('已恢复默认（恢复后新增的入口会显示出来）');
               }
             },
             child: const Text('恢复默认', style: TextStyle(fontSize: 12)),

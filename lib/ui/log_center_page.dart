@@ -32,9 +32,7 @@ class _LogCenterPageState extends ConsumerState<LogCenterPage> {
             onPressed: () async {
               final messenger = ScaffoldMessenger.of(context);
               await Clipboard.setData(ClipboardData(text: AppLog.dump()));
-              messenger.showSnackBar(
-                const SnackBar(content: Text('已复制全部日志')),
-              );
+              messenger.toast('已复制全部日志');
             },
             icon: const Icon(Icons.copy_all_outlined),
           ),

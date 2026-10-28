@@ -232,12 +232,12 @@ class _CategoryMigrationPageState extends ConsumerState<CategoryMigrationPage> {
         _fromId = null;
         _toId = null;
       });
-      messenger.showSnackBar(SnackBar(content: Text('已迁移 $n 条流水')));
+      messenger.toast('已迁移 $n 条流水');
     } catch (e) {
       if (!mounted) return;
       setState(() => _busy = false);
       AppLog.error('migration', '分类迁移失败', e);
-      messenger.showSnackBar(const SnackBar(content: Text('迁移失败，详情见日志中心')));
+      messenger.toast('迁移失败，详情见日志中心');
     }
   }
 }
