@@ -32,6 +32,7 @@ class AppSettings {
     this.pinLength = 0,
     this.paletteId = 'teal',
     this.fontScale = 1.0,
+    this.fontStyle = 'display',
     this.compactAmounts = false,
     this.noteDisplay = 'note',
     this.coverPath = '',
@@ -80,6 +81,12 @@ class AppSettings {
 
   /// 配色方案 id（见 ui/theme.dart 的 kPalettes）
   final String paletteId;
+
+  /// 界面字体档位（2026-10-27）：
+  /// - 'system'  系统字体
+  /// - 'display' 标题用抖音美好体、正文与金额用系统（默认）
+  /// - 'all'     全局美好体（单字重 + 数字不等宽，只在用户坚持时用）
+  final String fontStyle;
 
   /// 字体缩放倍数（0.9 / 1.0 / 1.15 / 1.3）
   final double fontScale;
@@ -202,6 +209,7 @@ class AppSettings {
     int? pinLength,
     String? paletteId,
     double? fontScale,
+    String? fontStyle,
     bool? compactAmounts,
     String? noteDisplay,
     String? coverPath,
@@ -231,6 +239,7 @@ class AppSettings {
         pinLength: pinLength ?? this.pinLength,
         paletteId: paletteId ?? this.paletteId,
         fontScale: fontScale ?? this.fontScale,
+        fontStyle: fontStyle ?? this.fontStyle,
         compactAmounts: compactAmounts ?? this.compactAmounts,
         noteDisplay: noteDisplay ?? this.noteDisplay,
         coverPath: coverPath ?? this.coverPath,
@@ -276,6 +285,7 @@ class SettingsNotifier extends Notifier<AppSettings> {
   static const _kPinSalt = 'pin_salt';
   static const _kPalette = 'palette_id';
   static const _kFontScale = 'font_scale';
+  static const _kFontStyle = 'font_style';
   static const _kCompact = 'compact_amounts';
   static const _kNoteDisplay = 'note_display';
   static const _kCoverPath = 'cover_path';
@@ -347,6 +357,7 @@ class SettingsNotifier extends Notifier<AppSettings> {
       pinLength: prefs.getInt(_kPinLen) ?? 0,
       paletteId: prefs.getString(_kPalette) ?? 'teal',
       fontScale: prefs.getDouble(_kFontScale) ?? 1.0,
+      fontStyle: prefs.getString(_kFontStyle) ?? 'display',
       compactAmounts: prefs.getBool(_kCompact) ?? false,
       noteDisplay: prefs.getString(_kNoteDisplay) ?? 'note',
       coverPath: prefs.getString(_kCoverPath) ?? '',
@@ -455,6 +466,13 @@ class SettingsNotifier extends Notifier<AppSettings> {
     _touched = true;
     state = state.copyWith(fontScale: scale);
     await _prefs?.setDouble(_kFontScale, scale);
+  }
+
+  /// 界面字体档位：system / display / all（含义见 [AppSettings.fontStyle]）。
+  Future<void> setFontStyle(String style) async {
+    _touched = true;
+    state = state.copyWith(fontStyle: style);
+    await _prefs?.setString(_kFontStyle, style);
   }
 
   Future<void> setCompactAmounts(bool value) async {

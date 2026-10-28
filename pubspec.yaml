@@ -34,3 +34,9 @@ flutter:
   uses-material-design: true
   assets:
     - assets/licenses/
+  fonts:
+    # 抖音美好体（Douyin Sans Bold）。单字重，所以只在标题级使用，
+    # 分级规则见 lib/ui/theme.dart 的 buildTheme(fontStyle:)。
+    - family: DouyinSans
+      fonts:
+        - asset: assets/fonts/DouyinSans-Bold.otf

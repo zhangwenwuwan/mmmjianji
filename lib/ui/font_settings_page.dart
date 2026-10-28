@@ -36,8 +36,25 @@ class FontSettingsPage extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('字体大小')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 28),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 28),
         children: [
+          SectionLabel('界面字体'),
+          Panel(
+            padding: EdgeInsets.zero,
+            child: Column(
+              children: [
+                _fontOption(context, ref, 'display', '标题体（推荐）',
+                    '标题用抖音美好体，正文和金额保持系统字体'),
+                const Divider(height: 1, indent: 16),
+                _fontOption(context, ref, 'all', '全部美好体',
+                    '整页统一字形；数字不等宽，金额列可能对不齐'),
+                const Divider(height: 1, indent: 16),
+                _fontOption(context, ref, 'system', '系统字体',
+                    '最规整，数字对齐最好'),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
           SectionLabel('预览'),
           const _PreviewCard(),
           const SizedBox(height: 18),
@@ -104,9 +121,50 @@ class FontSettingsPage extends ConsumerWidget {
             '字体大小会影响全 App 的文字。如果系统本身已经把字体调得很大，'
             '这里再调大可能会让个别页面显得拥挤，建议先用「标准」看一遍。',
             style: TextStyle(
-                fontSize: 11, height: 1.6, color: Palette.inkFaint(context)),
+                fontSize: 12, height: 1.6, color: Palette.inkFaint(context)),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 字体档位单选行。
+  ///
+  /// 为什么给三档而不是一个"换字体"开关：抖音美好体只有一个 Bold 字重、
+  /// 数字宽度不等（'1' 415 / '0' 585），全量替换会让正文发黑、金额抖。
+  /// 默认「标题体」是兼顾品牌感和可读性的那个折中。
+  Widget _fontOption(BuildContext context, WidgetRef ref, String id,
+      String title, String hint) {
+    final current = ref.watch(settingsProvider).fontStyle;
+    final on = current == id;
+    final brand = Palette.brand(context);
+    return PressScale(
+      scale: 0.99,
+      onTap: () => ref.read(settingsProvider.notifier).setFontStyle(id),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: on ? brand : Palette.ink(context),
+                      )),
+                  const SizedBox(height: 2),
+                  Text(hint,
+                      style: TextStyle(
+                          fontSize: 12, color: Palette.inkFaint(context))),
+                ],
+              ),
+            ),
+            if (on) Icon(Icons.check, size: 18, color: brand),
+          ],
+        ),
       ),
     );
   }
@@ -124,7 +182,7 @@ class FontSettingsPage extends ConsumerWidget {
             Text(
               item.label,
               style: TextStyle(
-                fontSize: 13.5,
+                fontSize: 14,
                 fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
                 color: selected ? Palette.brand(context) : Palette.ink(context),
               ),
@@ -133,7 +191,7 @@ class FontSettingsPage extends ConsumerWidget {
             Text(
               'x${item.scale.toStringAsFixed(2)}',
               style: TextStyle(
-                  fontSize: 11,
+                  fontSize: 12,
                   color: Palette.inkFaint(context),
                   fontFeatures: const [FontFeature.tabularFigures()]),
             ),
@@ -160,7 +218,7 @@ class _PreviewCard extends ConsumerWidget {
         children: [
           Text('早餐',
               style: TextStyle(
-                  fontSize: 15,
+                  fontSize: 14,
                   fontWeight: FontWeight.w600,
                   color: Palette.ink(context))),
           const SizedBox(height: 6),
@@ -182,7 +240,7 @@ class _PreviewCard extends ConsumerWidget {
                   color: Palette.hairline(context).withValues(alpha: 0.6),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Text('🍜', style: TextStyle(fontSize: 15)),
+                child: const Text('🍜', style: TextStyle(fontSize: 14)),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -193,19 +251,19 @@ class _PreviewCard extends ConsumerWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                            fontSize: 14.5,
+                            fontSize: 14,
                             fontWeight: FontWeight.w500,
                             color: Palette.ink(context))),
                     const SizedBox(height: 2),
                     Text('餐饮',
                         style: TextStyle(
-                            fontSize: 11, color: Palette.inkFaint(context))),
+                            fontSize: 12, color: Palette.inkFaint(context))),
                   ],
                 ),
               ),
               Text('${symbol}32.00',
                   style: TextStyle(
-                      fontSize: 15,
+                      fontSize: 14,
                       fontWeight: FontWeight.w700,
                       color: Palette.expense,
                       fontFeatures: const [FontFeature.tabularFigures()])),

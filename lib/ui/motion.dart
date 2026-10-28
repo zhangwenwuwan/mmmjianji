@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 // Ticker 在 scheduler 库里，material/widgets 都不导出它
 import 'package:flutter/scheduler.dart' show Ticker;
 
+import 'glass.dart';
 import 'theme.dart';
 
 /// ui-motion 动效基础层。
@@ -375,7 +376,7 @@ class SkeletonList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 88),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 88),
       children: [
         for (var i = 0; i < count; i++) ...[
           Skeleton(height: height, radius: radius),
@@ -494,7 +495,6 @@ class _AppSheetBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final sheetColor = Palette.card(context);
     // 把手和标题必须和内容在同一个圆角容器里。
     // 原来它们画在容器外面（透明背景），看起来像「悬空的一段灰条 + 白字」。
     // 另外底部留出键盘高度：isScrollControlled 的面板默认会被输入法盖住，
@@ -505,15 +505,18 @@ class _AppSheetBody extends StatelessWidget {
         MediaQuery.viewPaddingOf(context).bottom;
     return Padding(
       padding: EdgeInsets.only(bottom: bottomInset),
-      child: Container(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.sizeOf(context).height * 0.86,
-        ),
-        decoration: BoxDecoration(
-          color: sheetColor,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-        ),
-        child: Column(
+      // 底部面板也用玻璃：它压在整个页面上，模糊能透出后面的内容，
+      // 但 tint 要更实一点（0.88）—— 面板里全是输入框和选项，
+      // 透得太厉害会看不清自己在填什么。
+      child: Glass(
+        blur: 20,
+        tint: Palette.glass(context).withValues(alpha: 0.88),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
+        child: Container(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * 0.86,
+          ),
+          child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             const SizedBox(height: 10),
@@ -532,7 +535,7 @@ class _AppSheetBody extends StatelessWidget {
                   alignment: Alignment.centerLeft,
                   child: Text(title!,
                       style: const TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.w700)),
+                          fontSize: 17, fontWeight: FontWeight.w700)),
                 ),
               ),
             scrollable
@@ -546,6 +549,7 @@ class _AppSheetBody extends StatelessWidget {
                     ? Expanded(child: builder(context))
                     : Flexible(child: builder(context)),
           ],
+        ),
         ),
       ),
     );
@@ -763,7 +767,7 @@ class MorphButton extends StatelessWidget {
                           child: Text(
                             label,
                             style: const TextStyle(
-                              fontSize: 16,
+                              fontSize: 17,
                               fontWeight: FontWeight.w700,
                               color: Colors.white,
                             ),
