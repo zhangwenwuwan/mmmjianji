@@ -565,39 +565,39 @@ class _AnnualReportCard extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Reveal(
-        child: Panel(
-          child: Row(
-            children: [
-              Icon(Icons.auto_graph_rounded,
-                  size: 18, color: Palette.brand(context)),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text.rich(
-                  TextSpan(
-                    style: TextStyle(fontSize: 13, color: Palette.ink(context)),
-                    children: [
-                      TextSpan(
-                        text: '$reportYear 年度账单',
-                        style: TextStyle(
-                            fontWeight: FontWeight.w700,
-                            color: Palette.brand(context)),
-                      ),
-                      const TextSpan(text: ' 已生成'),
-                    ],
+        // 整卡可点（行高 ≈52，远超 48），不再用一个 12px 的文字按钮当唯一入口 ——
+        // 那个按钮的实际点击区只有 20dp 出头，手指稍微偏一点就没反应。
+        child: PressScale(
+          scale: 0.98,
+          onTap: () => Navigator.of(context)
+              .push(AppPageRoute(page: const ReportPage())),
+          child: Panel(
+            child: Row(
+              children: [
+                Icon(Icons.auto_graph_rounded,
+                    size: 18, color: Palette.brand(context)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text.rich(
+                    TextSpan(
+                      style:
+                          TextStyle(fontSize: 13, color: Palette.ink(context)),
+                      children: [
+                        TextSpan(
+                          text: '$reportYear 年度账单',
+                          style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              color: Palette.brand(context)),
+                        ),
+                        const TextSpan(text: ' 已生成'),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              TextButton(
-                onPressed: () => Navigator.of(context)
-                    .push(AppPageRoute(page: const ReportPage())),
-                style: TextButton.styleFrom(
-                  padding: EdgeInsets.zero,
-                  minimumSize: const Size(0, 0),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: const Text('查看', style: TextStyle(fontSize: 12)),
-              ),
-            ],
+                Icon(Icons.chevron_right,
+                    size: 16, color: Palette.inkFaint(context)),
+              ],
+            ),
           ),
         ),
       ),
@@ -886,38 +886,38 @@ class _LastMonthCard extends ConsumerWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Reveal(
-        child: Panel(
-          child: Row(
-            children: [
-              Icon(Icons.auto_awesome, size: 18, color: Palette.brand(context)),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text.rich(
-                  TextSpan(
-                    style: TextStyle(fontSize: 13, color: Palette.ink(context)),
-                    children: [
-                      TextSpan(
-                        text: '${prevMonth.month} 月',
-                        style: TextStyle(
-                            fontWeight: FontWeight.w700,
-                            color: Palette.brand(context)),
-                      ),
-                      const TextSpan(text: ' 收支已归档'),
-                    ],
+        // 整卡可点：点哪儿都翻到上个月（原来只有「查看」两个小字能点）
+        child: PressScale(
+          scale: 0.98,
+          onTap: () => ref.read(monthProvider.notifier).state =
+              shiftMonth(month, -1),
+          child: Panel(
+            child: Row(
+              children: [
+                Icon(Icons.auto_awesome,
+                    size: 18, color: Palette.brand(context)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text.rich(
+                    TextSpan(
+                      style:
+                          TextStyle(fontSize: 13, color: Palette.ink(context)),
+                      children: [
+                        TextSpan(
+                          text: '${prevMonth.month} 月',
+                          style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              color: Palette.brand(context)),
+                        ),
+                        const TextSpan(text: ' 收支已归档'),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              TextButton(
-                onPressed: () => ref.read(monthProvider.notifier).state =
-                    shiftMonth(month, -1),
-                style: TextButton.styleFrom(
-                  padding: EdgeInsets.zero,
-                  minimumSize: const Size(0, 0),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: const Text('查看', style: TextStyle(fontSize: 12)),
-              ),
-            ],
+                Icon(Icons.chevron_right,
+                    size: 16, color: Palette.inkFaint(context)),
+              ],
+            ),
           ),
         ),
       ),
@@ -945,32 +945,32 @@ class _BudgetHintCardState extends State<_BudgetHintCard> {
       padding: const EdgeInsets.only(bottom: 14),
       child: Reveal(
         delay: const Duration(milliseconds: 40),
-        child: Panel(
-          child: Row(
-            children: [
-              Icon(Icons.pie_chart_outline,
-                  size: 18, color: Palette.brand(context)),
-              const SizedBox(width: 10),
-              const Expanded(
-                child: Text('设个月度预算，超支前会提醒你', style: TextStyle(fontSize: 13)),
-              ),
-              TextButton(
-                onPressed: () => Navigator.of(context)
-                    .push(AppPageRoute(page: const BudgetPage())),
-                style: TextButton.styleFrom(
-                  padding: EdgeInsets.zero,
-                  minimumSize: const Size(0, 0),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        // 整卡可点：提示条本身就是入口，右边那个 ✕ 仍然独立（IconButton 自带
+        // 48 的点击区，会先吃掉落在它身上的点击，不会误跳预算页）。
+        child: PressScale(
+          scale: 0.98,
+          onTap: () => Navigator.of(context)
+              .push(AppPageRoute(page: const BudgetPage())),
+          child: Panel(
+            child: Row(
+              children: [
+                Icon(Icons.pie_chart_outline,
+                    size: 18, color: Palette.brand(context)),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text('设个月度预算，超支前会提醒你',
+                      style: TextStyle(fontSize: 13)),
                 ),
-                child: const Text('去设置', style: TextStyle(fontSize: 12)),
-              ),
-              IconButton(
-                tooltip: '不再提示',
-                onPressed: () => setState(() => _dismissed = true),
-                icon: Icon(Icons.close,
-                    size: 18, color: Palette.inkFaint(context)),
-              ),
-            ],
+                Icon(Icons.chevron_right,
+                    size: 16, color: Palette.inkFaint(context)),
+                IconButton(
+                  tooltip: '不再提示',
+                  onPressed: () => setState(() => _dismissed = true),
+                  icon: Icon(Icons.close,
+                      size: 18, color: Palette.inkFaint(context)),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1013,31 +1013,29 @@ class _BackupHintCardState extends ConsumerState<_BackupHintCard> {
       padding: const EdgeInsets.only(bottom: 14),
       child: Reveal(
         delay: const Duration(milliseconds: 40),
-        child: Panel(
-          child: Row(
-            children: [
-              Icon(Icons.backup_outlined,
-                  size: 18, color: Palette.brand(context)),
-              const SizedBox(width: 10),
-              Expanded(
-                  child: Text(text, style: const TextStyle(fontSize: 13))),
-              TextButton(
-                onPressed: () => Navigator.of(context)
-                    .push(AppPageRoute(page: const ExportPage())),
-                style: TextButton.styleFrom(
-                  padding: EdgeInsets.zero,
-                  minimumSize: const Size(0, 0),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        // 整卡可点（同上）
+        child: PressScale(
+          scale: 0.98,
+          onTap: () => Navigator.of(context)
+              .push(AppPageRoute(page: const ExportPage())),
+          child: Panel(
+            child: Row(
+              children: [
+                Icon(Icons.backup_outlined,
+                    size: 18, color: Palette.brand(context)),
+                const SizedBox(width: 10),
+                Expanded(
+                    child: Text(text, style: const TextStyle(fontSize: 13))),
+                Icon(Icons.chevron_right,
+                    size: 16, color: Palette.inkFaint(context)),
+                IconButton(
+                  tooltip: '本次不再提示',
+                  onPressed: () => setState(() => _dismissed = true),
+                  icon: Icon(Icons.close,
+                      size: 18, color: Palette.inkFaint(context)),
                 ),
-                child: const Text('去备份', style: TextStyle(fontSize: 12)),
-              ),
-              IconButton(
-                tooltip: '本次不再提示',
-                onPressed: () => setState(() => _dismissed = true),
-                icon: Icon(Icons.close,
-                    size: 18, color: Palette.inkFaint(context)),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

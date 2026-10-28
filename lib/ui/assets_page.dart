@@ -415,14 +415,10 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
             ],
             SectionLabel(
               '储蓄目标',
-              trailing: TextButton(
+              trailing: HeaderAction(
+                label: '管理',
                 onPressed: () => Navigator.of(context)
                     .push(AppPageRoute(page: const GoalsPage())),
-                style: TextButton.styleFrom(
-                    padding: EdgeInsets.zero,
-                    minimumSize: const Size(0, 0),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                child: const Text('管理', style: TextStyle(fontSize: 12)),
               ),
             ),
             if (goals.isEmpty)

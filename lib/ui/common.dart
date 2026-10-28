@@ -571,6 +571,38 @@ class SectionLabel extends StatelessWidget {
   }
 }
 
+/// 紧凑表头里的动作按钮（「管理」「立即备份」这类）。
+///
+/// 为什么单独包一层：原来都是 `TextButton + minimumSize(0,0) + shrinkWrap`，
+/// 把按钮压到只剩 20 来 dp 高 —— 视觉是紧凑了，但手指点上去经常没反应
+/// （Material 的最小可点尺寸是 48dp，低于这个值就是在赌用户点得准）。
+/// 这里保留 12px 的小字，只把**点击区**撑到 48×48：左右各补 8，
+/// 因为「管理」两个字本身只有 24dp 宽。
+///
+/// 注意 `tapTargetSize` 仍要 shrinkWrap：它只负责「额外加的那圈 Material 内边距」，
+/// 不加才不会在父 Row 里凭空多出 8dp；高度由 minimumSize 决定，正好 48。
+class HeaderAction extends StatelessWidget {
+  const HeaderAction(
+      {super.key, required this.label, required this.onPressed});
+
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton(
+      onPressed: onPressed,
+      style: TextButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        minimumSize: const Size(48, 48),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        foregroundColor: Palette.brand(context),
+      ),
+      child: Text(label, style: const TextStyle(fontSize: 12)),
+    );
+  }
+}
+
 class EmptyView extends StatelessWidget {
   const EmptyView({
     super.key,

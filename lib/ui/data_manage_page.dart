@@ -257,13 +257,9 @@ class _DataManagePageState extends ConsumerState<DataManagePage> {
           ),
           const SizedBox(height: 18),
           SectionLabel('自动备份',
-              trailing: TextButton(
+              trailing: HeaderAction(
+                label: '立即备份',
                 onPressed: _backupNow,
-                style: TextButton.styleFrom(
-                    padding: EdgeInsets.zero,
-                    minimumSize: const Size(0, 0),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                child: const Text('立即备份', style: TextStyle(fontSize: 12)),
               )),
           Panel(
             padding: EdgeInsets.zero,

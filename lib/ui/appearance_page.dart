@@ -3,11 +3,13 @@ import 'app_glyph.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/home_modules.dart';
 import '../data/store.dart';
 import '../state/ledger_state.dart';
 import '../state/settings.dart';
 import 'common.dart';
 import 'font_settings_page.dart';
+import 'home_modules_page.dart';
 import 'motion.dart';
 import 'theme.dart';
 
@@ -126,6 +128,27 @@ class AppearancePage extends ConsumerWidget {
                 leading: const Icon(Icons.format_size_outlined),
                 title: const Text('字体大小'),
                 subtitle: Text(_fontScaleLabel(settings.fontScale)),
+                trailing: const Icon(Icons.chevron_right, size: 18),
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+          // 2026-10-28：把「首页模块」入口接回来。1.4.9 删掉旧入口时页面留着没删，
+          // 于是 HomeModulesPage 成了一个没有入口、也没有测试的孤儿文件，
+          // 而 settings.modulesOrder / homeHidden 仍在被首页消费 ——
+          // 等于用户能改到的东西没有一个能改它的地方。
+          // 放在「外观与显示」里：它管的就是首页长什么样、几个模块、什么顺序。
+          SectionLabel('首页'),
+          Panel(
+            padding: EdgeInsets.zero,
+            child: PressScale(
+              scale: 0.98,
+              onTap: () => Navigator.of(context)
+                  .push(AppPageRoute(page: const HomeModulesPage())),
+              child: ListTile(
+                leading: const Icon(Icons.view_agenda_outlined),
+                title: const Text('首页模块'),
+                subtitle: Text(_homeModulesLabel(settings)),
                 trailing: const Icon(Icons.chevron_right, size: 18),
               ),
             ),
@@ -357,6 +380,13 @@ class AppearancePage extends ConsumerWidget {
         trailing: selected ? const Icon(Icons.check) : null,
       ),
     );
+  }
+
+  /// 首页显示了几项：用户进这个页之前应该能一眼看出「关掉了几个」。
+  String _homeModulesLabel(AppSettings s) {
+    final hidden = parseHidden(s.homeHidden);
+    final shown = s.modulesOrder.where((id) => !hidden.contains(id)).length;
+    return '排序与显隐 · 显示 $shown / ${s.modulesOrder.length} 项';
   }
 
   Widget _switchTile(

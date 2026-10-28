@@ -350,15 +350,10 @@ class _InsightsPageState extends ConsumerState<InsightsPage> {
                                 style: TextStyle(
                                     fontSize: 12, color: Palette.inkSoft(context))),
                             const Spacer(),
-                            TextButton(
+                            HeaderAction(
+                              label: '管理',
                               onPressed: () => Navigator.of(context)
                                   .push(AppPageRoute(page: const BudgetPage())),
-                              style: TextButton.styleFrom(
-                                  padding: EdgeInsets.zero,
-                                  minimumSize: const Size(0, 0),
-                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                              child:
-                                  const Text('管理', style: TextStyle(fontSize: 12)),
                             ),
                           ],
                         ),
