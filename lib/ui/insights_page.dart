@@ -1155,14 +1155,24 @@ class _RangeLine extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            _fmt(d),
-            style: TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.w600,
-              // 不能点的一端压暗，一眼能看出哪个是"算出来的"
-              color: enabled ? Palette.ink(context) : Palette.inkSoft(context),
-              fontFeatures: const [FontFeature.tabularFigures()],
+          // 区间两端各占一半宽度，日期固定 10 个字符。窄屏 + 系统字号放大到
+          // 1.3× 时这一行会挤爆（RenderFlex overflowed by 24px），所以让日期
+          // 在必要时按比例缩一点，而不是撑破行。
+          Flexible(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                _fmt(d),
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w600,
+                  // 不能点的一端压暗，一眼能看出哪个是"算出来的"
+                  color:
+                      enabled ? Palette.ink(context) : Palette.inkSoft(context),
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
             ),
           ),
           if (enabled) ...[

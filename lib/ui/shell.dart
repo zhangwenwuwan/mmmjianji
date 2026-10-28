@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../services/auto_backup.dart';
@@ -38,6 +39,13 @@ class _ShellState extends ConsumerState<Shell> {
   /// 页面下标：0 首页 / 1 统计 / 2 资产 / 3 我的
   int _index = 0;
   int _prevIndex = 0;
+
+  /// 上一次按返回键的时刻：两次都在 [_exitWindow] 内才真的退出。
+  ///
+  /// 为什么不做「按一下就退」：这是根路由，误触一次就直接把 App 关掉，
+  /// 尤其是手势返回（从边缘划）很容易带出来。国内记账 App 基本都是两段式。
+  DateTime? _lastBackAt;
+  static const _exitWindow = Duration(seconds: 2);
 
   static const _titles = ['首页', '统计', '资产', '我的'];
 
@@ -142,6 +150,43 @@ class _ShellState extends ConsumerState<Shell> {
 
   bool _widgetSynced = false;
 
+  /// 系统返回键（Android 按键 / 边缘手势）。
+  ///
+  /// Shell 是根路由，默认按一下就直接退出 App。这里分两级：
+  /// 1. 不在首页 → **先回首页**。在「统计/资产/我的」按返回直接退出是最反直觉的
+  ///    一种行为（用户多数只是想去首页），顺带把月份归位到本月，和点底栏
+  ///    「首页」完全一致；
+  /// 2. 已经在首页 → 第一次只给提示，[_exitWindow] 内再按一次才真的退出。
+  ///
+  /// 只挂在**解锁后**的这棵树上（PopScope 是 LockGate 的 child）：
+  /// 锁屏时按返回的行为不变，不会先弹一句"再返回一次退出"再让你看到锁屏。
+  void _onBack(bool didPop, Object? result) {
+    if (didPop) return;
+    if (_index != 0) {
+      resetMonthToNow(ref);
+      setState(() {
+        _prevIndex = _index;
+        _index = 0;
+      });
+      return;
+    }
+    final now = DateTime.now();
+    final last = _lastBackAt;
+    if (last != null && now.difference(last) <= _exitWindow) {
+      SystemNavigator.pop();
+      return;
+    }
+    _lastBackAt = now;
+    // 用 SnackBar 而不是 Toast：它跟着 Scaffold 走，位置在悬浮底栏**上方**，
+    // 不会被胶囊盖住半截；时长与判定窗口一致，提示消失即窗口关闭。
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(const SnackBar(
+        content: Text('再返回一次退出'),
+        duration: _exitWindow,
+      ));
+  }
+
   @override
   Widget build(BuildContext context) {
     // 数据一变就把本月概览推给桌面小组件（内部有节流）
@@ -151,96 +196,104 @@ class _ShellState extends ConsumerState<Shell> {
       WidgetsBinding.instance
           .addPostFrameCallback((_) => WidgetBridge.sync(ref, force: true));
     }
-    return LockGate(
-      // ⚠️ extendBody 是"真悬浮"的开关：不加它，Scaffold 会在底栏上方
-      // 留出一整块空白，胶囊只是画在那块空白里的一个圆角矩形 —— 看着就是
-      // "底板上贴了块板"。加了它，body 撑到屏幕底，流水会滚到胶囊**底下**，
-      // 隔着半透明玻璃透出来，这才是悬浮。
+    // ⚠️ extendBody 是"真悬浮"的开关：不加它，Scaffold 会在底栏上方
+    // 留出一整块空白，胶囊只是画在那块空白里的一个圆角矩形 —— 看着就是
+    // "底板上贴了块板"。加了它，body 撑到屏幕底，流水会滚到胶囊**底下**，
+    // 隔着半透明玻璃透出来，这才是悬浮。
+    //
+    // 代价：四个页面的滚动区必须留够底部内边距，否则最后一条账目会被
+    // 胶囊压住且永远滚不出来。目前四个页面统一是 88（胶囊总高 62，
+    // 滚到底时最后一项停在胶囊上方 26）。改胶囊高度就要同步改这个值。
+    final Widget home = Scaffold(
+      extendBody: true,
+      // 不再用 Material AppBar（2026-10-28 统一顶栏）：
+      // 四个 tab 现在共用自绘的 TabHeader（玻璃 + 48 高 + 17px 标题），
+      // 它叠在 body 的 Stack 里、浮在内容上面，页面自己留顶部内边距。
+      // 首页（index 0）不用它 —— 首页顶栏还要放账本 chip 和封面。
+      // 动效只作用在「单个页面」上，被选中的那一个播一次轻移。
       //
-      // 代价：四个页面的滚动区必须留够底部内边距，否则最后一条账目会被
-      // 胶囊压住且永远滚不出来。目前四个页面统一是 88（胶囊总高 62，
-      // 滚到底时最后一项停在胶囊上方 26）。改胶囊高度就要同步改这个值。
-      child: Scaffold(
-        extendBody: true,
-        // 不再用 Material AppBar（2026-10-28 统一顶栏）：
-        // 四个 tab 现在共用自绘的 TabHeader（玻璃 + 48 高 + 17px 标题），
-        // 它叠在 body 的 Stack 里、浮在内容上面，页面自己留顶部内边距。
-        // 首页（index 0）不用它 —— 首页顶栏还要放账本 chip 和封面。
-        // 动效只作用在「单个页面」上，被选中的那一个播一次轻移。
-        //
-        // ⚠️ 不要用 AnimatedSwitcher 去包这个栈：那样新旧两个栈都带着
-        // 全部 4 个页面做交叉淡入，会叠在一起出残影（0.6.0 踩过）。
-        //
-        // 【性能】原来是 `IndexedStack`：它**会把 4 个页面全部 layout**
-        // （RenderIndexedStack 继承 RenderStack，只跳过 paint，不跳过 layout）。
-        // 首页那一坨折叠头部 + 长列表、统计页的图表、资产页的净值走势全都跟着
-        // 每次切 tab 重排一遍，弱 GPU 上就是那一顿。
-        // 现在换成 `Stack + Offstage`：非当前页**连 layout 都不做**，
-        // 再叠一层 `TickerMode(enabled: false)` 把它们身上的动画 ticker 也停掉。
-        // 各页 State 仍然保留（滚动位置、输入内容都不丢）。
-        body: Stack(
-          fit: StackFit.expand,
-          children: [
-            for (var i = 0; i < _pages.length; i++)
-              Offstage(
-                offstage: i != _index,
-                child: TickerMode(
-                  enabled: i == _index,
-                  child: _TabPage(
-                    key: ValueKey('tab-$i'),
-                    active: i == _index,
-                    fromRight: i > _prevIndex,
-                    child: _pages[i],
-                  ),
+      // ⚠️ 不要用 AnimatedSwitcher 去包这个栈：那样新旧两个栈都带着
+      // 全部 4 个页面做交叉淡入，会叠在一起出残影（0.6.0 踩过）。
+      //
+      // 【性能】原来是 `IndexedStack`：它**会把 4 个页面全部 layout**
+      // （RenderIndexedStack 继承 RenderStack，只跳过 paint，不跳过 layout）。
+      // 首页那一坨折叠头部 + 长列表、统计页的图表、资产页的净值走势全都跟着
+      // 每次切 tab 重排一遍，弱 GPU 上就是那一顿。
+      // 现在换成 `Stack + Offstage`：非当前页**连 layout 都不做**，
+      // 再叠一层 `TickerMode(enabled: false)` 把它们身上的动画 ticker 也停掉。
+      // 各页 State 仍然保留（滚动位置、输入内容都不丢）。
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          for (var i = 0; i < _pages.length; i++)
+            Offstage(
+              offstage: i != _index,
+              child: TickerMode(
+                enabled: i == _index,
+                child: _TabPage(
+                  key: ValueKey('tab-$i'),
+                  active: i == _index,
+                  fromRight: i > _prevIndex,
+                  child: _pages[i],
                 ),
               ),
-            // 顶栏浮在页面之上（玻璃），内容从它下面滚过去。
-            // ⚠️ 页面里的滚动区必须留出 TabHeader.heightOf(context) 的顶部
-            // 内边距，否则第一张卡会被压在条底下。
-            if (_index != 0)
-              Positioned(
-                left: 0,
-                right: 0,
-                top: 0,
-                child: TabHeader(
-                  title: _titles[_index],
-                  actions: _headerActions(),
-                ),
+            ),
+          // 顶栏浮在页面之上（玻璃），内容从它下面滚过去。
+          // ⚠️ 页面里的滚动区必须留出 TabHeader.heightOf(context) 的顶部
+          // 内边距，否则第一张卡会被压在条底下。
+          if (_index != 0)
+            Positioned(
+              left: 0,
+              right: 0,
+              top: 0,
+              child: TabHeader(
+                title: _titles[_index],
+                actions: _headerActions(),
               ),
-          ],
+            ),
+        ],
+      ),
+      // 底栏和顶栏同为第 0 块：冷启动时和首页一起从下浮上来，
+      // 否则幕张开的一瞬间底栏是"焊死"的、内容是浮的，两截。
+      // 悬浮胶囊从下方浮上来：幅度给到 22，比页面内容的 22 稍大一点，
+      // 才看得出它是"浮"起来的（和顶栏的下沉方向相反，一进一出一收一放）。
+      bottomNavigationBar: BootRevealItem(
+        index: 0,
+        y: 22,
+        child: _BottomBar(
+          selectedSlot: _pageToSlot[_index]!,
+          onSelect: (slot) {
+            // 中间那格是动作不是页面：直接开记账页，选中态不变
+            if (slot == 2) {
+              openEntryEditor(context, ref);
+              return;
+            }
+            final page = _slotToPage[slot];
+            if (page == null) return;
+            // 回首页 = 回本月。首页 2026-10-26 起不再有月份切换（顶栏只剩
+            // 账本 + 三个图标），一旦在预算页/日历页把月份改成历史月，
+            // 回来就会看到一个"没有出口的 9 月"。这里和 LedgerPage.initState
+            // 一起兜住：进首页一律归位到当月。
+            if (page == 0) {
+              resetMonthToNow(ref);
+            }
+            if (page == _index) return;
+            setState(() {
+              _prevIndex = _index;
+              _index = page;
+            });
+          },
         ),
-        // 底栏和顶栏同为第 0 块：冷启动时和首页一起从下浮上来，
-        // 否则幕张开的一瞬间底栏是"焊死"的、内容是浮的，两截。
-        // 悬浮胶囊从下方浮上来：幅度给到 22，比页面内容的 22 稍大一点，
-        // 才看得出它是"浮"起来的（和顶栏的下沉方向相反，一进一出一收一放）。
-        bottomNavigationBar: BootRevealItem(
-          index: 0,
-          y: 22,
-          child: _BottomBar(
-            selectedSlot: _pageToSlot[_index]!,
-            onSelect: (slot) {
-              // 中间那格是动作不是页面：直接开记账页，选中态不变
-              if (slot == 2) {
-                openEntryEditor(context, ref);
-                return;
-              }
-              final page = _slotToPage[slot];
-              if (page == null) return;
-              // 回首页 = 回本月。首页 2026-10-26 起不再有月份切换（顶栏只剩
-              // 账本 + 三个图标），一旦在预算页/日历页把月份改成历史月，
-              // 回来就会看到一个"没有出口的 9 月"。这里和 LedgerPage.initState
-              // 一起兜住：进首页一律归位到当月。
-              if (page == 0) {
-                resetMonthToNow(ref);
-              }
-              if (page == _index) return;
-              setState(() {
-                _prevIndex = _index;
-                _index = page;
-              });
-            },
-          ),
-        ),
+      ),
+    );
+
+    // 返回键两段式（见 _onBack）：包在 LockGate 的 child 里，
+    // 锁屏时不接管返回，行为和以前一致。
+    return LockGate(
+      child: PopScope(
+        canPop: false,
+        onPopInvokedWithResult: _onBack,
+        child: home,
       ),
     );
   }

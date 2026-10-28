@@ -395,13 +395,13 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
             const SizedBox(height: 8),
             Row(
               children: [
-                Text('额度 ${centsToText(limit)}',
+                Text('额度 ${_amt(limit)}',
                     style: TextStyle(
                         fontSize: 10.5,
                         color: Colors.white.withValues(alpha: 0.62))),
                 const Spacer(),
                 Text(
-                  '可用 ${available == null ? '-' : centsToText(available)}',
+                  '可用 ${available == null ? '-' : _amt(available)}',
                   style: TextStyle(
                       fontSize: 10.5,
                       fontWeight: FontWeight.w700,
@@ -634,14 +634,12 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
           _factRow(
               context,
               '信用额度',
-              p.creditLimitCents <= 0
-                  ? '未设置'
-                  : centsToText(p.creditLimitCents)),
+              p.creditLimitCents <= 0 ? '未设置' : _amt(p.creditLimitCents)),
           const Divider(height: 18),
-          _factRow(context, '已用额度', centsToText(balance)),
+          _factRow(context, '已用额度', _amt(balance)),
           const Divider(height: 18),
           _factRow(context, '可用额度',
-              available == null ? '—' : centsToText(available)),
+              available == null ? '—' : _amt(available)),
           const Divider(height: 18),
           _factRow(context, '账单日',
               p.billingDay == null ? '未设置' : '每月 ${p.billingDay} 日'),
@@ -681,7 +679,7 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
           _factRow(context, '币种', '${p.currency} · ${nameOf(p.currency)}'),
           const Divider(height: 18),
           _factRow(context, p.kind.isLiability ? '期初欠款' : '期初余额',
-              centsToText(p.openingCents)),
+              _amt(p.openingCents)),
         ],
       ),
     );
@@ -773,6 +771,16 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
   static String _maskCardNo(String s) =>
       s.length <= 4 ? s : '**** ${s.substring(s.length - 4)}';
 
+  /// 金额文本，**尊重「隐藏金额」开关**。
+  ///
+  /// 这个页面有大量拼接串（额度条、fact 行、本月合计），都不走 MoneyText，
+  /// 直接 centsToText 会在用户开了「隐藏金额」时把数字漏在屏幕上。
+  ///
+  /// 有意不套的两处：余额校准弹窗（要让你看清"当前记录 vs 实际"才能改）
+  /// 和校准成功后的 toast —— 那是用户主动发起的操作，打码反而没法用。
+  String _amt(int cents) =>
+      ref.read(settingsProvider).hideAmounts ? '****' : centsToText(cents);
+
   Widget _factRow(BuildContext context, String label, String value) {
     return Row(
       children: [
@@ -812,15 +820,15 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
     return Panel(
       child: Column(
         children: [
-          _factRow(context, '本月支出', '$suffix${centsToText(m.outCents)}'),
+          _factRow(context, '本月支出', '$suffix${_amt(m.outCents)}'),
           const Divider(height: 18),
-          _factRow(context, '本月收入', '$suffix${centsToText(m.inCents)}'),
+          _factRow(context, '本月收入', '$suffix${_amt(m.inCents)}'),
           if (m.transferIn != 0 || m.transferOut != 0) ...[
             const Divider(height: 18),
             _factRow(
               context,
               '本月转账',
-              '转入 ${centsToText(m.transferIn)} · 转出 ${centsToText(m.transferOut)}',
+              '转入 ${_amt(m.transferIn)} · 转出 ${_amt(m.transferOut)}',
             ),
           ],
         ],
