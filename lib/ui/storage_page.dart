@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/rules.dart';
+import '../services/attachment_service.dart';
 import '../services/auto_backup.dart';
 import '../state/ledger_state.dart';
 import 'common.dart';
@@ -67,8 +68,10 @@ class _StoragePageState extends ConsumerState<StoragePage> {
     int? attachBytes = 0;
     try {
       final book = await ref.read(activeBookProvider.future);
-      final store = await ref.read(storeProvider.future);
-      attachBytes = await store.attachmentBytes(book.id);
+      // 直接量磁盘目录，而不是按 attachments 表里的路径求和：
+      // 表里没有的孤儿图（旧版本清空数据时漏删的）也是真实占用，
+      // 按表求和的写法会把它算成 0，用户永远清不掉也看不见。
+      attachBytes = await AttachmentService.totalBytes(book.id);
     } catch (_) {
       attachBytes = null; // 读不到就显示「—」，不要谎报 0
     }
@@ -107,7 +110,7 @@ class _StoragePageState extends ConsumerState<StoragePage> {
                   onRetry: _load,
                 )
               : ListView(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 32),
                   children: [
                     SectionLabel('占用'),
                     Panel(
@@ -151,7 +154,7 @@ class _StoragePageState extends ConsumerState<StoragePage> {
                           Text(
                             '数据存在应用私有目录，卸载应用会一并删除。换手机请先导出备份。',
                             style: TextStyle(
-                                fontSize: 11,
+                                fontSize: 12,
                                 height: 1.5,
                                 color: Palette.inkFaint(context)),
                           ),
@@ -173,7 +176,7 @@ class _StoragePageState extends ConsumerState<StoragePage> {
                               title: Text(_backups[i].name,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontSize: 12.5)),
+                                  style: const TextStyle(fontSize: 13)),
                               subtitle: Text(
                                 '${_dt(_backups[i].at)} · ${formatBytes(_backups[i].bytes)}',
                                 style: TextStyle(
@@ -197,7 +200,7 @@ class _StoragePageState extends ConsumerState<StoragePage> {
                     Text(
                       '每次打开 App 会自动备份一份，只保留最近 5 份，旧备份会被自动清掉。',
                       style: TextStyle(
-                          fontSize: 11,
+                          fontSize: 12,
                           height: 1.5,
                           color: Palette.inkFaint(context)),
                     ),
@@ -226,7 +229,7 @@ class _StoragePageState extends ConsumerState<StoragePage> {
         Expanded(
           child: Text(label,
               style: TextStyle(
-                  fontSize: strong ? 13.5 : 13,
+                  fontSize: strong ? 14 : 13,
                   fontWeight: strong ? FontWeight.w700 : FontWeight.w400,
                   color: strong
                       ? Palette.ink(context)
@@ -252,7 +255,7 @@ class _StoragePageState extends ConsumerState<StoragePage> {
         Expanded(
           child: Text(label,
               style: TextStyle(
-                  fontSize: strong ? 13.5 : 13,
+                  fontSize: strong ? 14 : 13,
                   fontWeight: strong ? FontWeight.w700 : FontWeight.w400,
                   color: strong
                       ? Palette.ink(context)

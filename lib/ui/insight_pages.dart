@@ -25,9 +25,12 @@ class ForecastPage extends ConsumerWidget {
     final rates = ref.watch(ratesProvider).valueOrNull ?? const {};
     final settings = ref.watch(settingsProvider);
 
-    // 净资产：资产 - 负债（折算主币）
+    // 净资产：资产 - 负债（折算主币）。
+    // 「不计入总资产」的账户在这里必须跳过 —— 它只是从列表里不消失，
+    // 不代表该参与净资产/现金流预测。
     var net = 0;
     for (final b in balances) {
+      if (!b.pocket.includeInAssets) continue;
       final cents = toBaseCents(b.balanceCents, b.pocket.currency, base, rates);
       net += cents;
     }
@@ -62,7 +65,7 @@ class ForecastPage extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('现金流预测')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
         children: [
           Panel(
             child: Column(
@@ -70,7 +73,7 @@ class ForecastPage extends ConsumerWidget {
               children: [
                 Text('当前净资产',
                     style: TextStyle(
-                        fontSize: 11, color: Palette.inkFaint(context))),
+                        fontSize: 12, color: Palette.inkFaint(context))),
                 const SizedBox(height: 4),
                 Text(money(f.netWorthCents),
                     style: TextStyle(
@@ -116,7 +119,7 @@ class ForecastPage extends ConsumerWidget {
             '不考虑你还没发生的收入、也不考虑一次性大额（比如交房租）。'
             '用来判断"这个月会不会紧"，不是账务承诺。',
             style: TextStyle(
-                fontSize: 11, height: 1.6, color: Palette.inkFaint(context)),
+                fontSize: 12, height: 1.6, color: Palette.inkFaint(context)),
           ),
         ],
       ),
@@ -160,7 +163,7 @@ class ForecastPage extends ConsumerWidget {
           const Spacer(),
           Text(value,
               style:
-                  const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+                  const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
         ],
       ),
     );
@@ -183,7 +186,7 @@ class SubscriptionsPage extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('订阅猎人')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
         children: [
           Panel(
             child: Row(
@@ -194,14 +197,14 @@ class SubscriptionsPage extends ConsumerWidget {
                     children: [
                       Text('每月固定支出',
                           style: TextStyle(
-                              fontSize: 11, color: Palette.inkFaint(context))),
+                              fontSize: 12, color: Palette.inkFaint(context))),
                       const SizedBox(height: 4),
                       Text(
                         settings.hideAmounts
                             ? '****'
                             : '${settings.symbol}${centsToText(monthly)}',
                         style: const TextStyle(
-                            fontSize: 24, fontWeight: FontWeight.w700),
+                            fontSize: 20, fontWeight: FontWeight.w700),
                       ),
                     ],
                   ),
@@ -257,12 +260,12 @@ class SubscriptionsPage extends ConsumerWidget {
                                 ? '****'
                                 : '${settings.symbol}${centsToText(list[i].cents)}',
                             style: const TextStyle(
-                                fontSize: 13.5, fontWeight: FontWeight.w600),
+                                fontSize: 14, fontWeight: FontWeight.w600),
                           ),
                           Text(
                               '年 ${settings.symbol}${centsToText(list[i].yearlyCents)}',
                               style: TextStyle(
-                                  fontSize: 9.5,
+                                  fontSize: 10.5,
                                   color: Palette.inkFaint(context))),
                         ],
                       ),
@@ -276,7 +279,7 @@ class SubscriptionsPage extends ConsumerWidget {
             '识别规则（故意保守）：备注相同、金额相差不超过 1%、至少在 2 个月里出现。'
             '所以不是每个订阅都能抓到，也基本不会把日常消费误判成订阅。',
             style: TextStyle(
-                fontSize: 11, height: 1.6, color: Palette.inkFaint(context)),
+                fontSize: 12, height: 1.6, color: Palette.inkFaint(context)),
           ),
         ],
       ),
@@ -299,7 +302,7 @@ class HeatmapPage extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('消费热力')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
         children: [
           Panel(
             child: Column(
@@ -317,7 +320,7 @@ class HeatmapPage extends ConsumerWidget {
                         child: Center(
                           child: Text(w,
                               style: TextStyle(
-                                  fontSize: 9,
+                                  fontSize: 10.5,
                                   color: Palette.inkFaint(context))),
                         ),
                       ),
@@ -333,7 +336,7 @@ class HeatmapPage extends ConsumerWidget {
                           width: 18,
                           child: Text('${week + 1}',
                               style: TextStyle(
-                                  fontSize: 8,
+                                  fontSize: 10.5,
                                   color: Palette.inkFaint(context))),
                         ),
                         for (var d = 0; d < 7; d++)
@@ -361,7 +364,7 @@ class HeatmapPage extends ConsumerWidget {
                   children: [
                     Text('少',
                         style: TextStyle(
-                            fontSize: 9, color: Palette.inkFaint(context))),
+                            fontSize: 10.5, color: Palette.inkFaint(context))),
                     const SizedBox(width: 4),
                     for (final v in [0.0, 0.25, 0.5, 0.75, 1.0])
                       Container(
@@ -377,12 +380,12 @@ class HeatmapPage extends ConsumerWidget {
                     const SizedBox(width: 4),
                     Text('多',
                         style: TextStyle(
-                            fontSize: 9, color: Palette.inkFaint(context))),
+                            fontSize: 10.5, color: Palette.inkFaint(context))),
                     const Spacer(),
                     if (settings.hideAmounts)
                       Text('金额已隐藏',
                           style: TextStyle(
-                              fontSize: 9, color: Palette.inkFaint(context))),
+                              fontSize: 10.5, color: Palette.inkFaint(context))),
                   ],
                 ),
               ],
@@ -392,7 +395,7 @@ class HeatmapPage extends ConsumerWidget {
           Text(
             '颜色越深当天花得越多。找找规律：是周末集中花，还是每周三固定一笔？',
             style: TextStyle(
-                fontSize: 11, height: 1.6, color: Palette.inkFaint(context)),
+                fontSize: 12, height: 1.6, color: Palette.inkFaint(context)),
           ),
         ],
       ),
@@ -438,7 +441,7 @@ class CarbonPage extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('碳足迹（估算）')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
         children: [
           Panel(
             child: Column(
@@ -446,7 +449,7 @@ class CarbonPage extends ConsumerWidget {
               children: [
                 Text('${monthTitle(month)} 估算碳排放',
                     style: TextStyle(
-                        fontSize: 11, color: Palette.inkFaint(context))),
+                        fontSize: 12, color: Palette.inkFaint(context))),
                 const SizedBox(height: 4),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.end,
@@ -461,7 +464,7 @@ class CarbonPage extends ConsumerWidget {
                     const Spacer(),
                     Text('≈ ${treesNeeded(totalGrams)} 棵树吸收一年',
                         style: TextStyle(
-                            fontSize: 11, color: Palette.inkSoft(context))),
+                            fontSize: 12, color: Palette.inkSoft(context))),
                   ],
                 ),
               ],
@@ -500,7 +503,7 @@ class CarbonPage extends ConsumerWidget {
             '这是粗略估算：按分类给每元支出一个碳排放系数（交通 300g、购物 200g、餐饮 150g…），'
             '不是真实核算，只能用来比较"哪类花销更费地球"。',
             style: TextStyle(
-                fontSize: 11, height: 1.6, color: Palette.inkFaint(context)),
+                fontSize: 12, height: 1.6, color: Palette.inkFaint(context)),
           ),
         ],
       ),
@@ -523,7 +526,7 @@ class MoodPage extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('情绪账本')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
         children: [
           Panel(
             child: Column(
@@ -531,7 +534,7 @@ class MoodPage extends ConsumerWidget {
               children: [
                 Text('近 90 天标记了 ${s.marked} 笔',
                     style: TextStyle(
-                        fontSize: 11, color: Palette.inkFaint(context))),
+                        fontSize: 12, color: Palette.inkFaint(context))),
                 const SizedBox(height: 10),
                 if (s.marked == 0)
                   Text('还没有标记过情绪。记账时在支出下面选「值 / 一般 / 后悔」，这里就会有统计。',
@@ -574,7 +577,7 @@ class MoodPage extends ConsumerWidget {
             '情绪是你自己标的，不是系统猜的。标几周之后，你会看到"哪类花销最容易后悔"——'
             '这比单纯看金额有用。',
             style: TextStyle(
-                fontSize: 11, height: 1.6, color: Palette.inkFaint(context)),
+                fontSize: 12, height: 1.6, color: Palette.inkFaint(context)),
           ),
         ],
       ),
@@ -618,7 +621,7 @@ class _SimulatorPageState extends ConsumerState<SimulatorPage> {
     return Scaffold(
       appBar: AppBar(title: const Text('如果…')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
         children: [
           Panel(
             child: Column(
@@ -634,7 +637,7 @@ class _SimulatorPageState extends ConsumerState<SimulatorPage> {
                     Text(
                         '${settings.symbol}${(_dailyCents / 100).toStringAsFixed(0)}',
                         style: const TextStyle(
-                            fontSize: 34, fontWeight: FontWeight.w700)),
+                            fontSize: 28, fontWeight: FontWeight.w700)),
                     Padding(
                       padding: const EdgeInsets.only(left: 6, bottom: 6),
                       child: Text('每天',
@@ -662,7 +665,7 @@ class _SimulatorPageState extends ConsumerState<SimulatorPage> {
                     ])
                       ActionChip(
                         label: Text(preset.$1,
-                            style: const TextStyle(fontSize: 11)),
+                            style: const TextStyle(fontSize: 12)),
                         onPressed: () =>
                             setState(() => _dailyCents = preset.$2),
                       ),
@@ -685,7 +688,7 @@ class _SimulatorPageState extends ConsumerState<SimulatorPage> {
                         padding: const EdgeInsets.only(right: 6),
                         child: ChoiceChip(
                           label: Text(d == 365 ? '一年' : '$d 天',
-                              style: const TextStyle(fontSize: 11)),
+                              style: const TextStyle(fontSize: 12)),
                           selected: _days == d,
                           onSelected: (_) => setState(() => _days = d),
                         ),
@@ -695,14 +698,14 @@ class _SimulatorPageState extends ConsumerState<SimulatorPage> {
                 const SizedBox(height: 14),
                 Text('能省下',
                     style: TextStyle(
-                        fontSize: 11, color: Palette.inkFaint(context))),
+                        fontSize: 12, color: Palette.inkFaint(context))),
                 const SizedBox(height: 4),
                 Text(
                   settings.hideAmounts
                       ? '****'
                       : '${settings.symbol}${centsToText(total)}',
                   style: TextStyle(
-                    fontSize: 32,
+                    fontSize: 28,
                     fontWeight: FontWeight.w700,
                     color: Palette.income,
                     fontFeatures: const [FontFeature.tabularFigures()],
@@ -714,7 +717,7 @@ class _SimulatorPageState extends ConsumerState<SimulatorPage> {
                       ? '相当于 ${(total / 100 / 30).toStringAsFixed(0)} 天的日均生活费'
                       : '这笔钱够买 ${(total / 100 / 3000).toStringAsFixed(1)} 台三千块的手机',
                   style: TextStyle(
-                      fontSize: 11.5, color: Palette.inkSoft(context)),
+                      fontSize: 12, color: Palette.inkSoft(context)),
                 ),
               ],
             ),
@@ -722,7 +725,7 @@ class _SimulatorPageState extends ConsumerState<SimulatorPage> {
           const SizedBox(height: 12),
           Text('只是算术：每天省 X 元 × N 天。真正的难点从来不是算不出来。',
               style: TextStyle(
-                  fontSize: 11, height: 1.6, color: Palette.inkFaint(context))),
+                  fontSize: 12, height: 1.6, color: Palette.inkFaint(context))),
         ],
       ),
     );

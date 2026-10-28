@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -51,12 +53,21 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   bool _touched = false;
   int _seq = 0;
 
+  /// 关键词输入的防抖。
+  ///
+  /// 原来是 onChanged 直接 _run()：每敲一个字符就跑一次全表 LIKE
+  /// （memo / tags / 分类三列），几千条流水时输入明显跟不上手；
+  /// 中文输入法组字阶段触发得更密。260ms 是"停手就出结果"和
+  /// "别为半个词查库"的折中。
+  Timer? _debounce;
+
   // ---- 批量模式（对齐原版搜索页的批量删除 / 改分类 / 改备注）----
   bool _batch = false;
   final Set<int> _selected = <int>{};
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _ctrl.dispose();
     super.dispose();
   }
@@ -76,7 +87,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     final seq = ++_seq;
     setState(() {
       _keyword = _ctrl.text;
-      _loading = true;
+      // ⚠️ 只有第一次搜索才铺骨架。之后连续输入时保留上一批结果：
+      // 每敲一个字就把整屏换成骨架，观感是"屏幕在抖"，
+      // 而结果其实几十毫秒后就回来了。
+      if (!_touched) _loading = true;
       _touched = true;
     });
     final store = await ref.read(storeProvider.future);
@@ -400,7 +414,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         title: TextField(
           controller: _ctrl,
           autofocus: true,
-          onChanged: (_) => _run(),
+          onChanged: (_) {
+            _debounce?.cancel();
+            _debounce = Timer(const Duration(milliseconds: 260), _run);
+          },
           decoration: const InputDecoration(
             hintText: '搜备注、标签、分类…',
             filled: false,
@@ -412,6 +429,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             IconButton(
               tooltip: '清空',
               onPressed: () {
+                // 清空前先掐掉待触发的防抖：否则 260ms 后会用空关键词
+                // 再查一次，界面从「空态」跳成「全部流水」。
+                _debounce?.cancel();
                 _ctrl.clear();
                 setState(() {
                   _flow = null;
@@ -532,7 +552,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                         ? const EmptyView(
                             icon: Icons.search_off, title: '没有找到相关记录')
                         : ListView(
-                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                            padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
                             children: [
                               Row(
                                 children: [
@@ -599,7 +619,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                                       '支出 ${settings.symbol}${centsToText(_totalOut)}'
                                       ' · 收入 ${settings.symbol}${centsToText(_totalIn)}',
                                       style: TextStyle(
-                                          fontSize: 11,
+                                          fontSize: 12,
                                           color: Palette.inkFaint(context)),
                                     ),
                                   ],
@@ -695,7 +715,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               const SizedBox(width: 5),
               Text(label,
                   style: TextStyle(
-                      fontSize: 12.5,
+                      fontSize: 13,
                       fontWeight: FontWeight.w600,
                       color: color)),
             ],

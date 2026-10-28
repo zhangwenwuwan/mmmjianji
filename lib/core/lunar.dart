@@ -91,12 +91,9 @@ String lunarDayText(int day) {
   return '三十';
 }
 
-/// 农历月 → 中文（正月 … 腊月，闰月加「闰」）。
-String lunarMonthText(int month, bool isLeap) {
-  const names = ['正', '二', '三', '四', '五', '六', '七', '八', '九', '十', '冬', '腊'];
-  final base = '${names[month - 1]}月';
-  return isLeap ? '闰$base' : base;
-}
+// lunarMonthText 已删除（2026-10-27）：全项目没有任何地方调用它。
+// 日历格子只在"有账时让位"之外显示农历**日**（初一/廿三/三十），
+// 从不显示农历月名 —— 留着是纯粹的僵尸代码。
 
 const List<String> _solarTermNames = [
   '小寒',

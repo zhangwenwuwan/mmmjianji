@@ -22,7 +22,8 @@ import 'data_actions.dart'
         exportCsv,
         exportConfig,
         importConfig,
-        importFromClipboard;
+        importFromClipboard,
+        wipeAll;
 import 'motion.dart';
 import 'pocket_manage_page.dart';
 import 'recycle_bin_page.dart';
@@ -124,7 +125,7 @@ class _DataManagePageState extends ConsumerState<DataManagePage> {
     return Scaffold(
       appBar: AppBar(title: const Text('数据管理')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
         children: [
           SectionLabel('管理'),
           Panel(
@@ -282,7 +283,7 @@ class _DataManagePageState extends ConsumerState<DataManagePage> {
                         padding: const EdgeInsets.all(16),
                         child: Text('还没有自动备份。每次打开 App 会自动备份一份，保留最近 5 份。',
                             style: TextStyle(
-                                fontSize: 11.5,
+                                fontSize: 12,
                                 height: 1.5,
                                 color: Palette.inkFaint(context))),
                       )
@@ -295,7 +296,7 @@ class _DataManagePageState extends ConsumerState<DataManagePage> {
                               leading: Icon(Icons.history,
                                   size: 18, color: Palette.inkSoft(context)),
                               title: Text(_backups[i].name,
-                                  style: const TextStyle(fontSize: 12.5)),
+                                  style: const TextStyle(fontSize: 13)),
                               subtitle: Text(
                                 '${_dt(_backups[i].at)} · ${formatBytes(_backups[i].bytes)}',
                                 style: const TextStyle(fontSize: 10.5),
@@ -355,7 +356,7 @@ class _DataManagePageState extends ConsumerState<DataManagePage> {
                       const SizedBox(width: 8),
                       Text('没有发现孤儿数据',
                           style: TextStyle(
-                              fontSize: 12.5, color: Palette.ink(context))),
+                              fontSize: 13, color: Palette.ink(context))),
                     ],
                   );
                 }
@@ -364,11 +365,11 @@ class _DataManagePageState extends ConsumerState<DataManagePage> {
                   children: [
                     Text('发现 $total 条流水指向了不存在的账户或分类',
                         style:
-                            TextStyle(fontSize: 12.5, color: Palette.expense)),
+                            TextStyle(fontSize: 13, color: Palette.expense)),
                     const SizedBox(height: 4),
                     Text('账户缺失 ${s.badPocket} 条 · 分类缺失 ${s.badBucket} 条',
                         style: TextStyle(
-                            fontSize: 11, color: Palette.inkFaint(context))),
+                            fontSize: 12, color: Palette.inkFaint(context))),
                     const SizedBox(height: 10),
                     SizedBox(
                       width: double.infinity,
@@ -407,7 +408,9 @@ class _DataManagePageState extends ConsumerState<DataManagePage> {
                 ListTile(
                   leading: const Icon(Icons.upload_outlined),
                   title: const Text('导出备份'),
-                  subtitle: const Text('通过系统分享发出去'),
+                  // 备份是"数据"的备份，不含凭证图片（图片走本机目录，
+                  // 换了手机路径也无效）。不写明的话，换机后以为票据会跟着回来。
+                  subtitle: const Text('通过系统分享发出去 · 不含凭证图片'),
                   onTap: () => exportBackup(context, ref),
                 ),
                 const Divider(height: 1, indent: 16),
@@ -484,7 +487,6 @@ class _DataManagePageState extends ConsumerState<DataManagePage> {
                   title:
                       Text('清空所有数据', style: TextStyle(color: Palette.expense)),
                   onTap: () async {
-                    final messenger = ScaffoldMessenger.of(context);
                     final ok = await showDialog<bool>(
                       context: context,
                       builder: (ctx) => AlertDialog(
@@ -502,13 +504,11 @@ class _DataManagePageState extends ConsumerState<DataManagePage> {
                         ],
                       ),
                     );
-                    if (ok == true) {
-                      final store = await ref.read(storeProvider.future);
-                      await store.wipe();
-                      ref.read(activeBookIdProvider.notifier).state = null;
-                      bumpRevision(ref);
-                      messenger
-                          .showSnackBar(const SnackBar(content: Text('已清空')));
+                    if (ok == true && context.mounted) {
+                      // 走 data_actions 里的统一实现：它还会清掉磁盘上的
+                      // 凭证图片（只删库里的行会留下永远删不掉的占用）。
+                      // 原来这里自己写了一遍，漏了附件那一步。
+                      await wipeAll(context, ref);
                     }
                   },
                 ),
@@ -526,7 +526,7 @@ class _DataManagePageState extends ConsumerState<DataManagePage> {
         children: [
           Text('$value',
               style:
-                  const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                  const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
           Text(label,
               style:
                   TextStyle(fontSize: 10.5, color: Palette.inkFaint(context))),

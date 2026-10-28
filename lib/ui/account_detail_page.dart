@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app_glyph.dart';
 import '../core/currency.dart';
+import '../core/loan.dart';
 import '../core/rules.dart';
 import '../data/store.dart';
 import '../state/ledger_state.dart';
@@ -48,11 +49,10 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
 
   Future<void> _load() async {
     final store = await ref.read(storeProvider.future);
-    final book = await ref.read(activeBookProvider.future);
     final list = await store.entriesOfPocket(_pocket.id,
         onlyAdjustment: _onlyAdjustment);
-    final month =
-        await store.pocketMonthTotals(book.id, _pocket.id, DateTime.now());
+    // 账户跨账本共享：本月合计也不按账本过滤，否则会和余额对不上
+    final month = await store.pocketMonthTotals(_pocket.id, DateTime.now());
     final adjCount = await store.adjustmentCountOf(_pocket.id);
     final all = await store.allPockets();
     if (!mounted) return;
@@ -127,7 +127,7 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
                           contentPadding: EdgeInsets.zero,
                           dense: true,
                           title: const Text('余额是负数（透支）',
-                              style: TextStyle(fontSize: 12.5)),
+                              style: TextStyle(fontSize: 13)),
                           value: negative,
                           onChanged: (v) => setLocal(() => negative = v),
                         ),
@@ -217,7 +217,7 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
         ],
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 28),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 28),
         children: [
           _hero(context, p, balance, suffix, settings),
           const SizedBox(height: 14),
@@ -226,6 +226,10 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
           else
             _basicFacts(context, p),
           const SizedBox(height: 14),
+          // 贷款账户：把「年利率 / 期数 / 还款方式」算成人话。
+          // 原来这三个字段只在编辑页里实时算，保存后详情页一个字都看不到。
+          if (p.kind == PocketKind.debt) _loanPanel(context, p),
+          _identityPanel(context, p),
           _monthPanel(context, p, suffix),
           const SizedBox(height: 18),
           // 校准流水混在普通流水里很难找，对过账的账户才给这个开关。
@@ -248,7 +252,7 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   visualDensity: VisualDensity.compact,
                   labelStyle: TextStyle(
-                      fontSize: 11, color: Palette.inkSoft(context)),
+                      fontSize: 12, color: Palette.inkSoft(context)),
                   padding: EdgeInsets.zero,
                 )
               else if (_onlyAdjustment)
@@ -258,7 +262,7 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
                     _entries = null;
                     _load();
                   }),
-                  child: const Text('看全部流水', style: TextStyle(fontSize: 11)),
+                  child: const Text('看全部流水', style: TextStyle(fontSize: 12)),
                 ),
             ],
           ),
@@ -333,7 +337,7 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
         children: [
           Row(
             children: [
-              const Icon(Icons.credit_card, size: 17, color: Colors.white70),
+              const Icon(Icons.credit_card, size: 18, color: Colors.white70),
               const SizedBox(width: 7),
               Expanded(
                 child: Text(
@@ -354,7 +358,7 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
                 ),
                 child: Text(
                   nameOf(p.currency),
-                  style: const TextStyle(fontSize: 10, color: Colors.white70),
+                  style: const TextStyle(fontSize: 10.5, color: Colors.white70),
                 ),
               ),
             ],
@@ -362,12 +366,12 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
           const SizedBox(height: 14),
           Text('已用（还欠）',
               style: TextStyle(
-                  fontSize: 11, color: Colors.white.withValues(alpha: 0.62))),
+                  fontSize: 12, color: Colors.white.withValues(alpha: 0.62))),
           const SizedBox(height: 4),
           Text(
             settings.hideAmounts ? '****' : '$suffix${centsToText(used)}',
             style: const TextStyle(
-              fontSize: 30,
+              fontSize: 28,
               fontWeight: FontWeight.w700,
               color: Colors.white,
               fontFeatures: [FontFeature.tabularFigures()],
@@ -463,7 +467,7 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
             Container(
               width: 5,
               decoration: const BoxDecoration(
-                color: Color(0xFF3E7BB6),
+                color: Palette.info,
                 borderRadius:
                     BorderRadius.horizontal(left: Radius.circular(18)),
               ),
@@ -477,7 +481,7 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
                     Row(
                       children: [
                         const Icon(Icons.account_balance,
-                            size: 16, color: Color(0xFF3E7BB6)),
+                            size: 16, color: Palette.info),
                         const SizedBox(width: 6),
                         Expanded(
                           child: Text(
@@ -493,25 +497,25 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
                               horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(
                             color:
-                                const Color(0xFF3E7BB6).withValues(alpha: 0.12),
+                                Palette.info.withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(5),
                           ),
                           child: const Text('储蓄卡',
                               style: TextStyle(
-                                  fontSize: 9.5, color: Color(0xFF3E7BB6))),
+                                  fontSize: 10.5, color: Palette.info)),
                         ),
                       ],
                     ),
                     const SizedBox(height: 14),
                     Text('余额',
                         style: TextStyle(
-                            fontSize: 11, color: Palette.inkFaint(context))),
+                            fontSize: 12, color: Palette.inkFaint(context))),
                     const SizedBox(height: 4),
                     MoneyText(
                       balance,
                       suffix: suffix,
                       style: TextStyle(
-                        fontSize: 30,
+                        fontSize: 28,
                         fontWeight: FontWeight.w700,
                         color: balance < 0
                             ? Palette.expense
@@ -559,19 +563,19 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
                   borderRadius: BorderRadius.circular(5),
                 ),
                 child: Text('负债',
-                    style: TextStyle(fontSize: 9.5, color: Palette.expense)),
+                    style: TextStyle(fontSize: 10.5, color: Palette.expense)),
               ),
             ],
           ),
           const SizedBox(height: 14),
           Text('还欠',
-              style: TextStyle(fontSize: 11, color: Palette.inkFaint(context))),
+              style: TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
           const SizedBox(height: 4),
           MoneyText(
             balance,
             suffix: suffix,
             style: TextStyle(
-              fontSize: 30,
+              fontSize: 28,
               fontWeight: FontWeight.w700,
               color: Palette.expense,
               fontFeatures: const [FontFeature.tabularFigures()],
@@ -598,12 +602,12 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
               const SizedBox(width: 6),
               Text('现金',
                   style: TextStyle(
-                      fontSize: 9.5, color: Palette.inkFaint(context))),
+                      fontSize: 10.5, color: Palette.inkFaint(context))),
             ],
           ),
           const SizedBox(height: 12),
           Text('余额',
-              style: TextStyle(fontSize: 11, color: Palette.inkFaint(context))),
+              style: TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
           const SizedBox(height: 4),
           MoneyText(
             balance,
@@ -650,7 +654,7 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Icon(Icons.info_outline,
-                    size: 13, color: Palette.inkFaint(context)),
+                    size: 14, color: Palette.inkFaint(context)),
                 const SizedBox(width: 5),
                 Expanded(
                   child: Text(
@@ -683,17 +687,112 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
     );
   }
 
+  /// 贷款：年利率 / 期数 / 还款方式 → 月供与总利息。
+  ///
+  /// 文案口径来自 core/loan.dart（编辑页的预览用的是同一份），
+  /// 参数不全（没填利率或期数）时整块不显示。
+  Widget _loanPanel(BuildContext context, Pocket p) {
+    final text = LoanPlan.summary(
+      principalCents: p.openingCents,
+      annualRatePercent: p.annualRate,
+      months: p.periods,
+      method: p.repaymentMethod,
+      symbol: symbolOf(p.currency),
+    );
+    if (text.isEmpty) return const SizedBox.shrink();
+    final rate = p.annualRate == p.annualRate.roundToDouble()
+        ? p.annualRate.toStringAsFixed(0)
+        : p.annualRate.toString();
+    return Column(
+      children: [
+        Panel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text('还款计划',
+                      style: TextStyle(
+                          fontSize: 12, color: Palette.inkSoft(context))),
+                  const Spacer(),
+                  Text('年利率 $rate% · ${p.periods} 期 · ${LoanPlan.methodName(p.repaymentMethod)}',
+                      style: TextStyle(
+                          fontSize: 12, color: Palette.inkFaint(context))),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(text,
+                  style: TextStyle(
+                      fontSize: 12,
+                      height: 1.5,
+                      fontWeight: FontWeight.w600,
+                      color: Palette.ink(context))),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+      ],
+    );
+  }
+
+  /// 简称 / 卡号 / 备注。
+  ///
+  /// 这三项以前**只进数据库、界面上没有任何地方看得到**：用户填了卡号，
+  /// 回头在账户详情里翻不到，等于白填。卡号只露后四位 —— 账户详情是
+  /// 随手会被人看到的页面，完整卡号留在编辑页里看。
+  Widget _identityPanel(BuildContext context, Pocket p) {
+    final alias = p.alias.trim();
+    final cardNo = p.cardNo.trim();
+    final note = p.note.trim();
+    if (alias.isEmpty && cardNo.isEmpty && note.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final rows = <Widget>[
+      if (alias.isNotEmpty) _factRow(context, '简称', alias),
+      if (cardNo.isNotEmpty)
+        _factRow(context, '卡号', _maskCardNo(cardNo)),
+      if (note.isNotEmpty) _factRow(context, '备注', note),
+    ];
+    return Column(
+      children: [
+        Panel(
+          child: Column(
+            children: [
+              for (var i = 0; i < rows.length; i++) ...[
+                if (i > 0) const Divider(height: 18),
+                rows[i],
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+      ],
+    );
+  }
+
+  static String _maskCardNo(String s) =>
+      s.length <= 4 ? s : '**** ${s.substring(s.length - 4)}';
+
   Widget _factRow(BuildContext context, String label, String value) {
     return Row(
       children: [
         Text(label,
             style: TextStyle(fontSize: 12, color: Palette.inkSoft(context))),
-        const Spacer(),
-        Text(value,
+        const SizedBox(width: 12),
+        // 用 Expanded 而不是 Spacer + Text：备注/卡号可能很长，
+        // 靠右排的同时要能截断，否则整行溢出黄条。
+        Expanded(
+          child: Text(
+            value,
+            textAlign: TextAlign.right,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: TextStyle(
-                fontSize: 12.5,
+                fontSize: 13,
                 fontWeight: FontWeight.w600,
-                color: Palette.ink(context))),
+                color: Palette.ink(context)),
+          ),
+        ),
       ],
     );
   }

@@ -224,6 +224,7 @@ class Entry {
     this.currency,
     this.toAmountCents,
     this.refundOfId,
+    this.reimburseEntryId,
     this.deletedAt,
     this.adjustment = false,
   });
@@ -276,6 +277,12 @@ class Entry {
   /// 退款关联的原始记录 id
   final int? refundOfId;
 
+  /// 报销入账关联：标记「已报销」时自动记入的那笔收入流水的 id。
+  ///
+  /// 撤回报销要把它删掉（否则账户余额会多出一截），所以必须留个指针；
+  /// 用 memo/tags 反查是不可靠的（用户会改备注）。
+  final int? reimburseEntryId;
+
   /// 软删除时间；null = 正常在账。已删除的流水只出现在回收站。
   final DateTime? deletedAt;
 
@@ -312,6 +319,7 @@ class Entry {
     String? currency,
     int? toAmountCents,
     int? refundOfId,
+    int? reimburseEntryId,
     DateTime? deletedAt,
     bool? adjustment,
     // 显式清除开关。
@@ -345,6 +353,7 @@ class Entry {
         toAmountCents:
             clearToAmount ? null : (toAmountCents ?? this.toAmountCents),
         refundOfId: clearRefund ? null : (refundOfId ?? this.refundOfId),
+        reimburseEntryId: reimburseEntryId ?? this.reimburseEntryId,
         deletedAt: deletedAt ?? this.deletedAt,
         adjustment: adjustment ?? this.adjustment,
       );
@@ -541,7 +550,7 @@ class LedgerStore {
   /// `allPockets().first` 这样的默认账户，改默认值会让十几处测试同时红。
   final bool withSamplePockets;
 
-  static const _version = 16;
+  static const _version = 17;
 
   static Future<LedgerStore> open({
     String? path,
@@ -867,6 +876,12 @@ class LedgerStore {
   await _addColumnIfMissing(
       db, 'pockets', 'repayment_method', 'INTEGER NOT NULL DEFAULT 0');
 
+  // v17：报销入账关联。
+  // 「标记已报销」时会自动生成一笔收入流水把钱记到指定账户，这里存它的 id；
+  // 撤回报销时靠它把那笔收入删掉，否则账户余额会凭空多一截。
+  // 老库/老备份没有这一列，无条件幂等补。
+  await _addColumnIfMissing(db, 'entries', 'reimburse_entry_id', 'INTEGER');
+
   // v8：附件（图片凭证）
     await db.execute('''
       CREATE TABLE IF NOT EXISTS attachments (
@@ -994,6 +1009,9 @@ class LedgerStore {
         'debts',
         'debt_payments',
         'wishes',
+        // 月记也在库里：漏了它，用户「清空」之后月度总结还留着，
+        // 备份里也照旧带出去 —— 以为清干净了其实没有。
+        'month_notes',
         'pockets',
         'buckets',
         'books',
@@ -1115,6 +1133,9 @@ class LedgerStore {
         'wishes',
         'entries',
         'buckets',
+        // 月记按 book_id 存，跟着账本一起走；漏了它就是一堆指向
+        // 已删账本的孤儿（导出时还会被带出去）。
+        'month_notes',
       ]) {
         await txn.delete(t, where: 'book_id = ?', whereArgs: [id]);
       }
@@ -1285,6 +1306,18 @@ class LedgerStore {
   Future<void> deletePocketIfEmpty(int id) async {
     if (await pocketHasEntries(id)) {
       throw StateError('该账户还有流水，不能删除');
+    }
+    // 周期记账模板也算"在用"：只看流水的话，账户能删掉，
+    // 但模板到期照样生成流水 —— pocket_id 指向已删账户（没有外键拦），
+    // 这笔钱在首页合计里算、在账户余额里被 JOIN 吞掉，下次启动
+    // 还会被孤儿修复挪到「第一个账户」，等于悄悄记到别人账上。
+    final r = await _db.query('recurring',
+        columns: ['id'],
+        where: 'pocket_id = ? AND enabled = 1',
+        whereArgs: [id],
+        limit: 1);
+    if (r.isNotEmpty) {
+      throw StateError('该账户还有周期记账，先删掉或关掉再删账户');
     }
     await _db.delete('pockets', where: 'id = ?', whereArgs: [id]);
   }
@@ -1484,9 +1517,20 @@ class LedgerStore {
   }
 
   /// 永久删除一条流水 + 清理附件记录与文件（不可撤销）。
+  ///
+  /// 两条 delete 必须在**同一个事务**里：先删 attachments 行、再删 entries 行，
+  /// 中间被打断（进程被杀 / 磁盘满）就会留下"流水还在、凭证记录没了"的状态，
+  /// 用户永远找不回那些票据。文件删除放事务外 —— 文件系统操作没法回滚，
+  /// 但先删了也不影响数据一致性（文件成了孤儿，下次存储管理能看到）。
   Future<void> purgeEntry(int id) async {
-    final paths = await deleteAttachmentsOfEntry(id);
-    await _db.delete('entries', where: 'id = ?', whereArgs: [id]);
+    final paths = await _db.transaction((txn) async {
+      final rows = await txn.query('attachments',
+          columns: ['path'], where: 'entry_id = ?', whereArgs: [id]);
+      final list = [for (final r in rows) r['path'] as String];
+      await txn.delete('attachments', where: 'entry_id = ?', whereArgs: [id]);
+      await txn.delete('entries', where: 'id = ?', whereArgs: [id]);
+      return list;
+    });
     for (final path in paths) {
       try {
         final f = File(path);
@@ -1541,6 +1585,7 @@ class LedgerStore {
         currency: r['currency'] as String?,
         toAmountCents: r['to_amount_cents'] as int?,
         refundOfId: r['refund_of_id'] as int?,
+        reimburseEntryId: r['reimburse_entry_id'] as int?,
         deletedAt: _parseDeletedAt(r['deleted_at']),
         adjustment: ((r['adjustment'] as int?) ?? 0) == 1,
       );
@@ -1622,8 +1667,13 @@ class LedgerStore {
   ///
   /// 不要拿「最近 200 条」的列表去算本月合计——流水多的账户会被截断，
   /// 页面上的「本月支出」就会凭空少一截。
+  ///
+  /// ⚠️ **不按账本过滤**：账户是跨账本共享的，余额和下方的流水列表
+  /// （[entriesOfPocket]）都是全局口径。这里原来带了 `e.book_id = ?`，
+  /// 于是同一个账户在账本 A 记的钱不会出现在账本 B 的这个页面上 ——
+  /// 本月支出比余额的变化小一截，切账本数字还会变。
   Future<({int outCents, int inCents, int transferOut, int transferIn})>
-      pocketMonthTotals(int bookId, int pocketId, DateTime month) async {
+      pocketMonthTotals(int pocketId, DateTime month) async {
     final rows = await _db.rawQuery('''
       SELECT
         SUM(CASE WHEN e.flow = 'out' AND e.exclude_from_stats = 0
@@ -1637,13 +1687,12 @@ class LedgerStore {
         SUM(CASE WHEN e.flow = 'transfer' AND e.to_pocket_id = ?
                  THEN COALESCE(e.to_amount_cents, e.amount_cents) ELSE 0 END) AS t_in
       FROM entries e
-      WHERE e.book_id = ? AND e.deleted_at IS NULL AND e.day >= ? AND e.day <= ?
+      WHERE e.deleted_at IS NULL AND e.day >= ? AND e.day <= ?
     ''', [
       pocketId,
       pocketId,
       pocketId,
       pocketId,
-      bookId,
       dayKey(firstDayOfMonth(month)),
       dayKey(lastDayOfMonth(month)),
     ]);
@@ -1712,15 +1761,9 @@ class LedgerStore {
   Future<void> deleteAttachment(int id) =>
       _db.delete('attachments', where: 'id = ?', whereArgs: [id]);
 
-  /// 删流水时一并清掉附件记录，返回被删掉的路径（调用方去删文件）
-  Future<List<String>> deleteAttachmentsOfEntry(int entryId) async {
-    final rows = await _db
-        .query('attachments', where: 'entry_id = ?', whereArgs: [entryId]);
-    final paths = [for (final r in rows) r['path'] as String];
-    await _db
-        .delete('attachments', where: 'entry_id = ?', whereArgs: [entryId]);
-    return paths;
-  }
+  // 2026-10-27 删掉 deleteAttachmentsOfEntry：purgeEntry 已把「查路径 + 删行」
+  // 收进同一个事务里（原来是"先删行、再删流水"，中途失败就丢凭证关联），
+  // 全项目再没有第二个调用点。
 
   /// 全书附件总字节数（存储管理页用）
   Future<int> attachmentBytes(int bookId) async {
@@ -1772,6 +1815,80 @@ class LedgerStore {
   Future<void> setReimburse(int entryId, int reimburse) =>
       _db.update('entries', {'reimburse': reimburse},
           where: 'id = ?', whereArgs: [entryId]);
+
+  /// 标记「已报销」，并把报销金额**记到指定账户**。
+  ///
+  /// 2026-10-28 用户要求：点「已报销」时要能选报销到哪个账户，确认后金额
+  /// 自动加到那个账户上。所以这里生成一笔收入流水（flow='in'），
+  /// 再把原流水标成已报销、并把新流水的 id 记在 `reimburse_entry_id`。
+  ///
+  /// 为什么是一笔新流水而不是直接改原流水：原流水是**支出**，它记的是钱出去的
+  /// 那一侧；钱回来落在另一个账户上，必须有一条属于那个账户的流水，
+  /// 否则余额算不出来（账户余额是按流水汇总的）。
+  ///
+  /// 记成收入、不排除统计：原支出还在统计里，两边一起算净额才对；
+  /// 只排除一边会让"这个月净花了多少"算错。
+  ///
+  /// 两步必须同事务，否则中途失败会留下"已报销但没有入账"的死账。
+  Future<int> reimburseTo(
+    int entryId,
+    int pocketId, {
+    DateTime? day,
+  }) async {
+    final rows =
+        await _db.query('entries', where: 'id = ?', whereArgs: [entryId]);
+    if (rows.isEmpty) throw StateError('这笔流水不存在');
+    final e = _toEntry(rows.first);
+    // 已经报销过就别再记一笔（界面上按钮会消失，但重复点击/并发回调仍可能进来）。
+    // 返回已有那笔的 id，没有就 -1。
+    if (e.reimburse == 2) return e.reimburseEntryId ?? -1;
+    final when = day ?? DateTime.now();
+    final memo = e.memo.trim().isEmpty ? '报销' : '报销 · ${e.memo.trim()}';
+    late int createdId;
+    await _db.transaction((txn) async {
+      createdId = await txn.insert('entries', {
+        'book_id': e.bookId,
+        'pocket_id': pocketId,
+        'flow': 'in',
+        'amount_cents': e.amountCents,
+        'memo': memo,
+        'day': dayKey(when),
+        'tags': '报销',
+        'reimburse': 0,
+        'currency': e.currency,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+      await txn.update(
+        'entries',
+        {'reimburse': 2, 'reimburse_entry_id': createdId},
+        where: 'id = ?',
+        whereArgs: [entryId],
+      );
+    });
+    return createdId;
+  }
+
+  /// 撤回报销：把当初自动记入的那笔收入删掉，原流水回到「待报销」。
+  ///
+  /// 只改标记不删流水的话，账户余额会凭空多出这笔钱 —— 用户点一下撤回，
+  /// 账就对不上了。
+  Future<void> unreimburse(int entryId) async {
+    final rows =
+        await _db.query('entries', where: 'id = ?', whereArgs: [entryId]);
+    if (rows.isEmpty) return;
+    final linkId = rows.first['reimburse_entry_id'] as int?;
+    await _db.transaction((txn) async {
+      if (linkId != null) {
+        await txn.delete('entries', where: 'id = ?', whereArgs: [linkId]);
+      }
+      await txn.update(
+        'entries',
+        {'reimburse': 1, 'reimburse_entry_id': null},
+        where: 'id = ?',
+        whereArgs: [entryId],
+      );
+    });
+  }
 
   // ---------------------------------------------------------------- 聚合（原币种分）
 
@@ -1893,9 +2010,19 @@ class LedgerStore {
   /// **跨账本汇总**：一个账户在账本 A 记的消费、在账本 B 也计入同一份余额。
   /// 这是用户拍板的「全局余额」口径。
   Future<List<({Pocket pocket, int balanceCents})>> pocketBalances() async {
-    final list = (await allPockets(includeArchived: true))
-        .where((p) => p.includeInAssets)
-        .toList();
+    // ⚠️ 这里**不能**按 includeInAssets 过滤。
+    //
+    // 这个方法是「每个账户各自有多少钱」的唯一来源：账户详情页的余额、
+    // 账户管理列表、搜索页的账户筛选都读它。「不计入总资产」只是一个
+    // **汇总口径**（净资产/资产总额别把它加进去），不是"这个账户不存在"。
+    //
+    // 原来在这里 `.where((p) => p.includeInAssets)`，后果很严重：
+    // 关掉开关的账户从资产页消失、详情页查不到自己的余额 →
+    // 回退成「期初余额」，之后所有流水都不体现；再点一次余额校准，
+    // reconcileBalance 会以那个错的期初为基准，写出一条把历史流水
+    // 重复计一遍的调整分录 —— 永久错账。
+    // 汇总侧要过滤请用 p.includeInAssets（见 assets_page 的合计处）。
+    final list = await allPockets(includeArchived: true);
     final rowsFrom = await _db.rawQuery('''
       SELECT pocket_id AS pid,
              SUM(CASE
@@ -2620,6 +2747,101 @@ class LedgerStore {
 
   // ---------------------------------------------------------------- 净资产走势
 
+  /// 逐日净资产（折算后），给蜡烛图用。
+  ///
+  /// 为什么需要它：蜡烛图的「开/高/低/收」四个价必须是**同一时点的总净值**，
+  /// 光有月末余额只能算出「收」，影线（高/低）只能编。所以这里按天把流水累加
+  /// 成一条净值曲线，再由上层按月切 OHLC。
+  ///
+  /// 口径与 [monthEndBalances] / [pocketBalances] 完全一致：
+  /// - 普通账户贡献 = 期初 + 净流入；
+  /// - 负债账户贡献 = -期初 + 净流入（期初记的是「欠多少」）；
+  /// - 转账转出方扣「本金 + 手续费 − 折扣」，转入方加 COALESCE(to_amount, amount)；
+  /// - 不含归档（仍计入资产）之外的过滤，已删除流水排除。
+  ///
+  /// [toBase] 由调用方注入（store 层不碰汇率表），把「某币种的分」折成本位币分。
+  Future<({int baselineCents, List<({DateTime day, int netCents})> days})>
+      netWorthDaily({
+    required DateTime from,
+    required int Function(int cents, String currency) toBase,
+    DateTime? until,
+  }) async {
+    final pockets = (await allPockets(includeArchived: true))
+        .where((p) => p.includeInAssets)
+        .toList();
+    final byId = {for (final p in pockets) p.id: p};
+
+    // 起点：所有账户期初的净值贡献之和
+    var value = 0;
+    for (final p in pockets) {
+      value += toBase(
+        p.kind.isLiability ? -p.openingCents : p.openingCents,
+        p.currency,
+      );
+    }
+
+    final rowsFrom = await _db.rawQuery(
+      "SELECT pocket_id AS pid, day AS d, "
+      "SUM(CASE "
+      "WHEN flow = 'in' THEN amount_cents "
+      "WHEN flow = 'transfer' THEN -(amount_cents + fee_cents - discount_cents) "
+      "ELSE -amount_cents END) AS delta "
+      "FROM entries WHERE deleted_at IS NULL GROUP BY pocket_id, day",
+      const [],
+    );
+    final rowsTo = await _db.rawQuery(
+      "SELECT to_pocket_id AS pid, day AS d, "
+      "SUM(COALESCE(to_amount_cents, amount_cents)) AS delta "
+      "FROM entries WHERE flow = 'transfer' AND to_pocket_id IS NOT NULL "
+      "AND deleted_at IS NULL GROUP BY to_pocket_id, day",
+      const [],
+    );
+
+    // day -> 当天净值变化（本位币分）
+    final perDay = <String, int>{};
+    void take(Map<String, Object?> r) {
+      final p = byId[r['pid'] as int];
+      if (p == null) return;
+      final delta = (r['delta'] as num?)?.toInt() ?? 0;
+      if (delta == 0) return;
+      final key = r['d'] as String;
+      perDay[key] = (perDay[key] ?? 0) + toBase(delta, p.currency);
+    }
+
+    for (final r in rowsFrom) {
+      take(r);
+    }
+    for (final r in rowsTo) {
+      take(r);
+    }
+
+    final changeDays = perDay.keys.toList()..sort();
+    final startKey = dayKey(from);
+
+    // 先把 from 之前的全部吃进去，得到 from 当天的起点
+    var idx = 0;
+    while (idx < changeDays.length && changeDays[idx].compareTo(startKey) < 0) {
+      value += perDay[changeDays[idx]]!;
+      idx++;
+    }
+
+    // 区间起点之前的净值 = 当月第一天任何流水发生前的值，就是「月开盘价」
+    final baseline = value;
+    final end = until ?? DateTime.now();
+    final out = <({DateTime day, int netCents})>[];
+    var cursor = DateTime(from.year, from.month, from.day);
+    while (!cursor.isAfter(end)) {
+      final key = dayKey(cursor);
+      while (idx < changeDays.length && changeDays[idx] == key) {
+        value += perDay[changeDays[idx]]!;
+        idx++;
+      }
+      out.add((day: cursor, netCents: value));
+      cursor = DateTime(cursor.year, cursor.month, cursor.day + 1);
+    }
+    return (baselineCents: baseline, days: out);
+  }
+
   /// 近 N 个月「月末」各账户余额（原币种分），给净资产曲线用。
   /// 口径：期初 + 截至该月末的所有流水（转账两边都算）。
   Future<
@@ -2742,7 +2964,11 @@ class LedgerStore {
       for (final t in tags) {
         final v = t.trim();
         if (v.isEmpty) continue;
-        add('e.tags LIKE ?', ['%$v%']);
+        // ⚠️ 必须整串匹配，不能 LIKE '%v%'：
+        // 有「出差」「出差报销」两个标签时，选「出差」会把两条都算进来，
+        // 而标签详情页（entriesOfTag）用的是整串匹配 → 同一个标签两个金额。
+        // tags 是逗号分隔、无空格（见记账页的 split）。
+        add("(',' || e.tags || ',') LIKE ?", ['%,$v,%']);
       }
     }
     if (reimburse != null && reimburse > 0) {
@@ -2925,7 +3151,10 @@ class LedgerStore {
     final rows = await _db.rawQuery(
       "SELECT e.day, e.flow, e.amount_cents, e.memo, e.tags, e.reimburse, "
       "COALESCE(b.title, '') AS bucket, COALESCE(p.title, '') AS pocket, "
-      "p.currency AS currency, COALESCE(p2.title, '') AS to_pocket "
+      // 币种必须优先取这一笔自己的：一笔 USD 支出记在 CNY 账户上时，
+      // 用账户币种会把它导成「10.00 CNY」，和实际差一个汇率。
+      "COALESCE(e.currency, p.currency) AS currency, "
+      "COALESCE(p2.title, '') AS to_pocket "
       "FROM entries e "
       "LEFT JOIN buckets b ON b.id = e.bucket_id "
       "LEFT JOIN pockets p ON p.id = e.pocket_id "
@@ -3056,6 +3285,14 @@ class LedgerStore {
     fixed += await _db.rawUpdate(
       "UPDATE entries SET bucket_id = NULL WHERE book_id = ? AND bucket_id IS NOT NULL "
       "AND bucket_id NOT IN (SELECT id FROM buckets)",
+      [bookId],
+    );
+    // 转入方的孤儿也要清：转出方照常扣了钱、转入方却加不上，
+    // 这笔钱就凭空蒸发，而 orphanStats 只查 pocket_id，用户一点线索都没有。
+    // 置 NULL（而不是塞进第一个账户）：塞过去等于把这笔钱记到别人账上。
+    fixed += await _db.rawUpdate(
+      "UPDATE entries SET to_pocket_id = NULL WHERE book_id = ? "
+      "AND to_pocket_id IS NOT NULL AND to_pocket_id NOT IN (SELECT id FROM pockets)",
       [bookId],
     );
     return fixed;

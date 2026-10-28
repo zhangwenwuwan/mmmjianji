@@ -1,9 +1,8 @@
-import 'dart:math';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/currency.dart';
+import '../core/loan.dart';
 import '../core/pocket_types.dart';
 import '../data/store.dart';
 import '../services/icon_service.dart';
@@ -264,7 +263,7 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
             _topBar(context),
             Expanded(
               child: ListView(
-                padding: const EdgeInsets.fromLTRB(16, 2, 16, 28),
+                padding: const EdgeInsets.fromLTRB(12, 2, 12, 28),
                 children: [
                   // —— 基本信息 ——
                   _cardBox(context, [
@@ -288,13 +287,16 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
                       '卡号仅用作个人备注，不涉及任何金融交易，可不填写'),
 
                   // —— 信用卡：额度与日期 ——
+                  //
+                  // 2026-10-27：「额度共享」「出账日消费计入下一期」「年费设置」
+                  // 三项目前摘掉了。它们只是把值写进库，**没有任何计算或渲染
+                  // 读它们**（没有账单子系统），留着等于骗用户"我设好了"。
+                  // 字段还在 Pocket 里，老数据不丢，将来做账单时再接。
                   if (_kind == PocketKind.credit) ...[
                     const SizedBox(height: 12),
                     _cardBox(context, [
                       _valueRow(context, '总额度', _limitText(settings),
                           onTap: _pickLimit, last: false),
-                      _switchRow(context, '额度共享', _sharedLimit,
-                          (v) => setState(() => _sharedLimit = v), last: false),
                       _valueRow(
                           context,
                           '出账日期',
@@ -308,12 +310,7 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
                               ? '选填'
                               : '每月 $_paymentDueDay 日',
                           onTap: () => _pickDay(billing: false),
-                          last: false),
-                      _switchRow(context, '出账日消费计入下一期', _billNextPeriod,
-                          (v) => setState(() => _billNextPeriod = v),
-                          last: false),
-                      _valueRow(context, '年费设置', _annualFee,
-                          onTap: _pickAnnualFee, last: true),
+                          last: true),
                     ]),
                     const SizedBox(height: 12),
                     _cardBox(context, [_glyphRow(context, last: true)]),
@@ -332,17 +329,14 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
                     _cardBox(context, [_glyphRow(context, last: true)]),
                   ] else ...[
                     // —— 其他账户：图标与分组 ——
+                    // 「深色图标」「收益同步」也已摘掉（同样只存不用）：
+                    // glyphDark 没有任何渲染处按主题取它，incomeSync 需要云端。
                     const SizedBox(height: 12),
                     _cardBox(context, [
                       _glyphRow(context),
-                      _glyphDarkRow(context),
                       _valueRow(context, '所属分组', _groupName,
-                          onTap: _openTypePicker, last: false),
-                      _valueRow(context, '收益同步', _incomeSync,
-                          onTap: _pickIncomeSync, last: true),
+                          onTap: _openTypePicker, last: true),
                     ]),
-                    _caption(context,
-                        '收益同步：余额宝、零钱通等收益自动同步（需云端，暂未启用）'),
                     const SizedBox(height: 12),
                     // —— 账本相关 ——
                     _cardBox(context, [
@@ -361,7 +355,7 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
                   Text(
                     '账户一旦有流水就删不掉了，只能归档。期初余额只是起点，之后每笔都会算进去。',
                     style: TextStyle(
-                        fontSize: 11,
+                        fontSize: 12,
                         height: 1.6,
                         color: Palette.inkFaint(context)),
                   ),
@@ -445,7 +439,7 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
               children: [
                 Text(label,
                     style:
-                        TextStyle(fontSize: 15, color: Palette.ink(context))),
+                        TextStyle(fontSize: 14, color: Palette.ink(context))),
                 const SizedBox(width: 16),
                 Expanded(
                   child: Text(
@@ -454,7 +448,7 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                        fontSize: 14.5, color: Palette.inkFaint(context)),
+                        fontSize: 14, color: Palette.inkFaint(context)),
                   ),
                 ),
                 const SizedBox(width: 4),
@@ -485,7 +479,7 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
           child: Row(
             children: [
               Text(label,
-                  style: TextStyle(fontSize: 15, color: Palette.ink(context))),
+                  style: TextStyle(fontSize: 14, color: Palette.ink(context))),
               const SizedBox(width: 20),
               Expanded(
                 child: TextField(
@@ -493,7 +487,7 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
                   textAlign: TextAlign.right,
                   maxLength: maxLength,
                   style:
-                      TextStyle(fontSize: 14.5, color: Palette.ink(context)),
+                      TextStyle(fontSize: 14, color: Palette.ink(context)),
                   decoration: InputDecoration(
                     isDense: true,
                     filled: false,
@@ -502,7 +496,7 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
                     counterText: '',
                     hintText: hint,
                     hintStyle: TextStyle(
-                        fontSize: 14.5, color: Palette.inkFaint(context)),
+                        fontSize: 14, color: Palette.inkFaint(context)),
                   ),
                 ),
               ),
@@ -543,7 +537,7 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
                 const SizedBox(width: 12),
                 Text(label,
                     style: TextStyle(
-                        fontSize: 16,
+                        fontSize: 17,
                         fontWeight: FontWeight.w600,
                         color: Palette.ink(context))),
                 const Spacer(),
@@ -568,7 +562,7 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
             child: Row(
               children: [
                 Text('账户图标',
-                    style: TextStyle(fontSize: 15, color: Palette.ink(context))),
+                    style: TextStyle(fontSize: 14, color: Palette.ink(context))),
                 const Spacer(),
                 SizedBox(
                   width: 30,
@@ -714,7 +708,7 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
       context: context,
       showDragHandle: true,
       builder: (ctx) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
         child: GlyphPicker(
           glyphs: AccountEditPage.glyphs,
           value: _glyph,
@@ -725,55 +719,10 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
     if (g != null && mounted) setState(() => _glyph = g);
   }
 
-  Future<void> _pickGlyphDark() async {
-    final g = await showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-        child: GlyphPicker(
-          glyphs: AccountEditPage.glyphs,
-          value: _glyphDark.isEmpty ? _glyph : _glyphDark,
-          onChanged: (v) => Navigator.of(ctx).pop(v),
-        ),
-      ),
-    );
-    if (g != null && mounted) setState(() => _glyphDark = g);
-  }
-
-  Widget _glyphDarkRow(BuildContext context) {
-    final g = _glyphDark.isEmpty ? _glyph : _glyphDark;
-    return InkWell(
-      onTap: _pickGlyphDark,
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Row(
-              children: [
-                Text('夜间模式图标',
-                    style: TextStyle(fontSize: 15, color: Palette.ink(context))),
-                const Spacer(),
-                SizedBox(
-                  width: 30,
-                  height: 30,
-                  child: AppGlyph(g, size: 20, fill: true, radius: 8),
-                ),
-                const SizedBox(width: 6),
-                if (_glyphDark.isEmpty)
-                  Text('自动',
-                      style: TextStyle(
-                          fontSize: 13, color: Palette.inkFaint(context))),
-                Icon(Icons.chevron_right,
-                    size: 18, color: Palette.inkFaint(context)),
-              ],
-            ),
-          ),
-          _hairline(context),
-        ],
-      ),
-    );
-  }
+  // 2026-10-27 删掉 _pickGlyphDark / _glyphDarkRow / _pickAnnualFee /
+  // _pickIncomeSync：对应的四个开关都没有任何消费方，UI 已摘掉。
+  // _glyphDark / _annualFee / _incomeSync 这三个 **状态字段保留** ——
+  // 编辑账户时要把原值原样写回，否则改一次账户就把老数据清空了。
 
   /// 左标签 + 右侧开关。
   Widget _switchRow(BuildContext context, String label, bool value,
@@ -789,7 +738,7 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
                 Expanded(
                   child: Text(label,
                       style:
-                          TextStyle(fontSize: 15, color: Palette.ink(context))),
+                          TextStyle(fontSize: 14, color: Palette.ink(context))),
                 ),
                 Switch(
                   value: value,
@@ -811,7 +760,7 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
         padding: const EdgeInsets.fromLTRB(16, 6, 16, 2),
         child: Text(text,
             style: TextStyle(
-                fontSize: 11, height: 1.5, color: Palette.inkFaint(context))),
+                fontSize: 12, height: 1.5, color: Palette.inkFaint(context))),
       );
 
   /// 所属分组：优先取选择器展示分组名（资金账户 / 信贷账户 …），
@@ -826,52 +775,6 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
   String get _booksLabel => _visibleBookIds.trim().isEmpty
       ? '全部账本'
       : '${_visibleBookIds.split(',').where((s) => s.trim().isNotEmpty).length} 个账本';
-
-  Future<void> _pickAnnualFee() async {
-    final v = await showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      builder: (ctx) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            for (final o in const ['无', '减免', '有年费'])
-              ListTile(
-                title: Text(o),
-                trailing: _annualFee == o
-                    ? Icon(Icons.check, color: Palette.brand(ctx))
-                    : null,
-                onTap: () => Navigator.of(ctx).pop(o),
-              ),
-          ],
-        ),
-      ),
-    );
-    if (v != null && mounted) setState(() => _annualFee = v);
-  }
-
-  Future<void> _pickIncomeSync() async {
-    final v = await showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      builder: (ctx) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            for (final o in const ['无', '每日', '每月'])
-              ListTile(
-                title: Text(o),
-                trailing: _incomeSync == o
-                    ? Icon(Icons.check, color: Palette.brand(ctx))
-                    : null,
-                onTap: () => Navigator.of(ctx).pop(o),
-              ),
-          ],
-        ),
-      ),
-    );
-    if (v != null && mounted) setState(() => _incomeSync = v);
-  }
 
   Future<void> _pickBooks() async {
     final books = ref.read(booksProvider).valueOrNull ?? const <Book>[];
@@ -938,7 +841,7 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
           child: Row(
             children: [
               Text('年利率',
-                  style: TextStyle(fontSize: 15, color: Palette.ink(context))),
+                  style: TextStyle(fontSize: 14, color: Palette.ink(context))),
               const SizedBox(width: 20),
               Expanded(
                 child: TextField(
@@ -950,7 +853,7 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
                   style:
-                      TextStyle(fontSize: 14.5, color: Palette.ink(context)),
+                      TextStyle(fontSize: 14, color: Palette.ink(context)),
                   decoration: InputDecoration(
                     isDense: true,
                     filled: false,
@@ -959,7 +862,7 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
                     counterText: '',
                     hintText: '例如 5.8（%）',
                     hintStyle: TextStyle(
-                        fontSize: 14.5, color: Palette.inkFaint(context)),
+                        fontSize: 14, color: Palette.inkFaint(context)),
                     suffixText: '%',
                   ),
                   onChanged: (v) =>
@@ -983,7 +886,7 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
           child: Row(
             children: [
               Text('期数',
-                  style: TextStyle(fontSize: 15, color: Palette.ink(context))),
+                  style: TextStyle(fontSize: 14, color: Palette.ink(context))),
               const SizedBox(width: 20),
               Expanded(
                 child: TextField(
@@ -992,7 +895,7 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
                   textAlign: TextAlign.right,
                   keyboardType: TextInputType.number,
                   style:
-                      TextStyle(fontSize: 14.5, color: Palette.ink(context)),
+                      TextStyle(fontSize: 14, color: Palette.ink(context)),
                   decoration: InputDecoration(
                     isDense: true,
                     filled: false,
@@ -1001,7 +904,7 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
                     counterText: '',
                     hintText: '例如 12（月）',
                     hintStyle: TextStyle(
-                        fontSize: 14.5, color: Palette.inkFaint(context)),
+                        fontSize: 14, color: Palette.inkFaint(context)),
                     suffixText: '月',
                   ),
                   onChanged: (v) => _periods = int.tryParse(v.trim()) ?? 0,
@@ -1048,37 +951,17 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
     if (v != null && mounted) setState(() => _repaymentMethod = v);
   }
 
-  String get _loanPreview {
-    if (_annualRate <= 0 || _periods <= 0 || _openingCents <= 0) return '';
-    final P = _openingCents / 100; // 欠款本金（账户币种）
-    final r = _annualRate / 100 / 12; // 月利率
-    final n = _periods;
-    final sym = symbolOf(_currency);
-    String fmt(double v) => '$sym${v.toStringAsFixed(2)}';
-    switch (_repaymentMethod) {
-      case 1: // 等额本金
-        final m1 = P / n + P * r;
-        final perMonthDown = P * r / n;
-        final totalInterest = P * r * (n + 1) / 2;
-        return '等额本金：首月约 ${fmt(m1)}，每月递减 ${fmt(perMonthDown)}，'
-            '总利息约 ${fmt(totalInterest)}';
-      case 2: // 先息后本
-        final monthly = P * r;
-        final totalInterest = P * r * n;
-        return '先息后本：每月利息约 ${fmt(monthly)}，到期一次性还本金 ${fmt(P)}'
-            '，总利息约 ${fmt(totalInterest)}';
-      case 3: // 一次性还本付息
-        final totalInterest = P * _annualRate / 100 * n;
-        return '一次性还本付息：到期一次性还约 '
-            '${fmt(P + totalInterest)}（利息 ${fmt(totalInterest)}）';
-      default: // 等额本息
-        final m = r == 0
-            ? P / n
-            : P * r * pow(1 + r, n) / (pow(1 + r, n) - 1);
-        final totalInterest = m * n - P;
-        return '等额本息：每月约 ${fmt(m)}，总利息约 ${fmt(totalInterest)}';
-    }
-  }
+  /// 月供预览。
+  ///
+  /// 公式已抽到 core/loan.dart（详情页要用同一份）：原来只在这里算，
+  /// 保存之后用户在账户详情里就再也看不到这些数字了。
+  String get _loanPreview => LoanPlan.summary(
+        principalCents: _openingCents,
+        annualRatePercent: _annualRate,
+        months: _periods,
+        method: _repaymentMethod,
+        symbol: symbolOf(_currency),
+      );
 
   // ---------------------------------------------------------------- 文案
 
@@ -1195,7 +1078,7 @@ class _AccountTypePage extends StatelessWidget {
             ),
             Expanded(
               child: ListView(
-                padding: const EdgeInsets.fromLTRB(16, 2, 16, 28),
+                padding: const EdgeInsets.fromLTRB(12, 2, 12, 28),
                 children: [
                   for (final g in kAccountChooserGroups) ...[
                     _sectionHeader(context, g.$1),
@@ -1246,7 +1129,7 @@ class _AccountTypePage extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 11.5, color: Palette.ink(context))),
+              style: TextStyle(fontSize: 12, color: Palette.ink(context))),
         ],
       ),
     );
@@ -1361,7 +1244,7 @@ class _RoundIconButton extends StatelessWidget {
                 height: 16,
                 child: CircularProgressIndicator(strokeWidth: 2, color: fg),
               )
-            : Icon(icon, size: 22, color: fg),
+            : Icon(icon, size: 18, color: fg),
       ),
     );
   }

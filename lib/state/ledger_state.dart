@@ -237,23 +237,10 @@ final totalsProvider =
   return (incomeCents: income, expenseCents: expense);
 });
 
-/// 分类占比（主币种分，按分类名合并）
-final slicesProvider = FutureProvider<List<Slice>>((ref) async {
-  final store = await ref.watch(storeProvider.future);
-  final book = await ref.watch(activeBookProvider.future);
-  final rates = await ref.watch(ratesProvider.future);
-  final month = ref.watch(monthProvider);
-  ref.watch(revisionProvider);
-  final raw = await store.bucketSlices(book.id, month);
-  final merged = <String, int>{};
-  for (final s in raw) {
-    merged[s.label] = (merged[s.label] ?? 0) +
-        toBaseCents(s.cents, s.currency, book.baseCurrency, rates);
-  }
-  return rankSlices([
-    for (final e in merged.entries) Slice(label: e.key, cents: e.value),
-  ]);
-});
+// slicesProvider 已删除（2026-10-27）：它是早期「首页分类占比」用的，
+// 后来统计页的 insightSlicesProvider 接管了同一件事（支持周/年/自定义区间），
+// 这个就再没人 watch 了 —— 留着只会误导下一个改这里的人。
+// bucketSlices / rankSlices 仍然活着（insightSlicesProvider 在用），别一起删。
 
 /// 每日收支（主币种分），key 是 dayKey '2026-10-21'。
 ///
@@ -670,6 +657,86 @@ final netWorthSeriesProvider =
   }
   final keys = sum.keys.toList()..sort();
   return [for (final k in keys) (month: k, netCents: sum[k]!)];
+});
+
+/// 一根月 K。字段顺序固定：开 / 高 / 低 / 收。
+typedef NetWorthCandle = ({
+  DateTime month,
+  int openCents,
+  int highCents,
+  int lowCents,
+  int closeCents,
+});
+
+/// 把逐日净值按月切成 K 线。
+///
+/// 单独拎出来是为了能单测：开/高/低/收 只要错一根，图上就是一根假 K，
+/// 但页面看上去仍然「正常」，靠肉眼发现不了。
+List<NetWorthCandle> monthlyCandles(
+  List<({DateTime day, int netCents})> daily, {
+  /// 区间开始之前的净值：当月第一笔流水发生前的值，也就是「开盘价」。
+  int baselineCents = 0,
+}) {
+  final out = <NetWorthCandle>[];
+  DateTime? month;
+  var open = baselineCents, high = baselineCents, low = baselineCents;
+  var close = baselineCents;
+
+  void flush() {
+    final m = month;
+    if (m == null) return;
+    out.add((
+      month: m,
+      openCents: open,
+      highCents: high,
+      lowCents: low,
+      closeCents: close,
+    ));
+  }
+
+  for (final d in daily) {
+    final key = DateTime(d.day.year, d.day.month);
+    if (month == null || key != month) {
+      flush();
+      month = key;
+      // 月开盘 = 上个月收盘；当月第一笔之前就是它
+      open = close;
+      high = low = close;
+      if (d.netCents > high) high = d.netCents;
+      if (d.netCents < low) low = d.netCents;
+      close = d.netCents;
+    } else {
+      if (d.netCents > high) high = d.netCents;
+      if (d.netCents < low) low = d.netCents;
+      close = d.netCents;
+    }
+  }
+  flush();
+  return out;
+}
+
+/// 近 N 个月的**净资产蜡烛线**（开/高/低/收，主币种分）。
+///
+/// 数据来源是 [LedgerStore.netWorthDaily] 的逐日净值 —— 光有月末余额只能
+/// 得到「收」，影线的高低点只能编；有了日线才能按月切出真实的最高/最低。
+///
+/// 口径：本月第一天的净值 = 开盘，本月最后一天的净值 = 收盘，
+/// 期间所有日净值（含被流水改变的当天）的最值 = 影线端点。
+final netWorthCandlesProvider =
+    FutureProvider.family<List<NetWorthCandle>, int>((ref, months) async {
+  final store = await ref.watch(storeProvider.future);
+  final book = await ref.watch(activeBookProvider.future);
+  final rates = await ref.watch(ratesProvider.future);
+  ref.watch(revisionProvider);
+
+  final now = DateTime.now();
+  final from = DateTime(now.year, now.month - (months - 1), 1);
+  final series = await store.netWorthDaily(
+    from: from,
+    toBase: (cents, currency) =>
+        toBaseCents(cents, currency, book.baseCurrency, rates),
+  );
+  return monthlyCandles(series.days, baselineCents: series.baselineCents);
 });
 
 // ---------------------------------------------------------------- 目标 / 周期

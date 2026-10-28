@@ -5,6 +5,8 @@ import '../core/currency.dart';
 import '../core/rules.dart';
 import '../data/store.dart';
 import '../state/ledger_state.dart';
+import '../state/settings.dart';
+import 'app_glyph.dart';
 import 'common.dart';
 import 'motion.dart';
 import 'theme.dart';
@@ -49,11 +51,91 @@ class _ReimbursePageState extends ConsumerState<ReimbursePage>
     });
   }
 
-  Future<void> _mark(Entry e, int status) async {
+  /// 标「已报销」：先让用户选报销到哪个账户，确认后金额自动加到那个账户。
+  ///
+  /// 2026-10-28 用户要求。以前只改一个标记位，钱不会进任何账户 ——
+  /// 报销回来的钱得真的落到某个卡上，否则资产页永远是少的。
+  Future<void> _markDone(Entry e) async {
+    final book = await ref.read(activeBookProvider.future);
+    final pockets =
+        (ref.read(allPocketsProvider).valueOrNull ?? const <Pocket>[])
+            .where((p) => !p.archived)
+            .toList();
+    if (!mounted) return;
+
+    // 只列**同币种**账户：这笔钱原样回来，记进别的币种账户就得先折算，
+    // 而报销单上没有汇率信息，硬折只会把账搞乱（和记账页同一条规则）。
+    final currencyOfPocket = {for (final p in pockets) p.id: p.currency};
+    final subject =
+        e.currency ?? currencyOfPocket[e.pocketId] ?? book.baseCurrency;
+    final candidates =
+        pockets.where((p) => p.currency == subject).toList();
+
+    if (candidates.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('还没有 $subject 账户，先到资产页建一个再报销')),
+      );
+      return;
+    }
+
+    final symbol = ref.read(settingsProvider).symbol;
+    final amount = '$symbol${centsToText(e.amountCents)}';
+    final picked = await showAppSheet<int>(
+      context: context,
+      title: '报销到哪个账户',
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+            child: Text(
+              '确认后会把 $amount 作为一笔收入记入所选账户，账户余额同步增加。',
+              style: TextStyle(fontSize: 12, color: Palette.inkSoft(ctx)),
+            ),
+          ),
+          for (final p in candidates)
+            ListTile(
+              leading: SizedBox(
+                width: 34,
+                height: 34,
+                child: AppGlyph(p.glyph, size: 20, fill: true, radius: 9),
+              ),
+              title: Text(p.displayName),
+              subtitle: Text(
+                p.currency,
+                style: const TextStyle(fontSize: 12),
+              ),
+              trailing: Icon(Icons.chevron_right,
+                  size: 18, color: Palette.inkFaint(ctx)),
+              onTap: () => Navigator.of(ctx).pop(p.id),
+            ),
+          const SizedBox(height: 6),
+        ],
+      ),
+    );
+    if (picked == null || !mounted) return;
+
     final store = await ref.read(storeProvider.future);
-    await store.setReimburse(e.id, status);
+    await store.reimburseTo(e.id, picked);
     bumpRevision(ref);
     await _load();
+    if (!mounted) return;
+    final name = candidates.firstWhere((p) => p.id == picked).displayName;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('$amount 已记入「$name」，可随时撤回')),
+    );
+  }
+
+  /// 撤回报销：连同当初自动记入的那笔收入一起撤掉（否则余额会多出来）。
+  Future<void> _unmark(Entry e) async {
+    final store = await ref.read(storeProvider.future);
+    await store.unreimburse(e.id);
+    bumpRevision(ref);
+    await _load();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已撤回，入账的那笔收入也删掉了')),
+    );
   }
 
   @override
@@ -89,9 +171,9 @@ class _ReimbursePageState extends ConsumerState<ReimbursePage>
               controller: _tab,
               children: [
                 _list(context, _pending, totalOf(_pending), base,
-                    actionLabel: '标记已报销', onAction: (e) => _mark(e, 2)),
+                    actionLabel: '标记已报销', onAction: _markDone),
                 _list(context, _done, totalOf(_done), base,
-                    actionLabel: '撤回', onAction: (e) => _mark(e, 1)),
+                    actionLabel: '撤回', onAction: _unmark),
               ],
             ),
     );
@@ -113,7 +195,7 @@ class _ReimbursePageState extends ConsumerState<ReimbursePage>
       );
     }
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
       children: [
         Panel(
           child: Row(
@@ -124,7 +206,7 @@ class _ReimbursePageState extends ConsumerState<ReimbursePage>
               const Spacer(),
               MoneyText(total,
                   style: const TextStyle(
-                      fontSize: 18, fontWeight: FontWeight.w700)),
+                      fontSize: 17, fontWeight: FontWeight.w700)),
             ],
           ),
         ),
@@ -138,7 +220,7 @@ class _ReimbursePageState extends ConsumerState<ReimbursePage>
                 ListTile(
                   title: Text(list[i].memo.isEmpty ? '未注明' : list[i].memo),
                   subtitle: Text(dayLabel(list[i].day),
-                      style: const TextStyle(fontSize: 11)),
+                      style: const TextStyle(fontSize: 12)),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
