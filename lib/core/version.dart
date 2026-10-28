@@ -5,4 +5,4 @@
 /// 不传则用下面的常量 —— 常量也要跟着 pubspec 一起改。
 const String appVersion =
     String.fromEnvironment('APP_VERSION', defaultValue: '1.4.16');
-const int appBuild = int.fromEnvironment('APP_BUILD', defaultValue: 58);
+const int appBuild = int.fromEnvironment('APP_BUILD', defaultValue: 59);
