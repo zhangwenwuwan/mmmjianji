@@ -29,6 +29,7 @@ class Glass extends StatelessWidget {
     this.borderRadius,
     this.border,
     this.padding = EdgeInsets.zero,
+    this.highlight = false,
   });
 
   final Widget child;
@@ -45,12 +46,59 @@ class Glass extends StatelessWidget {
   final BoxBorder? border;
   final EdgeInsets padding;
 
+  /// **玻璃厚度高光**（2026-10-28 加）。
+  ///
+  /// CSS 里这一步是 `box-shadow: inset 1px 1px #fff8` —— 一条 1px 的内发光，
+  /// 模拟玻璃边缘被光打亮。**Flutter 的 BoxShadow 没有 inset 参数**
+  /// （issue #96264 挂了很多年），所以换成等效做法：
+  /// **从左上到右下的一层白→透明→微暗渐变**，画在 tint 同一层（不是盖在内容上）。
+  ///
+  /// 效果比 1px 线更接近真实玻璃：左上受光最亮、右下略沉，整块有了"厚度"。
+  /// 默认关闭 —— 只在需要强调"这是一块玻璃"的地方（底栏胶囊）开，
+  /// 别的地方开了会让半透明变得更花。
+  final bool highlight;
+
+  /// 玻璃高光的三个色标：左上「厚」、中间本色、右下「薄」。
+  ///
+  /// ⚠️ **必须同时动 alpha，不能只提亮颜色**。
+  /// 底栏的 tint 已经接近纯白（`Color.lerp(white, brand, 0.07)` ≈ 93% 白），
+  /// 在 1.0 附近做 `c + (1-c)*k` 提亮量只有 0.06 左右 —— 肉眼完全看不出来，
+  /// 等于这一步白做。真实玻璃的"边缘发亮"本来就是**叠加了更多反射光**，
+  /// 所以这里把 alpha 从 0.20 抬到 0.34，再用亮度微调收边。
+  static List<Color> _highlightColors(Color base) => [
+        Color.from(
+          alpha: (base.a + 0.14).clamp(0.0, 1.0),
+          red: base.r + (1 - base.r) * 0.45,
+          green: base.g + (1 - base.g) * 0.45,
+          blue: base.b + (1 - base.b) * 0.45,
+        ),
+        base,
+        Color.from(
+          alpha: (base.a * 0.62).clamp(0.0, 1.0),
+          red: base.r * 0.97,
+          green: base.g * 0.97,
+          blue: base.b * 0.97,
+        ),
+      ];
+
   @override
   Widget build(BuildContext context) {
+    final base = tint ?? Palette.glass(context);
+
     final content = Container(
       padding: padding,
       decoration: BoxDecoration(
-        color: tint ?? Palette.glass(context),
+        // ⚠️ BoxDecoration 里 color 和 gradient 互斥（gradient 优先、color 被忽略），
+        // 所以开了高光就只给 gradient，没开才给 color。
+        color: highlight ? null : base,
+        gradient: highlight
+            ? LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: _highlightColors(base),
+                stops: const [0, 0.42, 1],
+              )
+            : null,
         borderRadius: borderRadius,
         border: border,
       ),

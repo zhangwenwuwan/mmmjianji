@@ -148,7 +148,9 @@ class PocketManagePage extends ConsumerWidget {
         ),
         child: Icon(icon, size: 18, color: tint),
       ),
-      title: Text(p.title),
+      // displayName（简称优先）：统计页、资产页、流水行看到的是同一个名字。
+      // 这里以前用全名，用户设了简称后会以为"统计页抓错账户了"。
+      title: Text(p.displayName),
       subtitle: Text(
         '${p.kind.label} · ${nameOf(p.currency)}$limitText'
         '${archived ? ' · 已归档' : ''}',

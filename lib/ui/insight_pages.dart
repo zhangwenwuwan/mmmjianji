@@ -47,7 +47,7 @@ class ForecastPage extends ConsumerWidget {
       // 「不计入收支」的笔不参与现金流预测的样本
       if (e.excludeFromStats) continue;
       final fromCur = e.currency ?? currencyOf[e.pocketId] ?? base;
-      final cents = toBaseCents(e.amountCents, fromCur, base, rates);
+      final cents = toBaseCents(e.statsCents, fromCur, base, rates);
       if (e.flow == 'out') expense += cents;
       if (e.flow == 'in') income += cents;
     }

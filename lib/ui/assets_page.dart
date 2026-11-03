@@ -11,9 +11,9 @@ import '../data/store.dart';
 import '../services/icon_service.dart';
 import '../state/ledger_state.dart';
 import '../state/settings.dart';
+import 'aa_receivable_page.dart';
 import 'account_detail_page.dart';
 import 'book_manage_page.dart';
-import 'charts.dart';
 import 'common.dart';
 import 'goals_page.dart';
 import 'illustrations.dart';
@@ -57,6 +57,9 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
     // 待报销（应收）：不属于任何账户余额，但要算进「手头到底有多少」
     final pendingReimburse =
         ref.watch(pendingReimburseProvider).valueOrNull ?? 0;
+    // AA 待收：分摊出去、别人还没还我的钱（同样是应收，不进净资产）。
+    final aaPending =
+        ref.watch(aaReceivableProvider).valueOrNull?.pendingCents ?? 0;
 
     return balancesAsync.when(
       skipLoadingOnReload: true,
@@ -115,7 +118,9 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
           // 顶栏是浮在内容上的，顶部得留出它的高度
         padding: EdgeInsets.fromLTRB(12, TabHeader.heightOf(context) + 8, 12, 88),
           children: [
-            // 净资产
+            // 主数字放「普通资产」而不是「净资产」。
+            // 用户反馈：净资产是大字时，一眼看到的是"扣完负债"的数，感觉账户里没钱；
+            // 而"我到底有多少钱"其实该看普通资产。净资产降为下方小字，仍然一眼可见。
             Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
@@ -146,7 +151,7 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                     children: [
                       Row(
                         children: [
-                          Text('净资产',
+                          Text('普通资产',
                               style: TextStyle(
                                   fontSize: 12,
                                   color: Colors.white.withValues(alpha: 0.8))),
@@ -179,7 +184,7 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                         child: Text(
                           settings.hideAmounts
                               ? '****'
-                              : '$base ${centsToText(net)}'
+                              : '$base ${centsToText(assets)}'
                                   .replaceFirst('$base ', settings.symbol),
                           maxLines: 1,
                           softWrap: false,
@@ -194,7 +199,7 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                       const SizedBox(height: 8),
                       Row(
                         children: [
-                          _mini('普通资产', assets, settings, base),
+                          _mini('净资产', net, settings, base),
                           const SizedBox(width: 20),
                           _mini('债务', liabilities, settings, base),
                         ],
@@ -245,6 +250,50 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                       Icon(Icons.chevron_right,
                           size: 16,
                           color: Palette.brand(context).withValues(alpha: 0.6)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+            // AA 待收（应收）：AA 垫付后别人还没还的部分，同样不进净资产。
+            if (aaPending > 0) ...[
+              const SizedBox(height: 8),
+              PressScale(
+                scale: 0.98,
+                onTap: () => Navigator.of(context)
+                    .push(AppPageRoute(page: const AaReceivablePage())),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                  decoration: BoxDecoration(
+                    color: Palette.income.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(AppRadius.card),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.groups_outlined,
+                          size: 18, color: Palette.income),
+                      const SizedBox(width: 8),
+                      Text('AA 待收（应收）',
+                          style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: Palette.income)),
+                      const Spacer(),
+                      Text(
+                        settings.hideAmounts
+                            ? '****'
+                            : '${settings.symbol}${centsToText(aaPending)}',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: Palette.income,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                      Icon(Icons.chevron_right,
+                          size: 16,
+                          color: Palette.income.withValues(alpha: 0.6)),
                     ],
                   ),
                 ),
@@ -560,6 +609,7 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
 
   Widget _accountCard(BuildContext context, _BalanceRow row, String base) {
     final p = row.pocket;
+    final sym = ref.read(settingsProvider).symbol;
     final money = MoneyText(
       row.balanceCents,
       suffix: amountSuffix(p.currency, base),
@@ -658,13 +708,15 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                 const SizedBox(height: 6),
                 Row(
                   children: [
-                    Text('额度 ${centsToText(limit)}',
+                    // 带货币符号：上一行「还欠」是 MoneyText（有 ¥），
+                    // 这里裸 centsToText 没有 —— 同一张卡相邻两行一个有一个没有。
+                    Text('额度 $sym${centsToText(limit)}',
                         style: TextStyle(
                             fontSize: 10.5,
                             color: Colors.white.withValues(alpha: 0.62))),
                     const Spacer(),
                     Text(
-                      '可用 ${available == null ? '-' : centsToText(available)}',
+                      '可用 ${available == null ? '-' : '$sym${centsToText(available)}'}',
                       style: TextStyle(
                           fontSize: 10.5,
                           fontWeight: FontWeight.w600,
@@ -987,9 +1039,12 @@ class _Composition extends StatelessWidget {
         label: a.pocket.displayName,
         glyph: a.pocket.glyph,
         cents: cents,
+        // 2026-10-28：账户配色也走固定色板（按账户名取），
+        // 不再按 i 取 —— 否则排序一变，同一个账户的色就变了。
+        // 负债固定用支出红（它是"欠的钱"，不该跟资产混在一个色板里）。
         color: a.pocket.kind.isLiability
             ? Palette.expense
-            : kSliceColors[i % kSliceColors.length],
+            : Palette.categoryColor(context, a.pocket.displayName),
       ));
     }
     items.sort((x, y) => y.cents.compareTo(x.cents));

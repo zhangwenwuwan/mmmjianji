@@ -157,7 +157,13 @@ class _RecycleBinPageState extends ConsumerState<RecycleBinPage> {
                 _selected.clear();
               }),
             ),
-          if (_batch && _selected.isNotEmpty)
+          // 「清空回收站」只在**非多选**时露出来。
+          //
+          // 原来它的条件是 `_batch && _selected.isNotEmpty`，逻辑正好反了：
+          // 用户都已经勾选了几条，想要的是「永久删除选中的」；而"我全不要了"
+          // 这个念头恰恰出现在刚进页面、还没勾任何东西的时候 —— 那时反而没有入口，
+          // 只能一条条勾完再删。现在多选态只留「永久删除 (N)」，语义不打架。
+          if (entries.isNotEmpty && !_batch)
             IconButton(
               tooltip: '清空回收站',
               icon: const Icon(Icons.delete_sweep_outlined),

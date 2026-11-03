@@ -36,6 +36,82 @@ class Palette {
 
   static const seed = Color(0xFF0E7C66);
 
+  /// 分类固定色板（2026-10-28）。
+  ///
+  /// 之前分类图标一律是**无彩灰底**（`hairline` 60%），一屏看过去全是灰方块；
+  /// 图表原来有一套按「排序位置」分配的色板 ——
+  /// 同一个「衣」，金额排名一变颜色就跟着变，颜色等于没有记忆点。
+  ///
+  /// 现在改成**按分类名固定取色**：同一个名字永远同一个颜色，
+  /// 跨月份、跨页面（流水行 / 环形图 / 桑基图 / 分类管理）都一致。
+  ///
+  /// 选色原则：低饱和、同一明度档，铺在 14% 透明的图标底上不会抢文字；
+  /// 十色足够区分常见分类，再多就分不清了。
+  ///
+  /// ⚠️ **故意不含品牌绿**：分类色经常和「+ 按钮 / 选中态 / 品牌元素」同屏出现，
+  /// 撞成同一个绿就分不出"这是分类色还是主色"了。品牌绿只在下面 [seed] 用。
+  static const kCategoryColors = <Color>[
+    Color(0xFF3E9DBF), // 湖蓝
+    Color(0xFFE0A458), // 琥珀
+    Color(0xFF7B6BB5), // 紫
+    Color(0xFFC94F45), // 朱红
+    Color(0xFF5B8C5A), // 苔绿
+    Color(0xFFC77B9E), // 绛粉
+    Color(0xFF6B8CAE), // 灰蓝
+    Color(0xFFB8894A), // 驼
+    Color(0xFF8A9C8E), // 灰绿
+    Color(0xFF0E7C66), // 松石绿（放最后：只有哈希恰好落到这格才用）
+  ];
+
+  /// 常见分类名的固定色。
+  ///
+  /// 只用哈希的话，`衣` 会算到苔绿、`食` 也会算到绿 —— 用户看到的第一屏
+  /// 还是一片绿，等于白做。这里把最常见的几个按语义钉死：
+  /// 吃=暖橙、穿=紫、住=蓝、行=苔绿，一眼能对上。
+  /// 用户自己起的名字走哈希，也能拿到稳定的颜色。
+  static const _kCategoryHints = <String, Color>{
+    '食': Color(0xFFE0A458),
+    '餐饮': Color(0xFFE0A458),
+    '衣': Color(0xFF7B6BB5),
+    '购物': Color(0xFFC77B9E),
+    '住': Color(0xFF3E9DBF),
+    '行': Color(0xFF5B8C5A),
+    '交通': Color(0xFF5B8C5A),
+    '医': Color(0xFFC94F45),
+    '学': Color(0xFF6B8CAE),
+    '玩': Color(0xFFB8894A),
+    '工资': Color(0xFF5B8C5A),
+    '兼职': Color(0xFF3E9DBF),
+    '红包': Color(0xFFC94F45),
+    '其他': Color(0xFF8A9C8E),
+  };
+
+  /// 稳定的字符串散列（不能用 `String.hashCode`：它没有跨版本承诺，
+  /// 换个 Flutter 版本可能全 App 的色都变一遍）。
+  static int _stableHash(String s) {
+    var h = 0;
+    for (final c in s.codeUnits) {
+      h = (h * 31 + c) & 0x7fffffff;
+    }
+    return h;
+  }
+
+  /// 取某分类的固定色。[label] 用分类名（不是 id）。
+  ///
+  /// 用名字而不是 id 的原因：`Slice`（图表的扇区）只有 label 没有 id，
+  /// 而让图表颜色和流水行图标颜色对上，比"改名后颜色跟着变"重要得多。
+  /// 改名是低频操作，改完换个颜色也不影响理解。
+  ///
+  /// 深色模式下同一色相提亮 18% —— 这十色是按浅底调的，直接铺在 #0E1512 上会发闷。
+  static Color categoryColor(BuildContext context, String label) {
+    // 先查常见分类的语义色，没命中再按名字哈希
+    final base = _kCategoryHints[label] ??
+        kCategoryColors[_stableHash(label) % kCategoryColors.length];
+    if (!isDark(context)) return base;
+    final hsl = HSLColor.fromColor(base);
+    return hsl.withLightness((hsl.lightness + 0.18).clamp(0.0, 0.72)).toColor();
+  }
+
   /// 支出红。
   ///
   /// 2026-10-28 从 #D0524A 加深到 #C6473F：原来在白卡上只有 4.21:1，
@@ -89,6 +165,37 @@ class Palette {
   static Color hairline(BuildContext context) =>
       isDark(context) ? const Color(0xFF26302B) : const Color(0xFFDEEAE5);
 
+  /// 卡片阴影：**两层**，替代原来那圈 1px 硬边框。
+  ///
+  /// 2026-10-28：卡片一直用 `Border.all(hairline)` 收边，问题是 1px 实线会让卡片
+  /// 看起来"贴"在纸面上（像表格格线），而没有"浮起来"的体积感。
+  /// 现在改成两层：
+  /// - 近距小阴影（blur 5 / y1）负责**界定边界**，干原来边框的活；
+  /// - 远距大阴影（blur 18 / y5）负责**体积**，卡片才像一张纸压在另一张纸上。
+  ///
+  /// 浅色下阴影带一点绿（0x1A2E28）而不是纯黑 —— 纯黑配薄荷底会发灰发脏。
+  static List<BoxShadow> cardShadow(BuildContext context) => isDark(context)
+      ? [
+          BoxShadow(
+              color: Colors.black.withValues(alpha: 0.34),
+              blurRadius: 5,
+              offset: const Offset(0, 1)),
+          BoxShadow(
+              color: Colors.black.withValues(alpha: 0.26),
+              blurRadius: 18,
+              offset: const Offset(0, 5)),
+        ]
+      : [
+          BoxShadow(
+              color: const Color(0xFF1A2E28).withValues(alpha: 0.055),
+              blurRadius: 5,
+              offset: const Offset(0, 1)),
+          BoxShadow(
+              color: const Color(0xFF1A2E28).withValues(alpha: 0.07),
+              blurRadius: 18,
+              offset: const Offset(0, 5)),
+        ];
+
   static Color ink(BuildContext context) =>
       isDark(context) ? const Color(0xFFEDF1EF) : const Color(0xFF16211D);
 
@@ -139,6 +246,17 @@ class AppRadius {
   /// 并排看不出，来回切页面就能感觉到"边缘软硬度"在变。
   static const double tileLg = 10; // 36 ~ 40 的图标格
   static const double tileSm = 8; // 28 ~ 34 的图标格
+
+  /// 同心圆角：**嵌在圆角容器里、且距边 [inset] 的元素**，该用多大半径。
+  ///
+  /// 两个圆角不是「外层比内层大就行」——它们的圆心必须重合，
+  /// 否则内层那圈会在四个角跟外层"错开"一点，看着像没对齐的抽屉。
+  /// 数学上就是 `外层半径 - 间距`。
+  ///
+  /// 用在：底栏胶囊（外 24）+ 选中块（距边 7）→ 17；
+  /// 弹层（外 16）+ 内卡片（距边 8）→ 8。
+  static double inside(double outer, double inset) =>
+      (outer - inset).clamp(0.0, outer);
 }
 
 /// 品牌字体族：抖音美好体（Douyin Sans Bold）。
@@ -173,6 +291,10 @@ TextTheme _typography(TextTheme base, {String? display}) {
         fontWeight: w,
         height: height,
         letterSpacing: 0,
+        // 等宽数字（2026-10-28 全局加）：数字字形宽度一致，金额从 9 变 10、
+        // 从 99 变 100 时不会整体左右"跳"一下。中文不受影响。
+        // 之前只有 51 处手写了 tabularFigures，散落的计数/百分比会抖。
+        fontFeatures: const [FontFeature.tabularFigures()],
         // family 为 null 时 copyWith 保持不变（不会清掉 base 上的字体）
         fontFamily: family,
       );

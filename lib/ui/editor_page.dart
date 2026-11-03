@@ -18,6 +18,7 @@ import 'common.dart';
 import 'loans_page.dart' show showDebtEditor;
 import 'motion.dart';
 import 'theme.dart';
+import 'template_manage_page.dart';
 import 'wheel_date_picker.dart';
 
 /// 记一笔（**一屏流程**，对齐一木记账）：
@@ -75,6 +76,9 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
   String? _bucketTitle;
   String? _bucketGlyph;
 
+  /// 每个流向记住自己选到哪个分类（切 tab 来回时不丢）。
+  final Map<String, ({int id, String title, String? glyph})> _bucketByFlow = {};
+
   String _amount = '';
   String _tags = '';
   DateTime _day = DateTime.now();
@@ -101,6 +105,10 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
   /// 金额记的是**实付**，优惠只作附加记录（详情页能看到「省了多少」），
   /// 不动 amountCents，所以统计口径不会变。
   int _discountCents = 0;
+
+  /// AA 分摊「他人承担」金额（分）。仅支出有效。落库金额仍是全额垫付，
+  /// 统计口径用 amount - split。0 = 不分摊。
+  int _splitCents = 0;
 
   /// 本次新增的凭证（已落到应用目录，保存时才挂到 entry 上）
   final List<String> _newAttachments = <String>[];
@@ -145,6 +153,14 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
     setState(() => _discountCents = v);
   }
 
+  /// AA 分摊：他承担的金额不能超过本笔金额（否则统计会算成负数）。
+  Future<void> _editSplit() async {
+    final v = await editSplitCents(context, currentCents: _splitCents);
+    if (v == null || !mounted) return;
+    final max = _resultCents > 0 ? _resultCents : v;
+    setState(() => _splitCents = v.clamp(0, max));
+  }
+
   /// 切 tab = 换一套分类，旧选择必须作废（否则底部金额区还挂着上一个流向的分类）
   void _onTabChanged() {
     if (!mounted) return;
@@ -158,11 +174,18 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
     final flow = switch (idx) { 1 => 'in', 2 => 'transfer', _ => 'out' };
     if (flow == _flow && _tabIndex == idx) return;
     setState(() {
+      // 每个流向各记住自己的分类：以前一律清空，去「债务」tab 看一眼回来
+      // 刚选好的分类就没了，还得重选一次。
+      if (_bucketId != null && _bucketTitle != null) {
+        _bucketByFlow[_flow] =
+            (id: _bucketId!, title: _bucketTitle!, glyph: _bucketGlyph);
+      }
       _tabIndex = idx;
       _flow = flow;
-      _bucketId = null;
-      _bucketTitle = null;
-      _bucketGlyph = null;
+      final remembered = _bucketByFlow[flow];
+      _bucketId = remembered?.id;
+      _bucketTitle = remembered?.title;
+      _bucketGlyph = remembered?.glyph;
     });
   }
 
@@ -253,11 +276,27 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || _bucketId != null) return;
         final tops = buckets.where((b) => b.isTop).toList();
-        final pick = tops.isNotEmpty ? tops.first : buckets.first;
+        // ① 上次用过的分类（支出 / 收入各记一个）——每天记 5 笔的人
+        //    常用分类排在第 7 个，不记就要多点 5 次。
+        //    这个 id 可能是已删除分类的残留，必须校验它还在列表里。
+        final lastId = _flow == 'in'
+            ? ref.read(settingsProvider).lastBucketInId
+            : ref.read(settingsProvider).lastBucketOutId;
+        Bucket? pick;
+        if (lastId > 0) {
+          for (final b in buckets) {
+            if (b.id == lastId) {
+              pick = b;
+              break;
+            }
+          }
+        }
+        // ② 没记过 → 第一个一级分类（一木也是这样，进来直接输金额）
+        final chosen = pick ?? (tops.isNotEmpty ? tops.first : buckets.first);
         setState(() {
-          _bucketId = pick.id;
-          _bucketTitle = pick.title;
-          _bucketGlyph = pick.glyph;
+          _bucketId = chosen.id;
+          _bucketTitle = chosen.title;
+          _bucketGlyph = chosen.glyph;
         });
       });
     }
@@ -445,7 +484,12 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             ),
+            // 备注联想：输到一半就把历史里匹配的备排列出来，点一下填进去。
+            // 以前只有左侧那个时钟图标（还得停手去点），等于没有。
+            onChanged: (_) => setState(() {}),
+            onTap: _primeMemos,
           ),
+          _memoHints(),
           const SizedBox(height: 8),
           // 常用字段：横向滚动，屏幕再窄也不会挤爆
           SizedBox(
@@ -478,6 +522,15 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
                       active: _reimburse == 1,
                       onTap: () =>
                           setState(() => _reimburse = _reimburse == 1 ? 0 : 1)),
+                  const SizedBox(width: 6),
+                  // AA 分摊：一键记「这单里别人该还我多少」。
+                  _FieldChip(
+                      icon: Icons.group_outlined,
+                      label: _splitCents > 0
+                          ? 'AA ${centsToText(_splitCents)}'
+                          : 'AA 分摊',
+                      active: _splitCents > 0,
+                      onTap: _editSplit),
                   const SizedBox(width: 6),
                 ],
                 _FieldChip(
@@ -711,8 +764,10 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
         mood: _flow == 'in' ? 0 : _mood,
         feeCents: 0,
         discountCents: _discountCents,
+        splitCents: _flow == 'out' ? _splitCents : 0,
         excludeFromStats: _excludeStats,
-        excludeFromBudget: _excludeBudget,
+        // 兜一层：老数据或异常路径下可能出现「不计收支但没排预算」，保存时统一按联动规则修正。
+        excludeFromBudget: _excludeBudget || _excludeStats,
         currency: _currency,
         toAmountCents: null,
         refundOfId: _flow == 'in' ? _refundOfId : null,
@@ -724,12 +779,20 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
       }
       _newAttachments.clear();
       bumpRevision(ref);
+      // 记住这次用的分类，下次打开记账页直接选中它
+      if (_bucketId != null) {
+        await ref.read(settingsProvider.notifier).setLastBucket(_flow, _bucketId!);
+      }
       if (!mounted) return;
       HapticFeedback.lightImpact();
       SystemSound.play(SystemSoundType.click);
       if (continueAdding) {
         // 继续记下一笔：清掉金额/备注/标签/表达式，**保留分类和账户**
         // （连记三笔咖啡是常见操作，每次重选分类会很烦）
+        //
+        // ⚠️ 优惠 / 情绪 / 报销 / 不计收支 / 不计预算 / 币种也一起清：
+        // 以前只清了前四项，给超市那笔记了「省 20」，连记的咖啡也带着「省 20」；
+        // 补记昨天之后连记今天，日期还停在昨天。
         setState(() {
           _saving = false;
           _amount = '';
@@ -738,6 +801,14 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
           _acc = 0;
           _op = null;
           _refundOfId = null;
+          _discountCents = 0;
+          _splitCents = 0;
+          _mood = 0;
+          _reimburse = 0;
+          _excludeStats = false;
+          _excludeBudget = false;
+          _currency = null;
+          _day = DateTime.now();
         });
       } else {
         await showSaveSuccessCheck(context);
@@ -758,13 +829,8 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
   }
 
   Future<void> _pickDay() async {
-    final picked = await pickDateWheel(
-      context,
-      _day,
-      includeDay: true,
-      title: '选择日期',
-    );
-    if (picked != null && mounted) setState(() => _day = picked);
+    final day = await pickDayQuick(context, _day, title: '选择日期');
+    if (day != null && mounted) setState(() => _day = day);
   }
 
   Future<void> _pickMood() async {
@@ -837,10 +903,79 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
     }
   }
 
+  /// 备注联想条：按已输入内容过滤历史备注，点一下直接填。
+  ///
+  /// 没输入时显示前 6 条（"上次那笔备注写的啥"也能一眼看到）；
+  /// 输了字就只留包含它的。空则返回 SizedBox —— 不占高度，
+  /// 面板高度一跳会带着键盘一起跳，比没有联想更烦。
+  /// 备注历史。**点进备注框时才去取**，不在 build 里 watch ——
+  /// watch 会让每个打开记账页的 widget 测试都挂一条未完成的 SQL 定时器
+  /// （frequentMemos 的查询在测试结束还收不了尾，直接报 Pending timers）。
+  List<String> _memos = const [];
+  bool _memosPrimed = false;
+
+  void _primeMemos() {
+    if (_memosPrimed) return;
+    _memosPrimed = true;
+    ref.read(frequentMemosProvider.future).then((v) {
+      if (mounted) setState(() => _memos = v);
+    });
+  }
+
+  Widget _memoHints() {
+    final all = _memos;
+    if (all.isEmpty) return const SizedBox.shrink();
+    final typed = _memoCtrl.text.trim();
+    final hits = [
+      for (final m in all)
+        if (typed.isEmpty || m.contains(typed)) m,
+    ].take(6).toList();
+    if (hits.isEmpty) return const SizedBox.shrink();
+    return SizedBox(
+      height: 30,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.only(top: 6),
+        children: [
+          for (final m in hits)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: PressScale(
+                scale: 0.94,
+                onTap: () {
+                  FocusManager.instance.primaryFocus?.unfocus();
+                  setState(() {
+                    _memoCtrl.text = m;
+                    _memoCtrl.selection = TextSelection.fromPosition(
+                        TextPosition(offset: m.length));
+                  });
+                },
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Palette.paper(context),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: Palette.hairline(context)),
+                  ),
+                  child: Text(m,
+                      style: TextStyle(
+                          fontSize: 12, color: Palette.inkSoft(context))),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   /// 常用备注（备注历史）：点备注框左侧时钟图标弹出
   Future<void> _pickFrequentMemo() async {
-    final memos =
-        ref.read(frequentMemosProvider).valueOrNull ?? const <String>[];
+    // 还没加载完就等它：以前全工程没人 watch 这个 provider，
+    // 第一次点必然读到 null，于是明明有备注历史却弹「还没有历史备注」。
+    final List<String> memos = ref.read(frequentMemosProvider).valueOrNull ??
+        await ref.read(frequentMemosProvider.future);
+    if (!mounted) return;
     if (memos.isEmpty) {
       _toast('还没有历史备注，记几笔之后就有了');
       return;
@@ -1013,7 +1148,13 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
               subtitle: const Text('内部调账、代付等'),
               value: _excludeStats,
               onChanged: (v) {
-                setState(() => _excludeStats = v);
+                setState(() {
+                  _excludeStats = v;
+                  // 「不计入收支」⇒「不计入预算」：这笔钱连收支都不算，
+                  // 却还占着预算完成率，用户会看到「预算提示超支、统计页却没多花」。
+                  // 反向不联动：只排预算、仍进收支是合理用法（大额医疗等）。
+                  if (v) _excludeBudget = true;
+                });
                 if (ctx.mounted) setSheet(() {});
               },
             ),
@@ -1043,6 +1184,17 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
             const Divider(height: 1),
             ListTile(
               dense: true,
+              leading: const Icon(Icons.bookmark_outline, size: 18),
+              title: const Text('存为模板'),
+              subtitle: const Text('把这套账户/分类/金额存成快捷项'),
+              onTap: () async {
+                Navigator.pop(ctx);
+                await _saveAsTemplate();
+              },
+            ),
+            const Divider(height: 1),
+            ListTile(
+              dense: true,
               leading: const Icon(Icons.photo_camera_outlined, size: 18),
               title: Text('凭证（${_newAttachments.length}）'),
               subtitle: const Text('拍照或从相册选，保存时挂到这笔账上'),
@@ -1055,6 +1207,68 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
         ),
       ),
     );
+  }
+
+  /// 把当前草稿存成一条记账模板（快捷项）。
+  ///
+  /// 只取当前流水类型的账户/分类/金额/备注/标签 —— 余额校准、报销、凭证这类
+  /// 临时状态不进模板（模板是"下次照原样记一笔"，不该带报销标记）。
+  Future<void> _saveAsTemplate() async {
+    final amount = _resultCents;
+    if (amount <= 0) {
+      _toast('请先输入金额，再存为模板');
+      return;
+    }
+    final pocketId = _pocketId;
+    if (pocketId == null) {
+      _toast('请先选择账户，再存为模板');
+      return;
+    }
+    final titleCtrl = TextEditingController(text: _bucketTitle ?? '');
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('存为模板'),
+        content: AppTextField(
+          label: '模板名称',
+          controller: titleCtrl,
+          hint: '如：午餐、打车',
+          maxLength: 20,
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('保存')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) {
+      titleCtrl.dispose();
+      return;
+    }
+    final title = titleCtrl.text.trim();
+    titleCtrl.dispose();
+    final store = await ref.read(storeProvider.future);
+    final book = await ref.read(activeBookProvider.future);
+    await store.addTemplate(
+      bookId: book.id,
+      title: title.isEmpty ? (_bucketTitle ?? '模板') : title,
+      glyph: '📋',
+      flow: _flow,
+      pocketId: pocketId,
+      bucketId: _bucketId,
+      amountCents: amount,
+      memo: _memoCtrl.text.trim(),
+      tags: _tags,
+      currency: _currency,
+    );
+    bumpRevision(ref);
+    if (!mounted) return;
+    _toast('已存为模板');
   }
 
   /// 退款关联：从最近的支出里挑一条原记录
@@ -1131,20 +1345,138 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
       ),
     );
     if (source == null) return;
-    final path = source == 'camera'
+    final out = source == 'camera'
         ? await AttachmentService.pickFromCamera(book.id)
         : await AttachmentService.pickFromGallery(book.id);
-    if (path == null) {
-      if (mounted) _toast('没有选中图片');
-      return;
-    }
     if (!mounted) return;
-    setState(() => _newAttachments.add(path));
+    // 权限被拒必须说清是权限问题：以前一律「没有选中图片」，
+    // 用户会以为 App 读不了他的相册，而不是自己去把权限打开。
+    switch (out.result) {
+      case PickResult.ok:
+        setState(() => _newAttachments.add(out.path!));
+      case PickResult.cancelled:
+        break; // 用户自己取消，不该弹提示
+      case PickResult.denied:
+        _toast('相册/相机权限被拒绝了，去系统设置里打开才能加凭证');
+      case PickResult.error:
+        _toast('读图失败，详情见「我的 → 数据管理 → 日志中心」');
+    }
   }
 
   Future<void> _removeNewAttachment(String path) async {
     setState(() => _newAttachments.remove(path));
     await AttachmentService.deleteFile(path);
+  }
+
+  /// 记账页顶部的模板胶囊条：点一下按预设直接记一笔，长按进入该模板的编辑页。
+  ///
+  /// 没模板时不占高度（返回 SizedBox）。编辑模式（改已有流水）也照样显示 ——
+  /// 它是一条独立的快捷记录通道，不影响正在编辑的草稿。
+  Widget _templateBar() {
+    final bookId = ref.watch(activeBookIdProvider);
+    final book = ref.watch(activeBookProvider).valueOrNull;
+    if (bookId == null || book == null) return const SizedBox.shrink();
+    final async = ref.watch(templatesProvider(bookId));
+    final templates = async.valueOrNull;
+    if (templates == null || templates.isEmpty) return const SizedBox.shrink();
+    return Container(
+      height: 46,
+      padding: const EdgeInsets.fromLTRB(8, 7, 8, 7),
+      decoration: BoxDecoration(
+        color: Palette.card(context),
+        border: Border(bottom: BorderSide(color: Palette.hairline(context))),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: EdgeInsets.zero,
+              itemCount: templates.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 6),
+              itemBuilder: (_, i) {
+                final t = templates[i];
+                return PressScale(
+                  scale: 0.95,
+                  onTap: () => _quickSaveTemplate(t),
+                  onLongPress: () => Navigator.of(context).push(
+                      AppPageRoute(page: TemplateManagePage(editing: t))),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    decoration: BoxDecoration(
+                      color: Palette.brand(context).withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                          color: Palette.brand(context).withValues(alpha: 0.4)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        AppGlyph(t.glyph, size: 15),
+                        const SizedBox(width: 4),
+                        Text(t.title,
+                            style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Palette.brand(context))),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(width: 4),
+          PressScale(
+            scale: 0.95,
+            onTap: () => Navigator.of(context)
+                .push(AppPageRoute(page: const TemplateManagePage())),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: Palette.hairline(context)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.tune_outlined,
+                      size: 15, color: Palette.inkSoft(context)),
+                  const SizedBox(width: 3),
+                  Text('管理',
+                      style: TextStyle(
+                          fontSize: 12, color: Palette.inkSoft(context))),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 模板一键落库：用模板预设计好的账户/分类/金额直接记一笔。
+  ///
+  /// 这是一条**独立**的记录通道，不依赖当前草稿（也不会清空草稿）——
+  /// 用户在模板条上点「午餐」就是想快速记一笔，不该和正在编的那笔混在一起。
+  Future<void> _quickSaveTemplate(Template t) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final store = await ref.read(storeProvider.future);
+    final book = await ref.read(activeBookProvider.future);
+    try {
+      await store.addEntryFromTemplate(t, book.id);
+      bumpRevision(ref);
+      if (!mounted) return;
+      HapticFeedback.lightImpact();
+      SystemSound.play(SystemSoundType.click);
+      await showSaveSuccessCheck(context);
+      if (!mounted) return;
+      messenger.toast('已记一笔：${t.title}');
+    } catch (e) {
+      if (!mounted) return;
+      AppLog.error('editor', '模板落库失败', e);
+      messenger.toast(e is StateError ? e.message : '模板落库失败，详情见日志中心');
+    }
   }
 
   @override
@@ -1190,6 +1522,7 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
             ),
           ),
           const Divider(height: 1),
+          _templateBar(),
           Expanded(
             child: TabBarView(
               controller: _tab,
@@ -1557,6 +1890,17 @@ Future<int?> editFeeOrDiscount(
       allowZero: true,
     );
 
+/// AA 分摊「他人承担」金额编辑器：两个 State 共用（和 fee/discount 同理）。
+/// 返回 null = 取消；允许 0（= 不分摊）。落库时由 store 再 clamp 到本笔金额。
+Future<int?> editSplitCents(BuildContext context,
+        {required int currentCents}) =>
+    showAmountKeypad(
+      context,
+      initialCents: currentCents,
+      title: 'AA 分摊 · 他人承担',
+      allowZero: true,
+    );
+
 /// 金额面板（复刻原版 AmountEditorSheet 的字段顺序）：
 /// 金额 → 备注 → 账户（转账多一组「转入」）→ 日期/标签/报销/情绪 → 键盘 → 保存/再记一笔
 class _AmountSheet extends ConsumerStatefulWidget {
@@ -1597,6 +1941,9 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
   /// 手续费 / 折扣（转账用，分）
   int _feeCents = 0;
   int _discountCents = 0;
+
+  /// AA 分摊「他人承担」金额（分），仅支出有效。0 = 不分摊。
+  int _splitCents = 0;
 
   // ---- 不计入收支 / 预算、每笔币种、转账到账、退款关联 ----
   bool _excludeStats = false;
@@ -1655,6 +2002,7 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
     _mood = e?.mood ?? 0;
     _feeCents = e?.feeCents ?? 0;
     _discountCents = e?.discountCents ?? 0;
+    _splitCents = e?.splitCents ?? 0;
     _excludeStats = e?.excludeFromStats ?? false;
     _excludeBudget = e?.excludeFromBudget ?? false;
     _currency = e?.currency;
@@ -1663,6 +2011,35 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
     _memoCtrl = TextEditingController(text: e?.memo ?? '');
     if (e != null) _loadAttachments(e.id);
   }
+
+  bool _toPrimed = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_toPrimed) return;
+    _toPrimed = true;
+    // 转账：进来就给「到」账户一个默认值。
+    // 以前必须填完金额选完账户、点保存才弹「请选择转入账户」，
+    // 而那一行在界面上什么都不显示，等于藏了一个必填项。
+    if (widget.flow != 'transfer' || widget.existing != null) return;
+    final pockets = (ref.read(pocketsProvider).valueOrNull ?? const <Pocket>[])
+        .where((p) => !p.archived)
+        .where((p) => p.recordable)
+        .toList();
+    if (pockets.length < 2) return;
+    Pocket? pick;
+    for (final p in pockets) {
+      if (p.id != _pocketId) {
+        pick = p;
+        break;
+      }
+    }
+    if (pick != null && _toPocketId == null) _toPocketId = pick.id;
+  }
+
+  /// 转账还没选「到」账户：保存按钮变淡，点了给提示而不是静默失败。
+  bool get _transferIncomplete => _isTransfer && _toPocketId == null;
 
   Future<void> _loadAttachments(int entryId) async {
     final store = await ref.read(storeProvider.future);
@@ -1834,8 +2211,9 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
           mood: _isTransfer ? 0 : _mood,
           feeCents: _isTransfer ? _feeCents : 0,
           discountCents: _discountCents,
+          splitCents: _isTransfer ? 0 : _splitCents,
           excludeFromStats: _excludeStats,
-          excludeFromBudget: _excludeBudget,
+          excludeFromBudget: _excludeBudget || _excludeStats,
           currency: _currency,
           toAmountCents: _isTransfer ? toAmount : null,
           refundOfId: _refundOfId,
@@ -1862,8 +2240,9 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
           mood: _isTransfer ? 0 : _mood,
           feeCents: _isTransfer ? _feeCents : 0,
           discountCents: _discountCents,
+          splitCents: _isTransfer ? 0 : _splitCents,
           excludeFromStats: _excludeStats,
-          excludeFromBudget: _excludeBudget,
+          excludeFromBudget: _excludeBudget || _excludeStats,
           currency: _currency,
           toAmountCents: _isTransfer ? toAmount : null,
           refundOfId: _refundOfId,
@@ -1880,7 +2259,9 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
       HapticFeedback.lightImpact();
       SystemSound.play(SystemSoundType.click);
       if (continueAdding) {
-        // 继续记下一笔：清掉金额和备注，留在本面板
+        // 继续记下一笔：清掉金额和备注，留在本面板。
+        // ⚠️ 优惠 / 情绪 / 报销 / 手续费 / 不计收支 / 币种 / 日期 一起清
+        // （和 _saveDraft 同一套口径）：连记第二笔不该带着上一笔的手续费和昨天。
         setState(() {
           _saving = false;
           _amount = '';
@@ -1890,6 +2271,15 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
           _op = null;
           _toAmountCents = null;
           _refundOfId = null;
+          _discountCents = 0;
+          _splitCents = 0;
+          _mood = 0;
+          _reimburse = 0;
+          _feeCents = 0;
+          _excludeStats = false;
+          _excludeBudget = false;
+          _currency = null;
+          _day = DateTime.now();
         });
         _memoCtrl.clear();
       } else {
@@ -1944,13 +2334,8 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
   }
 
   Future<void> _pickDay() async {
-    final picked = await pickDateWheel(
-      context,
-      _day,
-      includeDay: true,
-      title: '选择日期',
-    );
-    if (picked != null) setState(() => _day = picked);
+    final day = await pickDayQuick(context, _day, title: '选择日期');
+    if (day != null) setState(() => _day = day);
   }
 
   Future<void> _pickMood() async {
@@ -2022,10 +2407,75 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
     }
   }
 
+  /// 备注联想条（和新建面板那套是同一份实现，改的时候两边都要改）
+  /// 备注历史。**点进备注框时才去取**，不在 build 里 watch ——
+  /// watch 会让每个打开记账页的 widget 测试都挂一条未完成的 SQL 定时器
+  /// （frequentMemos 的查询在测试结束还收不了尾，直接报 Pending timers）。
+  List<String> _memos = const [];
+  bool _memosPrimed = false;
+
+  void _primeMemos() {
+    if (_memosPrimed) return;
+    _memosPrimed = true;
+    ref.read(frequentMemosProvider.future).then((v) {
+      if (mounted) setState(() => _memos = v);
+    });
+  }
+
+  Widget _memoHints() {
+    final all = _memos;
+    if (all.isEmpty) return const SizedBox.shrink();
+    final typed = _memoCtrl.text.trim();
+    final hits = [
+      for (final m in all)
+        if (typed.isEmpty || m.contains(typed)) m,
+    ].take(6).toList();
+    if (hits.isEmpty) return const SizedBox.shrink();
+    return SizedBox(
+      height: 30,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.only(top: 6),
+        children: [
+          for (final m in hits)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: PressScale(
+                scale: 0.94,
+                onTap: () {
+                  FocusManager.instance.primaryFocus?.unfocus();
+                  setState(() {
+                    _memoCtrl.text = m;
+                    _memoCtrl.selection = TextSelection.fromPosition(
+                        TextPosition(offset: m.length));
+                  });
+                },
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Palette.paper(context),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: Palette.hairline(context)),
+                  ),
+                  child: Text(m,
+                      style: TextStyle(
+                          fontSize: 12, color: Palette.inkSoft(context))),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   /// 常用备注（备注历史）：点备注框左侧时钟图标弹出
   Future<void> _pickFrequentMemo() async {
-    final memos =
-        ref.read(frequentMemosProvider).valueOrNull ?? const <String>[];
+    // 还没加载完就等它：以前全工程没人 watch 这个 provider，
+    // 第一次点必然读到 null，于是明明有备注历史却弹「还没有历史备注」。
+    final List<String> memos = ref.read(frequentMemosProvider).valueOrNull ??
+        await ref.read(frequentMemosProvider.future);
+    if (!mounted) return;
     if (memos.isEmpty) {
       _toast('还没有历史备注，记几笔之后就有了');
       return;
@@ -2071,6 +2521,14 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
         _discountCents = v;
       }
     });
+  }
+
+  /// AA 分摊：他承担的金额不能超过本笔金额。
+  Future<void> _editSplit() async {
+    final v = await editSplitCents(context, currentCents: _splitCents);
+    if (v == null) return;
+    final max = _resultCents > 0 ? _resultCents : v;
+    setState(() => _splitCents = v.clamp(0, max));
   }
 
   /// 本笔币种（null = 跟随账户）
@@ -2193,15 +2651,22 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
       ),
     );
     if (source == null) return;
-    final path = source == 'camera'
+    final out = source == 'camera'
         ? await AttachmentService.pickFromCamera(book.id)
         : await AttachmentService.pickFromGallery(book.id);
-    if (path == null) {
-      if (mounted) _toast('没有选中图片');
-      return;
-    }
     if (!mounted) return;
-    setState(() => _newAttachments.add(path));
+    // 权限被拒必须说清是权限问题：以前一律「没有选中图片」，
+    // 用户会以为 App 读不了他的相册，而不是自己去把权限打开。
+    switch (out.result) {
+      case PickResult.ok:
+        setState(() => _newAttachments.add(out.path!));
+      case PickResult.cancelled:
+        break; // 用户自己取消，不该弹提示
+      case PickResult.denied:
+        _toast('相册/相机权限被拒绝了，去系统设置里打开才能加凭证');
+      case PickResult.error:
+        _toast('读图失败，详情见「我的 → 数据管理 → 日志中心」');
+    }
   }
 
   Future<void> _removeNewAttachment(String path) async {
@@ -2453,7 +2918,10 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
                       contentPadding: const EdgeInsets.symmetric(
                           horizontal: 12, vertical: 10),
                     ),
+                    onChanged: (_) => setState(() {}),
+            onTap: _primeMemos,
                   ),
+                  _memoHints(),
                   const SizedBox(height: 8),
                   // 账户（横滑 chips）
                   _PocketChipRow(
@@ -2508,6 +2976,14 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
                             active: _reimburse == 1,
                             onTap: () => setState(
                                 () => _reimburse = _reimburse == 1 ? 0 : 1)),
+                      if (widget.flow == 'out')
+                        _FieldChip(
+                            icon: Icons.group_outlined,
+                            label: _splitCents > 0
+                                ? 'AA ${centsToText(_splitCents)}'
+                                : 'AA 分摊',
+                            active: _splitCents > 0,
+                            onTap: _editSplit),
                       if (!_isTransfer)
                         _FieldChip(
                             icon: Icons.mood_outlined,
@@ -2579,8 +3055,11 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
                             icon: Icons.visibility_off_outlined,
                             label: '不计入收支',
                             active: _excludeStats,
-                            onTap: () =>
-                                setState(() => _excludeStats = !_excludeStats)),
+                            onTap: () => setState(() {
+                                  _excludeStats = !_excludeStats;
+                                  // 同上：收支都不算的笔，不该再占预算。
+                                  if (_excludeStats) _excludeBudget = true;
+                                })),
                         // 不计入预算
                         _FieldChip(
                             icon: Icons.pie_chart_outline,
@@ -2665,8 +3144,15 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
               if (!_isEdit)
                 Expanded(
                   child: OutlinedButton(
-                    onPressed:
-                        _saving ? null : () => _save(continueAdding: true),
+                    onPressed: _saving
+                        ? null
+                        : () {
+                            if (_transferIncomplete) {
+                              _toast('先选「到」哪个账户');
+                              return;
+                            }
+                            _save(continueAdding: true);
+                          },
                     style: OutlinedButton.styleFrom(
                       minimumSize: const Size(0, 48),
                       shape: RoundedRectangleBorder(
@@ -2682,9 +3168,21 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
                   height: 48,
                   child: MorphButton(
                     saving: _saving,
-                    onPressed: _saving ? null : () => _save(),
+                    onPressed: _saving
+                        ? null
+                        : () {
+                            // 转账没选「到」账户时按钮变淡但仍可点 ——
+                            // 直接 onPressed: null 的话用户只会以为按钮坏了。
+                            if (_transferIncomplete) {
+                              _toast('先选「到」哪个账户');
+                              return;
+                            }
+                            _save();
+                          },
                     label: '保存',
-                    color: color,
+                    color: _transferIncomplete
+                        ? color.withValues(alpha: 0.45)
+                        : color,
                   ),
                 ),
               ),

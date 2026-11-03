@@ -7,16 +7,10 @@ import '../core/rules.dart';
 import 'motion.dart';
 import 'theme.dart';
 
-/// 图表分类色板。唯一来源：之前 charts / 资产构成 / 洞察图例各抄一份，
-/// 改一个颜色要改三处，容易漏。
-const kSliceColors = <Color>[
-  Color(0xFF0E7C66),
-  Color(0xFF3E9DBF),
-  Color(0xFFE0A458),
-  Color(0xFFC94F45),
-  Color(0xFF7B6BB5),
-  Color(0xFF9AA19C),
-];
+// 分类色板已统一到 `Palette.kCategoryColors`（theme.dart）。
+// 原来这里有一份 kSliceColors，问题是它按「排序位置」分配颜色 ——
+// 同一个分类在环形图、桑基图、图例里可能拿到不同色，排名一变就全变。
+// 2026-10-28 改为 `Palette.categoryColor(context, label)`：按分类名取固定色。
 
 /// 环形占比图（带动效）。
 ///
@@ -108,6 +102,18 @@ class _DonutChartState extends State<DonutChart>
 
   int get _displayCents => (_progress.value * widget.totalCents).round();
 
+  /// 中心那行小字：没选中是「本月支出」，选中是「餐饮 · 32%」。
+  String get _centerLabel {
+    if (_selected < 0 || _selected >= widget.slices.length) {
+      return widget.centerTitle;
+    }
+    final s = widget.slices[_selected];
+    final pct = widget.totalCents <= 0
+        ? 0
+        : (s.cents / widget.totalCents * 100).round();
+    return '${s.label} · $pct%';
+  }
+
   void _onTap(Offset pos) {
     final hit = _hitSlice(pos);
     if (hit == -1) {
@@ -152,9 +158,11 @@ class _DonutChartState extends State<DonutChart>
 
   @override
   Widget build(BuildContext context) {
+    // 2026-10-28：颜色跟**分类名**走，不再按 i 取 kSliceColors。
+    // 原来排名一变颜色就跟着变（同一个「衣」这月绿、下月蓝），
+    // 现在和流水行的图标底、桑基图节点是同一个颜色，颜色才有记忆点。
     final colors = <Color>[
-      for (var i = 0; i < widget.slices.length; i++)
-        kSliceColors[i % kSliceColors.length],
+      for (final s in widget.slices) Palette.categoryColor(context, s.label),
     ];
     return SizedBox(
       width: widget.size,
@@ -185,10 +193,15 @@ class _DonutChartState extends State<DonutChart>
           Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // 选中扇区时中心换成「这一块的金额」，下面写上名字和占比 ——
+              // 以前点了只有扇区弹一下，中心永远显示总额，
+              // 等于点了个寂寞（想知道某块多少钱还得自己按比例算）。
               Text(
                 widget.hideAmounts
                     ? '****'
-                    : '${widget.symbol}${centsToText(_displayCents)}',
+                    : '${widget.symbol}${centsToText(_selected >= 0
+                        ? widget.slices[_selected].cents
+                        : _displayCents)}',
                 style: TextStyle(
                   fontSize: 17,
                   fontWeight: FontWeight.w700,
@@ -197,9 +210,8 @@ class _DonutChartState extends State<DonutChart>
                 ),
               ),
               const SizedBox(height: 2),
-              Text(widget.centerTitle,
-                  style: TextStyle(
-                      fontSize: 12, color: Palette.inkFaint(context))),
+              Text(_centerLabel, style: TextStyle(
+                  fontSize: 12, color: Palette.inkFaint(context))),
             ],
           ),
         ],

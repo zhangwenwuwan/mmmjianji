@@ -3,8 +3,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../services/auto_backup.dart';
+import '../services/reminder_service.dart';
 import '../services/widget_bridge.dart';
 import '../state/ledger_state.dart';
+import '../state/settings.dart';
 import 'assets_page.dart';
 import 'boot_reveal.dart';
 import 'book_manage_page.dart';
@@ -40,6 +42,14 @@ class _ShellState extends ConsumerState<Shell> {
   /// 页面下标：0 首页 / 1 统计 / 2 资产 / 3 我的
   int _index = 0;
   int _prevIndex = 0;
+
+  /// 已经创建过的 tab 下标（首帧只有首页）。
+  ///
+  /// 2026-10-28 加：原来 4 个页面**首帧全部 build**（Stack 里四个 Offstage 都建），
+  /// 冷启动首帧因此从 443ms 涨到 899ms —— 450ms 全花在"建三个用户还没看的页面"上。
+  /// 现在只建用户真正进去过的：首帧只有首页，切到哪个才建哪个。
+  /// 建过的一直留在树上，State（滚动位置、输入内容）照样不丢。
+  final Set<int> _visited = {0};
 
   /// 上一次按返回键的时刻：两次都在 [_exitWindow] 内才真的退出。
   ///
@@ -78,7 +88,75 @@ class _ShellState extends ConsumerState<Shell> {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _autoBackup();
       await _applyRecurring();
+      await _syncDueReminders();
+      await _checkBudget();
     });
+  }
+
+  /// 预算超支提醒：本月**预算口径**支出达到 80% 或超支时，发一次即时通知。
+  ///
+  /// 同一个「月份+档位（80/100）」只发一次（去重在 ReminderService 内部），
+  /// 所以每记一笔都调用也不会重复轰炸。复用「到期提醒」的通知总开关。
+  Future<void> _checkBudget() async {
+    try {
+      final settings = ref.read(settingsProvider);
+      if (!settings.dueReminderEnabled) return;
+      final store = await ref.read(storeProvider.future);
+      final book = await ref.read(activeBookProvider.future);
+      // 预算提醒永远看**当前自然月**，不受首页翻月影响。
+      final now = DateTime.now();
+      final monthKey = '${now.year}-${now.month.toString().padLeft(2, '0')}';
+      final budget = await store.budgetOf(book.id, now);
+      if (budget > 0) {
+        final spent = await budgetSpentOf(store, book, now);
+        await ReminderService.notifyBudget(
+          spentCents: spent,
+          budgetCents: budget,
+          symbol: settings.symbol,
+          monthKey: monthKey,
+        );
+      }
+      // 分类预算要单独判一次：有人只设了「食」的预算、没设总额，
+      // 若沿用上面的 `budget <= 0 → return`，这类用户的分类预算永远不提醒。
+      final status = await bucketBudgetStatusOf(store, book, now);
+      await ReminderService.notifyBucketBudgets(
+        items: [
+          for (final s in status)
+            (
+              bucketId: s.bucketId,
+              title: s.title,
+              spentCents: s.spentCents,
+              budgetCents: s.budgetCents,
+            ),
+        ],
+        symbol: settings.symbol,
+        monthKey: monthKey,
+      );
+    } catch (_) {
+      // 提醒失败不影响使用
+    }
+  }
+
+  /// 到期提醒排程：启动时排一次，设置或数据变化时由 ref.listen 重排。
+  ///
+  /// 关掉开关时只清不掉（syncDueReminders 内部处理），这里提前短路，
+  /// 免得每次切主题都去读一遍账本数据。
+  Future<void> _syncDueReminders() async {
+    try {
+      final settings = ref.read(settingsProvider);
+      if (!settings.dueReminderEnabled) {
+        await ReminderService.cancelAllDue();
+        return;
+      }
+      final reminders = await ref.read(dueRemindersProvider.future);
+      await ReminderService.syncDueReminders(
+        reminders,
+        enabled: true,
+        leadDays: settings.dueReminderLeadDays,
+      );
+    } catch (_) {
+      // 排期失败不该挡住用户用 App
+    }
   }
 
   /// 启动时备份一份（同一天只写一次，见 AutoBackup.run）
@@ -167,6 +245,9 @@ class _ShellState extends ConsumerState<Shell> {
         _prevIndex = _index;
         _index = 0;
       });
+      // 和点底栏首页一样，同步「当前可见 tab」——
+      // 否则返回后资产页仍被当成可见，revision 一变还会去重算净值扫描。
+      ref.read(activeTabProvider.notifier).state = 0;
       return;
     }
     final now = DateTime.now();
@@ -184,8 +265,35 @@ class _ShellState extends ConsumerState<Shell> {
 
   @override
   Widget build(BuildContext context) {
-    // 数据一变就把本月概览推给桌面小组件（内部有节流）
-    ref.listen<int>(revisionProvider, (_, __) => WidgetBridge.sync(ref));
+    // 数据一变就把本月概览推给桌面小组件（内部有节流）；顺带查一次预算是否越线。
+    ref.listen<int>(revisionProvider, (_, __) {
+      WidgetBridge.sync(ref);
+      _checkBudget();
+    });
+
+    // 到期提醒排程：设置（开关 / 提前天数）或数据（新增信用卡、改目标日期）
+    // 一变就重排。关开关时 syncDueReminders 内部会清掉旧通知。
+    ref.listen<AppSettings>(settingsProvider, (_, __) {
+      _syncDueReminders();
+      _checkBudget();
+    });
+    ref.listen(dueRemindersProvider, (_, __) => _syncDueReminders());
+
+    // 资产页的净值蜡烛图**不再**自己跟着 revision 刷新（那是 6 个月 × 每天的
+    // 逐日扫描，全 App 最重的一次查询；以前在首页记一笔它也在后台重跑）。
+    // 这里补两个刷新点，保证「看得见的时候永远是新的」：
+    //   ① 停在资产页时数据变了（比如在资产页点 + 记了一笔）→ 立刻重算；
+    //   ② 不在资产页时什么都不做，切过去的那一刻由 onSelect 补。
+    ref.listen<int>(activeTabProvider, (prev, next) {
+      if (next == 2 && prev != 2) {
+        ref.invalidate(netWorthCandlesProvider(6));
+      }
+    });
+    ref.listen<int>(revisionProvider, (_, __) {
+      if (ref.read(activeTabProvider) == 2) {
+        ref.invalidate(netWorthCandlesProvider(6));
+      }
+    });
     if (!_widgetSynced) {
       _widgetSynced = true;
       WidgetsBinding.instance
@@ -221,18 +329,20 @@ class _ShellState extends ConsumerState<Shell> {
         fit: StackFit.expand,
         children: [
           for (var i = 0; i < _pages.length; i++)
-            Offstage(
-              offstage: i != _index,
-              child: TickerMode(
-                enabled: i == _index,
-                child: _TabPage(
-                  key: ValueKey('tab-$i'),
-                  active: i == _index,
-                  fromRight: i > _prevIndex,
-                  child: _pages[i],
+            // 只建「进去过」的页面：首帧只有首页，省掉 3 个页面的构建成本。
+            if (_visited.contains(i))
+              Offstage(
+                offstage: i != _index,
+                child: TickerMode(
+                  enabled: i == _index,
+                  child: _TabPage(
+                    key: ValueKey('tab-$i'),
+                    active: i == _index,
+                    fromRight: i > _prevIndex,
+                    child: _pages[i],
+                  ),
                 ),
               ),
-            ),
           // 顶栏浮在页面之上（玻璃），内容从它下面滚过去。
           // ⚠️ 页面里的滚动区必须留出 TabHeader.heightOf(context) 的顶部
           // 内边距，否则第一张卡会被压在条底下。
@@ -272,11 +382,27 @@ class _ShellState extends ConsumerState<Shell> {
             if (page == 0) {
               resetMonthToNow(ref);
             }
-            if (page == _index) return;
+            if (page == _index) {
+              // 再点当前 tab = 回到顶部。以前这里直接 return，
+              // 按了完全没反应（唯一的反馈是 PressScale 的缩放）。
+              // 首页把 ScrollController 挂在 homeScrollProvider 上（别的页还没挂）。
+              final ctl = homeScrollController;
+              if (ctl != null && ctl.hasClients && ctl.offset > 0) {
+                ctl.animateTo(0,
+                    duration: const Duration(milliseconds: 260),
+                    curve: Curves.easeOutCubic);
+              }
+              return;
+            }
             setState(() {
+              _visited.add(page); // 第一次进这个 tab，这时候才建它的页面
               _prevIndex = _index;
               _index = page;
             });
+            // 记录可见 tab：看不见的页面据此不再跑重查询。
+            // 切到资产页时由上面的 ref.listen 补一次净值扫描（离开期间
+            // 可能记过账，光靠 revision 监听补不到）。
+            ref.read(activeTabProvider.notifier).state = page;
           },
         ),
       ),
@@ -450,17 +576,43 @@ class _BottomBar extends StatelessWidget {
           ],
         ),
         child: Glass(
-          // 参数是拿真图量出来的（test 里渲染成 PNG 采样，不是拍脑袋）：
-          //   模糊 20 / 白 0.56 → 后面饱和的红条只剩 (246,242,241)，肉眼就是白板；
-          //   模糊 8  / 白 0.35 → 能看到粉影，但灰字图标开始被后面的内容干扰；
-          //   模糊 12 / 白 0.42 → 粉影清楚、图标依然读得清（选这档）。
-          // 另外模糊本身也会"摊平"颜色：sigma 越大，细条形（金额、文字）透出来越淡，
-          // 所以想更透要先降 sigma，再降 alpha，别只降 alpha。
-          blur: 12,
+          // 2026-10-28 按「玻璃拟态五步配方」重做（原来 12 / 0.42 那档偏"白板"）：
+          //
+          // ① 加大模糊：CSS `backdrop-filter: blur(28px)` → 这里 24。
+          //    不能直接抄 28：Flutter 的 sigma 是逻辑像素，28 在 5.5 寸屏上
+          //    会把流水行糊成一整片灰雾（配方里也说了"太细碎的背景糊后会成一团"）。
+          //    24 是"看得出有东西在动、但读不出内容"的临界点。
+          // ② 提饱和度 saturate(170%)：**Flutter 做不到**。BackdropFilter 只接受
+          //    ImageFilter，而 ImageFilter 没有颜色矩阵（ColorFilter 转不过去）。
+          //    变通：tint 里掺 7~10% 品牌绿，让玻璃"有颜色" —— 视觉上等价于
+          //    "模糊后不发灰"，而且更贴简记的薄荷调。
+          // ③ 叠白纱：CSS 是 `rgb(255 255 255 / 10%)`，这里 0.20。
+          //    配方背景是水面/云朵那种大块柔和场景；我们的背景是白卡片 + 深色数字，
+          //    照抄 10% 会让图标和文字被后面的流水干扰。0.20 是折中。
+          // ④ 高光出厚度：CSS `inset 1px 1px #fff8` → Glass 的 highlight
+          //    （Flutter 的 BoxShadow 没有 inset，改用渐变，见 glass.dart）。
+          // ⑤ 边缘折射（SVG 位移滤镜）：不做。手机尺寸上收益极低，成本很高。
+          blur: 24,
           borderRadius: BorderRadius.circular(_radius),
-          tint: (dark ? const Color(0xFF151C18) : Colors.white)
-              .withValues(alpha: 0.42),
-          border: Border.all(color: Palette.glassEdge(context), width: 0.8),
+          tint: Color.lerp(
+            dark ? const Color(0xFF151C18) : Colors.white,
+            Palette.brand(context),
+            dark ? 0.10 : 0.07,
+          )!
+              .withValues(alpha: dark ? 0.30 : 0.20),
+          highlight: true,
+          // ⚠️ 必须是**四边同色**的 Border。
+          //
+          // 试过"上缘亮 0.72 / 左右 0.32 / 下缘 0.18"的分边描边（真实玻璃就是这样），
+          // Flutter 直接断言：
+          //   `A borderRadius can only be given on borders with uniform colors.`
+          // 带圆角的 Border.paint 处理不了各边不同色（圆角处无法过渡）。
+          // → 明暗层次改由上面的 gradient 承担（左上 0.34 → 右下 0.12，
+          //   本身就是"上厚下薄"），Border 只负责一圈干净的边界。
+          border: Border.all(
+            color: Colors.white.withValues(alpha: dark ? 0.20 : 0.48),
+            width: 0.9,
+          ),
           // ⚠️ LayoutBuilder 必须包在 Stack **外面**，不能塞在 Positioned 里面：
           // 塞里面的话，Positioned 会把 StackParentData 挂到 LayoutBuilder 的
           // RenderObject 上（它只认 BoxParentData），运行时直接断言
@@ -484,7 +636,11 @@ class _BottomBar extends StatelessWidget {
                     child: Container(
                       decoration: BoxDecoration(
                         color: Palette.mint(context),
-                        borderRadius: BorderRadius.circular(15),
+                        // 同心圆角（2026-10-28）：外层胶囊 24，选中块距上边缘 7，
+                        // 所以内层要 24-7 = 17 才"同圆心"。写 15 时内层看起来
+                        // 比外层更方一点，说不清哪里别扭但就是不对。
+                        borderRadius:
+                            BorderRadius.circular(AppRadius.inside(_radius, 7)),
                       ),
                     ),
                   ),

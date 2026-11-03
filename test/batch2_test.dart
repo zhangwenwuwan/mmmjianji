@@ -281,9 +281,10 @@ void main() {
       }
 
       final first = await AutoBackup.run(store);
-      expect(first, isNotNull);
-      // 同一天第二次不写
-      expect(await AutoBackup.run(store), isNull);
+      expect(first.result, AutoBackupResult.written);
+      expect(first.file, isNotNull);
+      // 同一天第二次不写（skipped，不是 failed —— 这两种以前都返回 null）
+      expect((await AutoBackup.run(store)).result, AutoBackupResult.skipped);
       expect((await AutoBackup.list()).length, 1);
 
       // 造 8 个旧备份，prune 后应只剩 5 个

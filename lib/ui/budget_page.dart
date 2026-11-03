@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'app_glyph.dart';
 import '../core/aggregate.dart';
 import '../core/budget_rules.dart';
+import '../core/currency.dart';
 import '../core/rules.dart';
 import '../data/store.dart';
 import '../state/ledger_state.dart';
@@ -416,7 +417,7 @@ class _BucketBudgetRow extends ConsumerWidget {
       scale: 0.98,
       onTap: () => _edit(context, ref),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        padding: const EdgeInsets.fromLTRB(14, 12, 6, 12),
         child: Row(
           children: [
             AppGlyph(bucket.glyph, size: 16),
@@ -464,9 +465,31 @@ class _BucketBudgetRow extends ConsumerWidget {
                 ],
               ),
             ),
+            // 「历史」单独一个按钮：整行点击是"改预算"（高频、用户预期），
+            // 把它改成打开历史会让人每次改预算都多点一下。
+            // 用紧凑 constraints 压住默认 48×48，否则每行会被撑高一截。
+            IconButton(
+              tooltip: '近 6 个月对比',
+              onPressed: () => _showHistory(context, ref),
+              iconSize: 18,
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.all(6),
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              icon: Icon(Icons.insights_outlined,
+                  color: Palette.inkFaint(context)),
+            ),
           ],
         ),
       ),
+    );
+  }
+
+  Future<void> _showHistory(BuildContext context, WidgetRef ref) {
+    final month = ref.read(monthProvider);
+    return showAppSheet<void>(
+      context: context,
+      title: '「${bucket.title}」近 6 个月',
+      builder: (_) => _BucketHistorySheet(bucket: bucket, month: month),
     );
   }
 
@@ -575,6 +598,181 @@ class _CarryNote extends StatelessWidget {
               style: TextStyle(fontSize: 12, color: Palette.expense),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+/// 某个分类近 6 个月的「已花 vs 预算」。
+///
+/// 为什么单独做一个：预算页只回答"这个月花了多少"，答不了"是不是比前几个月
+/// 花得凶"。要判断"这个月超支是偶然还是趋势"，必须把 6 个月摆在一起看。
+///
+/// 口径：金额含子分类（给「食」设预算、钱记在「外卖」上也要算进来），
+/// 与 `bucketSpentProvider` / `bucketBudgetStatusOf` 一致。
+class _BucketHistorySheet extends ConsumerStatefulWidget {
+  const _BucketHistorySheet({required this.bucket, required this.month});
+
+  final Bucket bucket;
+  final DateTime month;
+
+  @override
+  ConsumerState<_BucketHistorySheet> createState() =>
+      _BucketHistorySheetState();
+}
+
+typedef _MonthSpend = ({DateTime month, int spentCents, int budgetCents});
+
+class _BucketHistorySheetState extends ConsumerState<_BucketHistorySheet> {
+  Future<List<_MonthSpend>>? _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _load();
+  }
+
+  Future<List<_MonthSpend>> _load() async {
+    final store = await ref.read(storeProvider.future);
+    final book = await ref.read(activeBookProvider.future);
+    final rates = await store.rates(book.id);
+    final tree = await store.buckets(book.id, 'out', includeArchived: true);
+    final ids = bucketFamilyIds(tree, widget.bucket.id);
+    // 一次拿到 6 个月已花（SQL 里已按父+子分类汇总），预算再逐月取。
+    final raw = await store.bucketMonthly(book.id, ids,
+        flow: 'out', months: 6, anchor: widget.month);
+    final spentByMonth = <String, int>{};
+    for (final r in raw) {
+      spentByMonth[r.month] = (spentByMonth[r.month] ?? 0) +
+          toBaseCents(r.cents, r.currency, book.baseCurrency, rates);
+    }
+    // 注意 bucketMonthly 只返回"有数据的月份"，没花钱的月份要自己补 0，
+    // 否则图上会少几个月，看起来像数据丢了。
+    final out = <_MonthSpend>[];
+    for (var i = 5; i >= 0; i--) {
+      final m = DateTime(widget.month.year, widget.month.month - i);
+      final key = '${m.year}-${m.month.toString().padLeft(2, '0')}';
+      final budgets = await store.bucketBudgets(book.id, m);
+      out.add((
+        month: m,
+        spentCents: spentByMonth[key] ?? 0,
+        budgetCents: budgets[widget.bucket.id] ?? 0,
+      ));
+    }
+    return out;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final symbol = ref.watch(settingsProvider).symbol;
+    return FutureBuilder<List<_MonthSpend>>(
+      future: _future,
+      builder: (context, snap) {
+        final rows = snap.data;
+        if (rows == null) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 28),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final r in rows) _row(context, r, symbol),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 18),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.info_outline,
+                      size: 14, color: Palette.inkFaint(context)),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      // 这句刻意写短：原来那句 26 个字，在 320dp 宽的屏上会折成
+                      // 「…按「未设预算」处 / 理。」—— 单个「理」字掉到下一行很难看。
+                      '金额含子分类；未设预算的月份按未设处理。',
+                      style: TextStyle(
+                          fontSize: 12,
+                          height: 1.5,
+                          color: Palette.inkFaint(context)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _row(BuildContext context, _MonthSpend r, String symbol) {
+    final hasBudget = r.budgetCents > 0;
+    final over = hasBudget && r.spentCents > r.budgetCents;
+    final ratio =
+        hasBudget ? (r.spentCents / r.budgetCents).clamp(0.0, 1.0) : 0.0;
+    final color = !hasBudget
+        ? Palette.inkFaint(context)
+        : over
+            ? Palette.expense
+            : ratio >= 0.8
+                ? const Color(0xFFB26A00)
+                : Palette.brand(context);
+    final tail = !hasBudget
+        ? '未设预算'
+        : over
+            ? '超 $symbol${centsToText(r.spentCents - r.budgetCents)}'
+            : '/ $symbol${centsToText(r.budgetCents)}';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 7, 16, 7),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 52,
+            child: Text('${r.month.month} 月',
+                style:
+                    TextStyle(fontSize: 12, color: Palette.inkSoft(context))),
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      '$symbol${centsToText(r.spentCents)}',
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Palette.ink(context),
+                          fontFeatures: const [FontFeature.tabularFigures()]),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(tail,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 11, color: color)),
+                    ),
+                  ],
+                ),
+                if (hasBudget) ...[
+                  const SizedBox(height: 4),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(3),
+                    child: LinearProgressIndicator(
+                      value: ratio,
+                      minHeight: 4,
+                      backgroundColor: Palette.hairline(context),
+                      valueColor: AlwaysStoppedAnimation(color),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
         ],
       ),
     );

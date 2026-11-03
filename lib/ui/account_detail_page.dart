@@ -49,8 +49,10 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
 
   Future<void> _load() async {
     final store = await ref.read(storeProvider.future);
+    // 详情页要能一路「再显示」到最早一笔：突破默认 200 条上限。
+    // UI 仍按 60 条/页渲染（_shownCount），不会一次全建。
     final list = await store.entriesOfPocket(_pocket.id,
-        onlyAdjustment: _onlyAdjustment);
+        onlyAdjustment: _onlyAdjustment, limit: 1000000);
     // 账户跨账本共享：本月合计也不按账本过滤，否则会和余额对不上
     final month = await store.pocketMonthTotals(_pocket.id, DateTime.now());
     final adjCount = await store.adjustmentCountOf(_pocket.id);
@@ -277,22 +279,46 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
                   ? null
                   : '点右上角 ⚙ 可以对账：填入实际余额，差额会自动补一笔校准流水',
             )
-          else
+          else ...[
             Panel(
               padding: EdgeInsets.zero,
               child: Column(
                 children: [
-                  for (var i = 0; i < _entries!.length; i++) ...[
+                  // 首屏只建前 60 行：这个列表最多 200 条，一次全建时每行都要
+                  // watch 6 个 provider，进页面会有明显顿挫（真机上尤其明显）。
+                  for (var i = 0; i < _shownCount(_entries!.length); i++) ...[
                     if (i > 0) const Divider(height: 1, indent: 56),
                     EntryRow(entry: _entries![i]),
                   ],
                 ],
               ),
             ),
+            // 剩下的用「再显示」按钮接上，不做无限滚动 —— 记账的人翻 200 笔
+            // 通常是为了找某一笔，滚动加载反而不如明确点两下。
+            if (_shown < _entries!.length)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Center(
+                  child: TextButton(
+                    onPressed: () => setState(() => _shown += _pageSize),
+                    child: Text(
+                      '还有 ${_entries!.length - _shown} 笔 · 再显示 $_pageSize 笔',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ],
       ),
     );
   }
+
+  /// 列表一次最多显示多少行（首屏 60，之后每点一次加 60）
+  static const int _pageSize = 60;
+  int _shown = _pageSize;
+
+  int _shownCount(int total) => _shown < total ? _shown : total;
 
   // ------------------------------------------------------------ 首屏卡面
 
@@ -776,8 +802,13 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
   ///
   /// 有意不套的两处：余额校准弹窗（要让你看清"当前记录 vs 实际"才能改）
   /// 和校准成功后的 toast —— 那是用户主动发起的操作，打码反而没法用。
-  String _amt(int cents) =>
-      ref.read(settingsProvider).hideAmounts ? '****' : centsToText(cents);
+  /// [withSymbol] 默认带上货币符号：同一张卡上「还欠」带 ¥、「额度」不带 ¥
+  /// 会让人以为两个数不是一回事。调用方自己已经拼了币种后缀（如 "HKD "）时传 false。
+  String _amt(int cents, {bool withSymbol = true}) {
+    final s = ref.read(settingsProvider);
+    if (s.hideAmounts) return '****';
+    return withSymbol ? '${s.symbol}${centsToText(cents)}' : centsToText(cents);
+  }
 
   Widget _factRow(BuildContext context, String label, String value) {
     return Row(
@@ -818,9 +849,11 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
     return Panel(
       child: Column(
         children: [
-          _factRow(context, '本月支出', '$suffix${_amt(m.outCents)}'),
+          _factRow(context, '本月支出',
+              '$suffix${_amt(m.outCents, withSymbol: false)}'),
           const Divider(height: 18),
-          _factRow(context, '本月收入', '$suffix${_amt(m.inCents)}'),
+          _factRow(context, '本月收入',
+              '$suffix${_amt(m.inCents, withSymbol: false)}'),
           if (m.transferIn != 0 || m.transferOut != 0) ...[
             const Divider(height: 18),
             _factRow(

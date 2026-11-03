@@ -370,12 +370,14 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
       final t = byDay[dayKey(day)] ?? (incomeCents: 0, expenseCents: 0);
       final lunar = solarToLunar(day);
       final holiday = holidayOf(day);
+      final sub = _subtitleOf(day, holiday, lunar);
       cells.add(Expanded(
         child: _DayCell(
           day: d,
           incomeCents: t.incomeCents,
           expenseCents: t.expenseCents,
-          subtitle: _subtitleOf(day, holiday, lunar),
+          subtitle: sub.text,
+          festival: sub.festival,
           // 调休上班日：日期数字染橙。上一版是右上角「班」角标，
           // 在 51pt 宽的格子里挤成一小坨，是「脏」的主要来源之一。
           workday: holiday?.kind == HolidayKind.work,
@@ -413,16 +415,20 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
   ///    一木也只在 10/1 写「国庆节」，2 号起回到「廿二/廿三」。
   /// 2. **调休上班日不报假期名**。10/10 标的是 `work '国庆'`，但那天是
   ///    去上班的，写「国庆」比不写更误导 —— 日期已经染橙表示调休了。
-  static String _subtitleOf(DateTime day, HolidayDay? holiday, LunarDate lunar) {
+  /// 返回 (文字, 是否法定节日)。`festival` 为 true 时，格子里**节日名压过金额**
+  /// —— 国庆/春节这种日子比当天花了多少钱更该一眼看到；金额点开当条就能看。
+  /// 只认「假期第一天」的官方节日名，节气/农历仍让位给金额，避免满屏小字。
+  static ({String text, bool festival}) _subtitleOf(
+      DateTime day, HolidayDay? holiday, LunarDate lunar) {
     final label = calendarLabel(day);
     if (holiday != null && holiday.kind == HolidayKind.rest) {
       final prev = holidayOf(day.subtract(const Duration(days: 1)));
       final firstDay = prev == null ||
           prev.kind != HolidayKind.rest ||
           prev.label != holiday.label;
-      if (firstDay) return holiday.label;
+      if (firstDay) return (text: holiday.label, festival: true);
     }
-    return label ?? lunarDayText(lunar.day);
+    return (text: label ?? lunarDayText(lunar.day), festival: false);
   }
 
   static bool _isToday(DateTime d) {
@@ -467,6 +473,7 @@ class _DayCell extends StatelessWidget {
     required this.incomeCents,
     required this.expenseCents,
     required this.subtitle,
+    required this.festival,
     required this.workday,
     required this.weekend,
     required this.isToday,
@@ -479,6 +486,9 @@ class _DayCell extends StatelessWidget {
   final int incomeCents;
   final int expenseCents;
   final String subtitle;
+
+  /// 法定节日名（国庆/春节…）：为 true 时节日名压过金额显示。
+  final bool festival;
 
   /// 调休上班日（本该休息的周末要上班）
   final bool workday;
@@ -537,7 +547,9 @@ class _DayCell extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 2.5),
-                if (hasMoney)
+                // 法定节日名优先于金额（国庆/春节比当天花多少更该一眼看到）；
+                // 其余日子有账就显示金额、没账才显示农历/节气。
+                if (hasMoney && !festival)
                   ..._moneyRows(context)
                 else
                   Padding(

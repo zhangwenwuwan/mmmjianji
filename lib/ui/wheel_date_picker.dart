@@ -350,6 +350,56 @@ Future<DateTime?> pickDateWheel(
   );
 }
 
+/// 日期快捷选择：**今天 / 昨天 / 前天 / 其它（滚轮）**。返回 null = 取消。
+///
+/// 为什么要有：早上补记「昨天」是最常见的场景之一，以前点日期就弹滚轮，
+/// 从今天滑到昨天要滑两三下；跨月、跨年时更远。
+/// 三行快捷 + 一行「其它日期」兜住剩下的情况，滚轮只在真需要时才出现。
+Future<DateTime?> pickDayQuick(
+  BuildContext context,
+  DateTime current, {
+  String title = '选择日期',
+}) async {
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  String sub(DateTime d) =>
+      '${d.month} 月 ${d.day} 日 · 周${'一二三四五六日'[d.weekday - 1]}';
+
+  final choice = await showAppSheet<int>(
+    context: context,
+    title: title,
+    builder: (ctx) => Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 0; i < 3; i++)
+          ListTile(
+            dense: true,
+            title: Text(['今天', '昨天', '前天'][i]),
+            subtitle: Text(sub(today.subtract(Duration(days: i))),
+                style:
+                    TextStyle(fontSize: 12, color: Palette.inkFaint(ctx))),
+            trailing: dayKey(current) ==
+                    dayKey(today.subtract(Duration(days: i)))
+                ? const Icon(Icons.check, size: 18)
+                : null,
+            onTap: () => Navigator.pop(ctx, i),
+          ),
+        ListTile(
+          dense: true,
+          leading: const Icon(Icons.calendar_month_outlined, size: 18),
+          title: const Text('其它日期…'),
+          onTap: () => Navigator.pop(ctx, -1),
+        ),
+      ],
+    ),
+  );
+  if (choice == null || !context.mounted) return null;
+  if (choice < 0) {
+    return pickDateWheel(context, current, includeDay: true, title: title);
+  }
+  return today.subtract(Duration(days: choice));
+}
+
 /// 只选年份的单列滚轮（统计页「年」口径用）。返回 null = 取消。
 Future<int?> pickWheelYear(
   BuildContext context,

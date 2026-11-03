@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -27,10 +25,18 @@ void main() {
     // 每个用例一个空库：整套测试是串行跑同一个临时目录的，别的用例留下的流水
     // 会让首页多跑 monthSeries / insightRank 这些重查询，10 秒的 sqflite 事务
     // 定时器在用例结束时还挂着 → "Pending timers" 直接红。
+    //
+    // ⚠️ 2026-10-28 改：用 `databaseFactory.deleteDatabase` 而不是 `File.deleteSync`。
+    // 首页改成「首帧就建树」之后，数据库在用例第一帧就打开、一直握到测试结束，
+    // 跨文件也还开着 —— `File.deleteSync` 会抛
+    // `PathAccessException: 另一个程序正在使用此文件，errno = 32`。
+    // deleteDatabase 走 sqflite 自己的连接管理，能在关闭后删。
     final dir = await databaseFactory.getDatabasesPath();
-    for (final name in ['jianji_ledger.db', 'jianji_ledger.db-journal']) {
-      final f = File('$dir/$name');
-      if (f.existsSync()) f.deleteSync();
+    try {
+      await databaseFactory.deleteDatabase('$dir/jianji_ledger.db');
+    } catch (_) {
+      // 实在删不掉就沿用旧库：这个文件的断言只看返回键行为，
+      // 不依赖"库里一定没有数据"，多几笔流水只影响查询次数。
     }
   });
 

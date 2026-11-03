@@ -404,6 +404,64 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     _run();
   }
 
+  /// 搜索结果按日分组（一组一张卡 + 一行日期头）。
+  ///
+  /// 结果可能横跨好几个月，平铺的话「这笔是哪天的」只能靠猜 ——
+  /// 首页的日分组头已经证明这个信息量是刚需。
+  List<Widget> _groupedResults(BuildContext context, AppSettings settings) {
+    final groups = <String, List<Entry>>{};
+    for (final e in _results) {
+      groups.putIfAbsent(dayKey(e.day), () => []).add(e);
+    }
+    final keys = groups.keys.toList()..sort((a, b) => b.compareTo(a));
+    final out = <Widget>[];
+    for (final key in keys) {
+      final list = groups[key]!;
+      final day = list.first.day;
+      out.add(Padding(
+        padding: const EdgeInsets.only(top: 8, bottom: 6, left: 2),
+        child: Row(
+          children: [
+            Text('${day.year}/${_pad(day.month)}/${_pad(day.day)}',
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Palette.inkSoft(context))),
+            const SizedBox(width: 6),
+            Text(
+              '${list.length} 笔',
+              style:
+                  TextStyle(fontSize: 12, color: Palette.inkFaint(context)),
+            ),
+          ],
+        ),
+      ));
+      out.add(Panel(
+        padding: EdgeInsets.zero,
+        child: Column(
+          children: [
+            for (var i = 0; i < list.length; i++) ...[
+              if (i > 0) const Divider(height: 1, indent: 56),
+              EntryRow(
+                entry: list[i],
+                selected: _batch ? _selected.contains(list[i].id) : null,
+                onTap: _batch
+                    ? () => setState(() {
+                          final id = list[i].id;
+                          if (!_selected.add(id)) _selected.remove(id);
+                        })
+                    : null,
+              ),
+            ],
+          ],
+        ),
+      ));
+    }
+    return out;
+  }
+
+  static String _pad(int v) => v < 10 ? '0$v' : '$v';
+
   @override
   Widget build(BuildContext context) {
     final settings = ref.watch(settingsProvider);
@@ -624,33 +682,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                                 ],
                               ),
                               const SizedBox(height: 8),
-                              Panel(
-                                padding: EdgeInsets.zero,
-                                child: Column(
-                                  children: [
-                                    for (var i = 0;
-                                        i < _results.length;
-                                        i++) ...[
-                                      if (i > 0)
-                                        const Divider(height: 1, indent: 56),
-                                      EntryRow(
-                                        entry: _results[i],
-                                        selected: _batch
-                                            ? _selected.contains(_results[i].id)
-                                            : null,
-                                        onTap: _batch
-                                            ? () => setState(() {
-                                                  final id = _results[i].id;
-                                                  if (!_selected.add(id)) {
-                                                    _selected.remove(id);
-                                                  }
-                                                })
-                                            : null,
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                              ),
+                              // 按日分组：搜索结果是跨月的历史流水，
+                              // 平铺 300 条时只能靠每行数字猜是哪天的。
+                              ..._groupedResults(context, settings),
                             ],
                           ),
           ),

@@ -503,6 +503,18 @@ class _AppSheetBody extends StatelessWidget {
     // 键盘弹起时 viewPadding.bottom 会自动归零，两者不会重复叠加。
     final bottomInset = MediaQuery.viewInsetsOf(context).bottom +
         MediaQuery.viewPaddingOf(context).bottom;
+    // 面板内容外面套一层透明 Material。
+    //
+    // 为什么需要：面板底色是 `Glass` 画的一个带底色的 DecoratedBox，
+    // 而 `ListTile` 的水波纹要画在**最近的 Material 祖先**上 —— 那个祖先在
+    // Glass 上面（也就是在这层底色**底下**），于是点击水波纹被白色底完全盖住。
+    // debug 下 Flutter 会直接抛断言「ListTile background color or ink splashes
+    // may be invisible」，release 不抛但水波纹确实看不见。
+    // 套一层透明 Material 后，ListTile 的墨水就画在底色之上了。
+    Widget content(BuildContext c) => Material(
+          type: MaterialType.transparency,
+          child: builder(c),
+        );
     return Padding(
       padding: EdgeInsets.only(bottom: bottomInset),
       // 底部面板也用玻璃：它压在整个页面上，模糊能透出后面的内容，
@@ -542,12 +554,12 @@ class _AppSheetBody extends StatelessWidget {
                 ? Flexible(
                     child: SingleChildScrollView(
                       padding: const EdgeInsets.only(bottom: 10),
-                      child: builder(context),
+                      child: content(context),
                     ),
                   )
                 : fillsHeight
-                    ? Expanded(child: builder(context))
-                    : Flexible(child: builder(context)),
+                    ? Expanded(child: content(context))
+                    : Flexible(child: content(context)),
           ],
         ),
         ),
@@ -653,8 +665,12 @@ class JellySwitch extends StatefulWidget {
   });
 
   final bool value;
-  final ValueChanged<bool> onChanged;
+
+  /// 可为 null = 禁用（点了不响、不再"拨过去又弹回来"）。
+  final ValueChanged<bool>? onChanged;
   final Color? activeColor;
+
+  bool get _enabled => onChanged != null;
 
   @override
   State<JellySwitch> createState() => _JellySwitchState();
@@ -670,13 +686,21 @@ class _JellySwitchState extends State<JellySwitch>
     const trackH = 28.0;
     const knob = 22.0;
     final on = widget.value;
+    final enabled = widget._enabled;
     return GestureDetector(
-      onTap: () => widget.onChanged(!on),
+      onTap: enabled ? () => widget.onChanged!(!on) : null,
       child: AnimatedContainer(
         duration: Motion.d(context, const Duration(milliseconds: 350)),
         curve: XCurve.spring,
         width: trackW,
         height: trackH,
+        // 禁用态整体变淡：光让 ListTile 置灰、开关还是原色，会显得"能点但点不动"
+        foregroundDecoration: enabled
+            ? null
+            : BoxDecoration(
+                color: Palette.card(context).withValues(alpha: 0.55),
+                borderRadius: BorderRadius.circular(trackH / 2),
+              ),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(trackH / 2),
           color: on ? active : inactive,

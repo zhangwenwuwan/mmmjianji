@@ -124,7 +124,9 @@ void main() {
   test('外币流水：币种跟着带到入账流水上', () async {
     final id = await addPending(currency: 'USD');
     final created = await store.reimburseTo(id, bank.id);
-    final credit = (await store.entriesOfMonth(bookId, DateTime(2026, 10)))
+    // 入账收入记在「今天」，不是原支出那天 —— 所以要查本月，
+    // 查原支出的 10 月会找不到（跨月跑测试时会挂）。
+    final credit = (await store.entriesOfMonth(bookId, DateTime.now()))
         .firstWhere((e) => e.id == created);
     expect(credit.currency, 'USD');
   });

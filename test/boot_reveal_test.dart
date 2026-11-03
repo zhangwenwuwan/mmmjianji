@@ -44,7 +44,7 @@ void main() {
   });
 
   group('SplashCurtain', () {
-    testWidgets('呼吸 600ms 后才开张，再 700ms 收完', (tester) async {
+    testWidgets('呼吸 180ms 后才开张，再 420ms 收完', (tester) async {
       var opened = false;
       var done = false;
       await tester.pumpWidget(
@@ -57,22 +57,22 @@ void main() {
         ),
       );
 
-      // 呼吸阶段：只画幕，首页还没进场（首页构建和"张开"要并行，
-      // 提前插进来会抢首帧）
-      await tester.pump(const Duration(milliseconds: 400));
+      // 呼吸阶段（0~180ms）：只画幕，首页还没进场
+      await tester.pump(const Duration(milliseconds: 100));
       expect(opened, isFalse);
       expect(done, isFalse);
 
-      await tester.pump(const Duration(milliseconds: 250));
+      // 跨过 180ms：呼吸结束，通知插首页（回调在 microtask 里，要再 pump 一帧）
+      await tester.pump(const Duration(milliseconds: 100));
       await tester.pump();
       expect(opened, isTrue, reason: '呼吸结束就该通知插入首页');
       expect(done, isFalse);
 
-      // 张开还没走完，幕不能先摘 —— 摘早了就是硬切
-      await tester.pump(const Duration(milliseconds: 400));
+      // 张开要 420ms，此刻才走了 200ms，幕不能先摘 —— 摘早了就是硬切
+      await tester.pump(const Duration(milliseconds: 200));
       expect(done, isFalse);
 
-      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pump(const Duration(milliseconds: 300));
       await tester.pump();
       expect(done, isTrue, reason: '张开结束才摘幕');
     });

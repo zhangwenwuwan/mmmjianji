@@ -7,6 +7,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../data/store.dart';
 import '../state/ledger_state.dart';
+import '../services/app_log.dart';
 import '../services/attachment_service.dart';
 import '../state/settings.dart';
 import 'theme.dart';
@@ -18,9 +19,17 @@ import 'common.dart';
 /// 复制两份迟早会不一致（导出格式一改就漏一个）。
 Future<void> exportBackup(BuildContext context, WidgetRef ref) async {
   final store = await ref.read(storeProvider.future);
-  final json = await store.exportJson();
+  if (!context.mounted) return;
+  final json = await runWithProgress(
+      context, '正在生成备份…', () => store.exportJson());
   try {
-    await Share.share(json, subject: '简记备份');
+    final result = await Share.share(json, subject: '简记备份');
+    // ⚠️ 必须看分享结果：用户在系统面板里点空白取消，以前照样记「已备份」，
+    // 于是首页的备份提醒永久消失 —— 而实际上一份都没导出过。
+    if (result.status == ShareResultStatus.dismissed) {
+      if (context.mounted) _toast(context, '已取消，这次不算备份');
+      return;
+    }
   } catch (_) {
     await Clipboard.setData(ClipboardData(text: json));
     if (!context.mounted) return;
@@ -29,11 +38,16 @@ Future<void> exportBackup(BuildContext context, WidgetRef ref) async {
   // 到了这里说明备份内容已经出了 App（分享面板或剪贴板），
   // 首页的「备份提醒」据此消失。
   await ref.read(settingsProvider.notifier).markBackedUp();
+  if (context.mounted) {
+    _toast(context, '已备份（${(json.length / 1024).toStringAsFixed(1)} KB）');
+  }
 }
 
 Future<void> copyBackup(BuildContext context, WidgetRef ref) async {
   final store = await ref.read(storeProvider.future);
-  final json = await store.exportJson();
+  if (!context.mounted) return;
+  final json = await runWithProgress(
+      context, '正在生成备份…', () => store.exportJson());
   await Clipboard.setData(ClipboardData(text: json));
   await ref.read(settingsProvider.notifier).markBackedUp();
   if (!context.mounted) return;
@@ -47,6 +61,7 @@ Future<void> exportCsv(BuildContext context, WidgetRef ref) async {
   final rows = (csv.split('\r\n').length - 2).clamp(0, 1 << 30);
   try {
     await Share.share(csv, subject: '简记-${book.title}-账单.csv');
+    if (context.mounted) _toast(context, '已导出 CSV（$rows 行）');
   } catch (_) {
     await Clipboard.setData(ClipboardData(text: csv));
     if (!context.mounted) return;
@@ -81,26 +96,61 @@ Future<bool> importFromClipboard(BuildContext context, WidgetRef ref) async {
   );
   if (ok != true) return false;
   final store = await ref.read(storeProvider.future);
+  // 覆盖前先留一份快照：以前是「一个对话框 + 直接覆盖」，
+  // 恢复错了没有任何退路（旧数据当场没了）。
+  if (!context.mounted) return false;
+  final snapshot = await runWithProgress(
+      context, '正在备份旧数据…', () => store.exportJson());
   try {
-    await store.importJson(text);
-    // 备份不含凭证：把本机旧附件一起清掉，免得挂到恢复出来的新流水上
+    if (!context.mounted) return false;
+    await runWithProgress(
+        context, '正在导入备份…', () => store.importJson(text));
+    // 备份不含凭证：把本机旧附件一起清掉，免得挂到恢复出来的新流水上。
+    // ⚠️ 必须在导入**成功之后**再删 —— 放在事务前面的话，导入半途失败时
+    // 旧数据已被覆盖、图也没了，两头空。
     await AttachmentService.deleteAll();
     bumpRevision(ref);
-    if (context.mounted) _toast(context, '导入完成');
+    if (context.mounted) {
+      _toast(context, '导入完成（覆盖前的旧数据已存为 automatic 备份）');
+    }
     return true;
   } on FormatException catch (e) {
-    if (context.mounted) _toast(context, '导入失败：${e.message}');
+    // 导入失败：用快照把数据救回来，别让用户发现"点了一下什么都变了"
+    await _restoreSnapshotQuietly(store, snapshot);
+    bumpRevision(ref);
+    if (context.mounted) _toast(context, '导入失败：${e.message}（数据没变）');
     return false;
   } catch (e) {
     // 用新版备份恢复到旧版时，备份里会多一个当前表没有的列 →
     // insert 抛 DatabaseException（不是 FormatException）。
     // 原来没人接 → 事务回滚、界面毫无反应，用户以为按钮坏了。
-    if (context.mounted) _toast(context, '导入失败：$e');
+    await _restoreSnapshotQuietly(store, snapshot);
+    bumpRevision(ref);
+    if (context.mounted) _toast(context, '导入失败：$e（数据没变）');
     return false;
   }
 }
 
-/// 清空所有数据（双重确认里的第一层在页面里做）
+/// 静默回滚：导入失败时用覆盖前的快照把数据恢复回去。
+///
+/// 失败也只记日志 —— 这时候再弹一个错误框只会让人更慌，
+/// 用户需要知道的是「你的数据还在」。
+Future<void> _restoreSnapshotQuietly(LedgerStore store, String json) async {
+  try {
+    await store.importJson(json);
+  } catch (e) {
+    AppLog.error('data', '导入失败后回滚快照也失败了', e);
+  }
+}
+
+/// 清空所有数据。
+///
+/// 两道防线（以前只有一道对话框，注释里却写着"双重确认"）：
+/// 1. 进入前**自动导一份备份**（见 [requestWipe] 里的说明）；
+/// 2. 页面里的确认对话框要求手输「清空」两字。
+///
+/// 凭证图会一起删 —— 这是"清空"该有的语义，但备份里不含图片，
+/// 所以必须先把备份交出去，否则连翻图回忆的机会都没有。
 Future<void> wipeAll(BuildContext context, WidgetRef ref) async {
   final store = await ref.read(storeProvider.future);
   await store.wipe();
@@ -111,8 +161,98 @@ Future<void> wipeAll(BuildContext context, WidgetRef ref) async {
   if (context.mounted) _toast(context, '已清空');
 }
 
+/// 清空前的**第二道确认**：必须手输「清空」两字才给过。
+///
+/// 为什么不用普通的是/否对话框：清空会连凭证图一起删、且没有回收站，
+/// 手滑点一下就没了。打字这一步能把"顺手点了确认"挡掉。
+Future<bool> confirmWipe(BuildContext context) async {
+  final ctrl = TextEditingController();
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setLocal) => AlertDialog(
+        title: const Text('清空所有数据'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('流水、账户、分类、账本、凭证图片会全部删除，无法撤销。'),
+            const SizedBox(height: 10),
+            Text('确认请输入「清空」两个字：',
+                style: TextStyle(fontSize: 12, color: Palette.inkSoft(ctx))),
+            const SizedBox(height: 6),
+            TextField(
+              controller: ctrl,
+              autofocus: true,
+              style: const TextStyle(fontSize: 14),
+              decoration: InputDecoration(
+                isDense: true,
+                filled: false,
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8)),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              ),
+              onChanged: (_) => setLocal(() {}),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          TextButton(
+            onPressed: ctrl.text.trim() == '清空'
+                ? () => Navigator.pop(ctx, true)
+                : null,
+            child: Text('确认清空', style: TextStyle(color: Palette.expense)),
+          ),
+        ],
+      ),
+    ),
+  );
+  return ok == true;
+}
+
 void _toast(BuildContext context, String text) {
   ScaffoldMessenger.of(context).toast(text);
+}
+
+/// 跑一个「可能要几秒」的异步动作，期间盖一个不可点的进度框。
+///
+/// 大账本导出 / 导入整库 JSON 会明显卡一下（尤其导入要逐表插入几千行），
+/// 以前只有结束后的 toast，中间界面一动不动，用户会以为按钮没反应。
+Future<T> runWithProgress<T>(
+    BuildContext context, String label, Future<T> Function() run) async {
+  showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => PopScope(
+      canPop: false,
+      child: Dialog(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2.5),
+              ),
+              const SizedBox(width: 16),
+              Text(label, style: const TextStyle(fontSize: 13)),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+  try {
+    return await run();
+  } finally {
+    if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
+  }
 }
 
 /// 导出「配置」（不含流水）：偏好设置 + 分类结构 + 账户结构。

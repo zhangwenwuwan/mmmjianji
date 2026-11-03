@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../core/rules.dart';
+import '../data/store.dart';
+import '../services/app_log.dart';
 import '../services/auto_backup.dart';
 import '../state/ledger_state.dart';
 import 'bill_import_page.dart';
@@ -15,6 +17,7 @@ import 'category_migration_page.dart';
 import 'export_page.dart';
 import 'log_center_page.dart';
 import 'month_notes_page.dart';
+import 'statement_share_page.dart';
 import 'data_actions.dart'
     show
         copyBackup,
@@ -23,12 +26,15 @@ import 'data_actions.dart'
         exportConfig,
         importConfig,
         importFromClipboard,
-        wipeAll;
+        confirmWipe,
+        wipeAll,
+        runWithProgress;
 import 'motion.dart';
 import 'pocket_manage_page.dart';
 import 'recycle_bin_page.dart';
 import 'storage_page.dart';
 import 'tag_manage_page.dart';
+import 'template_manage_page.dart';
 import 'theme.dart';
 
 /// 数据管理：概况、自动备份、孤儿清理、导入导出集中在这一页。
@@ -73,10 +79,17 @@ class _DataManagePageState extends ConsumerState<DataManagePage> {
 
   Future<void> _backupNow() async {
     final store = await ref.read(storeProvider.future);
-    final file = await AutoBackup.run(store);
+    final run = await AutoBackup.run(store);
     await _loadBackups();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).toast(file == null ? '今天已经备份过了' : '已备份一份');
+    // ⚠️ 不能再把「今天已备份」和「写盘失败」说成同一句话：
+    // 磁盘满/序列化异常时用户看到"今天已经备份过了"，于是不再手动导出，
+    // 而实际上一份都没存下来。
+    ScaffoldMessenger.of(context).toast(switch (run.result) {
+      AutoBackupResult.written => '已备份一份',
+      AutoBackupResult.skipped => '今天已经备份过了',
+      AutoBackupResult.failed => '备份失败：磁盘可能满了，请改用「导出备份」',
+    });
   }
 
   Future<void> _restore(String path) async {
@@ -98,14 +111,23 @@ class _DataManagePageState extends ConsumerState<DataManagePage> {
     );
     if (ok != true) return;
     final store = await ref.read(storeProvider.future);
+    // 覆盖前先留一份快照：恢复错了（选错文件）也得有退路。
+    // 以前是「一个对话框 + 直接覆盖」，选错那份就是最后一份，就真没了。
+    if (!mounted) return;
+    final snapshot = await runWithProgress(
+        context, '正在备份旧数据…', () => store.exportJson());
     try {
       final text = await AutoBackup.read(_fileOf(path));
-      await store.importJson(text);
+      if (!mounted) return;
+      await runWithProgress(
+          context, '正在恢复备份…', () => store.importJson(text));
       if (!mounted) return;
       bumpRevision(ref);
       ScaffoldMessenger.of(context)
-          .toast('已恢复');
+          .toast('已恢复（恢复前的数据已存为 automatic 备份）');
     } catch (e) {
+      await _restoreSnapshotQuietly(store, snapshot);
+      bumpRevision(ref);
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .toast('恢复失败，详情见日志中心');
@@ -113,6 +135,15 @@ class _DataManagePageState extends ConsumerState<DataManagePage> {
   }
 
   static File _fileOf(String path) => File(path);
+
+  /// 恢复失败时用覆盖前的快照把数据放回去（静默，只记日志）。
+  Future<void> _restoreSnapshotQuietly(LedgerStore store, String json) async {
+    try {
+      await store.importJson(json);
+    } catch (e) {
+      AppLog.error('data', '恢复失败后回滚快照也失败了', e);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -198,12 +229,34 @@ class _DataManagePageState extends ConsumerState<DataManagePage> {
                 const Divider(height: 1, indent: 16),
                 PressScale(
                   scale: 0.98,
+                  onTap: () => Navigator.of(context).push(AppPageRoute(
+                      page: StatementSharePage(month: DateTime.now()))),
+                  child: const ListTile(
+                    leading: Icon(Icons.ios_share),
+                    title: Text('账单分享'),
+                    subtitle: Text('把一个月的账发成图片，家人不用装 App'),
+                  ),
+                ),
+                const Divider(height: 1, indent: 16),
+                PressScale(
+                  scale: 0.98,
                   onTap: () => Navigator.of(context)
                       .push(AppPageRoute(page: const RecycleBinPage())),
                   child: ListTile(
                     leading: const Icon(Icons.delete_sweep_outlined),
                     title: const Text('回收站'),
                     subtitle: const Text('已删除的流水，可恢复或永久删除'),
+                  ),
+                ),
+                const Divider(height: 1, indent: 16),
+                PressScale(
+                  scale: 0.98,
+                  onTap: () => Navigator.of(context)
+                      .push(AppPageRoute(page: const TemplateManagePage())),
+                  child: const ListTile(
+                    leading: Icon(Icons.bookmark_outlined),
+                    title: Text('记账模板'),
+                    subtitle: Text('把常用的账户/分类/金额存成快捷项'),
                   ),
                 ),
               ],
@@ -305,6 +358,30 @@ class _DataManagePageState extends ConsumerState<DataManagePage> {
                                         _fileOf(_backups[i].path));
                                     await Share.share(text, subject: '简记备份');
                                   } else if (v == 'delete') {
+                                    // 删除要确认：它删掉的很可能是唯一一份能救回数据的文件，
+                                    // 而旁边的「恢复」「分享」都有二次确认。
+                                    final yes = await showDialog<bool>(
+                                      context: context,
+                                      builder: (ctx) => AlertDialog(
+                                        title: const Text('删除这份备份？'),
+                                        content: const Text(
+                                            '删除后这份备份无法找回。确定要删吗？'),
+                                        actions: [
+                                          TextButton(
+                                              onPressed: () =>
+                                                  Navigator.pop(ctx, false),
+                                              child: const Text('取消')),
+                                          TextButton(
+                                            onPressed: () =>
+                                                Navigator.pop(ctx, true),
+                                            child: Text('删除',
+                                                style: TextStyle(
+                                                    color: Palette.expense)),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                    if (yes != true) return;
                                     await AutoBackup.delete(
                                         _fileOf(_backups[i].path));
                                     await _loadBackups();
@@ -480,28 +557,23 @@ class _DataManagePageState extends ConsumerState<DataManagePage> {
                   title:
                       Text('清空所有数据', style: TextStyle(color: Palette.expense)),
                   onTap: () async {
-                    final ok = await showDialog<bool>(
-                      context: context,
-                      builder: (ctx) => AlertDialog(
-                        title: const Text('清空所有数据？'),
-                        content: const Text('建议先导出备份。清空后无法恢复。'),
-                        actions: [
-                          TextButton(
-                              onPressed: () => Navigator.pop(ctx, false),
-                              child: const Text('取消')),
-                          TextButton(
-                            onPressed: () => Navigator.pop(ctx, true),
-                            child: Text('确认清空',
-                                style: TextStyle(color: Palette.expense)),
-                          ),
-                        ],
-                      ),
-                    );
+                    // 清空会连凭证图一起删、且没有回收站 ——
+                    // 光一句「建议先导出备份」拦不住顺手一点。
+                    // 这里改成两步：① 先自动存一份快照 ② 手输「清空」才给过。
+                    final store = await ref.read(storeProvider.future);
+                    final snap = await AutoBackup.run(store);
+                    if (!context.mounted) return;
+                    final ok = await confirmWipe(context);
                     if (ok == true && context.mounted) {
                       // 走 data_actions 里的统一实现：它还会清掉磁盘上的
                       // 凭证图片（只删库里的行会留下永远删不掉的占用）。
                       // 原来这里自己写了一遍，漏了附件那一步。
                       await wipeAll(context, ref);
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).toast(snap.result ==
+                              AutoBackupResult.failed
+                          ? '已清空（清空前没能存下快照，磁盘可能已满）'
+                          : '已清空（清空前的数据存在「自动备份」里）');
                     }
                   },
                 ),

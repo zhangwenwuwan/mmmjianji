@@ -242,14 +242,110 @@ class _RollingMoneyState extends ConsumerState<RollingMoney>
 }
 
 /// 通用卡片容器
+/// 列表项「依次错开淡入」。
+///
+/// 和 `BootRevealItem` 的分工：
+/// - `BootRevealItem` 只服务**冷启动那一次**（依赖全局时间线，启动一结束就直出）；
+/// - 这个给**任何列表 / 网格的首次呈现**用，每个实例自己播一次，播完不再管。
+///
+/// ⚠️ 只用在「一次性 build 完的静态列表」（Column / Wrap / 很短的 ListView）。
+/// `ListView.builder` 的项会被复用和重建，滚回来又播一遍，反而像卡顿。
+///
+/// ⚠️ [index] 超过 [maxIndex] 的按最后一批算 —— 一屏三十项挨个排队，
+/// 用户会以为在加载。
+class StaggerIn extends StatefulWidget {
+  const StaggerIn({super.key, required this.index, required this.child});
+
+  final int index;
+  final Widget child;
+
+  /// 最多错开到第几项。再往后的一起出。
+  static const maxIndex = 8;
+
+  /// 每项之间的间隔。
+  static const step = Duration(milliseconds: 55);
+
+  @override
+  State<StaggerIn> createState() => _StaggerInState();
+}
+
+class _StaggerInState extends State<StaggerIn>
+    with SingleTickerProviderStateMixin {
+  // ⚠️ 在 initState 里建（不是 late final 字段初始化器）：开了「减少动态效果」时
+  // 动画一帧都不播，字段永远不被访问，dispose 里第一次摸到会重建一个已 deactivate
+  // 的 element，抛 "Looking up a deactivated widget's ancestor is unsafe"。
+  late AnimationController _ctrl;
+
+  late Animation<double> _ease;
+  bool _started = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 320));
+    _ease = CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_started) return;
+    _started = true;
+    // 读 MediaQuery 必须在 didChangeDependencies（initState 里读会抛）。
+    if (MediaQuery.of(context).disableAnimations) {
+      _ctrl.value = 1;
+      return;
+    }
+    final i = widget.index.clamp(0, StaggerIn.maxIndex);
+    Future<void>.delayed(StaggerIn.step * i, () {
+      if (mounted) _ctrl.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ease,
+      builder: (context, child) => Opacity(
+        opacity: _ease.value,
+        // 固定 10px 上移，不用 SlideTransition（那个是相对 child 高度的百分比，
+        // 高卡片和矮文字会差十几倍）。
+        child: Transform.translate(
+            offset: Offset(0, 10 * (1 - _ease.value)), child: child),
+      ),
+      child: widget.child,
+    );
+  }
+}
+
 class Panel extends StatelessWidget {
   const Panel(
       {super.key,
       required this.child,
-      this.padding = const EdgeInsets.all(AppSpace.md)});
+      this.padding = const EdgeInsets.all(AppSpace.md),
+      this.tint,
+      this.gradient});
 
   final Widget child;
   final EdgeInsets padding;
+
+  /// 底色。默认 [Palette.card]（白 / 深卡）。
+  ///
+  /// 2026-10-28 加：首页的「本月支出」大卡一直和流水卡一样是纯白，
+  /// 结果最该有分量的地方最轻 —— 给它一层薄荷底，才和资产页的深绿净资产卡
+  /// 形成同一套视觉语言（重的内容有颜色，普通的保持白）。
+  final Color? tint;
+
+  /// 渐变底，**优先于 [tint]**。
+  /// 单向渐变比纯色更"活"，也避免大面积铺一个色显得闷。
+  final Gradient? gradient;
 
   @override
   Widget build(BuildContext context) {
@@ -257,9 +353,14 @@ class Panel extends StatelessWidget {
       width: double.infinity,
       padding: padding,
       decoration: BoxDecoration(
-        color: Palette.card(context),
+        color: gradient != null ? null : (tint ?? Palette.card(context)),
+        gradient: gradient,
+        // 同心圆角的基准值：外层的圆角。内部贴着边的内容按 `AppRadius.card - padding`
+        // 取圆角才会"同圆心"（见 AppRadius.tileInsideCard）。
         borderRadius: BorderRadius.circular(AppRadius.card),
-        border: Border.all(color: Palette.hairline(context)),
+        // 2026-10-28：去掉了 1px hairline 边框。实线收边会让卡片像"表格格线"，
+        // 换成两层柔和阴影（近距定边界 + 远距给体积），卡片才浮在纸面上。
+        boxShadow: Palette.cardShadow(context),
       ),
       // 必须夹一层透明 Material：Panel 自己用 Container 画了底色，而 ListTile /
       // InkWell 的墨水涟漪是画在最近的 Material 上的。缺这一层时 debug 直接断言
@@ -348,6 +449,7 @@ class AppTextField extends StatelessWidget {
     this.suffixText,
     this.maxLength,
     this.obscureText = false,
+    this.errorText,
   });
 
   final String label;
@@ -363,6 +465,9 @@ class AppTextField extends StatelessWidget {
   final String? suffixText;
   final int? maxLength;
   final bool obscureText;
+
+  /// 校验不通过时贴在输入框下方的红字（比"弹窗一声不响关掉"好懂得多）。
+  final String? errorText;
 
   @override
   Widget build(BuildContext context) {
@@ -398,6 +503,9 @@ class AppTextField extends StatelessWidget {
             fontSize: 12,
             color: Palette.inkFaint(context),
           ),
+          errorText: errorText,
+          errorStyle: TextStyle(fontSize: 12, color: Palette.expense),
+          errorMaxLines: 2,
           filled: true,
           fillColor: Palette.paper(context),
           isDense: true,
@@ -548,7 +656,21 @@ class GlyphPicker extends StatelessWidget {
             selected: custom,
             onTap: () async {
               final g = await IconService.pickFromGallery();
-              if (g != null) onChanged(g);
+              switch (g.result) {
+                case PickResult.ok:
+                  onChanged(g.path!);
+                case PickResult.cancelled:
+                  break;
+                case PickResult.denied:
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context)
+                        .toast('相册权限被拒绝了，去系统设置里打开');
+                  }
+                case PickResult.error:
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).toast('读图失败，换一张试试');
+                  }
+              }
             },
             // 36×36 的格子：自定义图片要撑满（fill），
             // 否则 20×20 缩在中间一块，看着像没生效。
@@ -569,6 +691,15 @@ class GlyphPicker extends StatelessWidget {
   }
 }
 
+/// 分区小标题（「数据管理」「分类预算（可选）」这类）。
+///
+/// 中文能在任意两个字之间断行，窄容器里容易出现"最后一行只剩一个字"。
+/// 这里直接用 **单行 + 省略号** 解决，不去改字符串。
+///
+/// ⚠️ 历史坑：以前有个 `keepLastTwoTogether()` 往最后两字之间插 NBSP，
+/// 但取的是 `substring(0, len-2)` 又只接最后一个字，**中间那个字被吃掉**：
+/// 「数据管理」→「数据 理」、「分类预算（可选）」→「分类预算（可 ）」。
+/// 37 处分区标题全中招，且当时没有任何测试盯着。见 `test/section_label_test.dart`。
 class SectionLabel extends StatelessWidget {
   const SectionLabel(this.text, {super.key, this.trailing});
 
@@ -583,6 +714,15 @@ class SectionLabel extends StatelessWidget {
         children: [
           Text(
             text,
+            // 分区标签最容易撞上"最后一行只剩一个字"。
+            // ⚠️ 以前这里用一个 keepLastTwoTogether() 在最后两字之间塞 NBSP，
+            // 但它取的是 substring(0, len-2) 又只接最后 1 个字 —— 中间那个字被
+            // 直接吃掉：「数据管理」显示成「数据 理」、「分类预算（可选）」显示成
+            // 「分类预算（可 ）」。37 处分区标题全中招，且很难被单测发现。
+            // 正解不是改字符串，而是让它根本不换行：单行 + 省略号。
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.ellipsis,
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w500,

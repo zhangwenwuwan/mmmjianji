@@ -116,6 +116,14 @@ class _InsightsPageState extends ConsumerState<InsightsPage> {
                           onTo: scope == InsightScope.custom
                               ? () => _pickEnd(context, ref)
                               : null,
+                          // 上一段 / 下一段：以前翻月要「点日期 → 滚轮滚到目标月
+                          // → 确定」三步，日历页一个 ‹ › 就够。自定义范围不平移。
+                          onPrev: scope == InsightScope.custom
+                              ? null
+                              : () => _shift(context, ref, -1),
+                          onNext: scope == InsightScope.custom
+                              ? null
+                              : () => _shift(context, ref, 1),
                         ),
                       ),
                       // 口径：支出 / 收入 / 结余
@@ -123,26 +131,38 @@ class _InsightsPageState extends ConsumerState<InsightsPage> {
                         padding: const EdgeInsets.only(top: 12),
                         child: _CapsuleRow(
                           children: [
+                            // 切口径时把底部的「近 6 个月」趋势图也带上：
+                            // 以前切到收入，环形图/排行都变了，往下滑撞见一张
+                            // 支出柱状图，还得在那边再点一次。
                             _Capsule(
                               label: '支出',
                               selected: type == InsightType.expense,
-                              onTap: () => ref
-                                  .read(insightTypeProvider.notifier)
-                                  .state = InsightType.expense,
+                              onTap: () {
+                                ref.read(insightTypeProvider.notifier).state =
+                                    InsightType.expense;
+                                ref.read(trendModeProvider.notifier).state =
+                                    TrendMode.expense;
+                              },
                             ),
                             _Capsule(
                               label: '收入',
                               selected: type == InsightType.income,
-                              onTap: () => ref
-                                  .read(insightTypeProvider.notifier)
-                                  .state = InsightType.income,
+                              onTap: () {
+                                ref.read(insightTypeProvider.notifier).state =
+                                    InsightType.income;
+                                ref.read(trendModeProvider.notifier).state =
+                                    TrendMode.income;
+                              },
                             ),
                             _Capsule(
                               label: '结余',
                               selected: isBalance,
-                              onTap: () => ref
-                                  .read(insightTypeProvider.notifier)
-                                  .state = InsightType.balance,
+                              onTap: () {
+                                ref.read(insightTypeProvider.notifier).state =
+                                    InsightType.balance;
+                                ref.read(trendModeProvider.notifier).state =
+                                    TrendMode.net;
+                              },
                             ),
                           ],
                         ),
@@ -312,14 +332,20 @@ class _InsightsPageState extends ConsumerState<InsightsPage> {
                     ),
                   if (!isBalance) const SizedBox(height: 14),
 
-                  // 与上月同期比：只在「本月」口径下有对照意义（上月整月对本月半个月是假的）
-                  if (!isBalance && scope == InsightScope.month) ...[
+                  // 与上一段对比。
+                  // 月粒度走「上月 1 日 ~ 同一天」的同期比（上月整月对本月半个月是假的）；
+                  // 周 / 年 / 自定义改成和「上一个等长区间」比 ——
+                  // 以前这些粒度整张卡都不显示，页面上没有任何参照。
+                  // 「全部」没有上一段，不显示。
+                  if (!isBalance && scope != InsightScope.all) ...[
                     Panel(
                       padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
                       child: _PrevComparePanel(
                         symbol: settings.symbol,
                         hide: settings.hideAmounts,
                         type: type,
+                        scope: scope,
+                        range: range,
                       ),
                     ),
                     const SizedBox(height: 14),
@@ -339,8 +365,11 @@ class _InsightsPageState extends ConsumerState<InsightsPage> {
                     const SizedBox(height: 14),
                   ],
 
-                  // 预算
-                  Panel(
+                  // 预算：预算是按月设的，只有「月」粒度说得通。
+                  // 以前在「本年 / 全部 / 自定义」下也插一张「本月预算」卡，
+                  // 和上下文不是一条时间轴，看着像忘了更新。
+                  if (scope == InsightScope.month) ...[
+                    Panel(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -415,8 +444,9 @@ class _InsightsPageState extends ConsumerState<InsightsPage> {
                         ],
                       ],
                     ),
-                  ),
-                  const SizedBox(height: 10),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
 
                   // 本月总结（手写）：全是一堆数字太冷，给用户一个回看/留话的地方
                   if (scope == InsightScope.month)
@@ -552,6 +582,24 @@ class _InsightsPageState extends ConsumerState<InsightsPage> {
   }
 
   /// 点左端日期：按当前粒度挑一个新锚点。
+  /// 按当前粒度整段平移（周 -7 天 / 月 ±1 月 / 年 ±1 年）。
+  ///
+  /// 为什么月要用 `DateTime(y, m+dir, 1)`：anchor 可能停在 31 号，
+  /// 直接 `DateTime(y, m+1, 31)` 会滚到下下个月（Dart 会把溢出日归一化）。
+  static void _shift(BuildContext context, WidgetRef ref, int dir) {
+    final scope = ref.read(insightScopeProvider);
+    final a = ref.read(insightAnchorProvider);
+    final next = switch (scope) {
+      InsightScope.week => a.add(Duration(days: 7 * dir)),
+      InsightScope.month => DateTime(a.year, a.month + dir, 1),
+      InsightScope.year => DateTime(a.year + dir, a.month, 1),
+      // 「全部」没有可平移的边界；自定义由用户自己定
+      _ => a,
+    };
+    if (next == a) return;
+    ref.read(insightAnchorProvider.notifier).state = next;
+  }
+
   static Future<void> _pickStart(BuildContext context, WidgetRef ref) async {
     final scope = ref.read(insightScopeProvider);
     final anchor = ref.read(insightAnchorProvider);
@@ -711,31 +759,60 @@ class _InsightsPageState extends ConsumerState<InsightsPage> {
     final trailing = showAmount
         ? (hide ? '****' : '$symbol${centsToText(slice.cents)}')
         : '$pct%';
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        children: [
-          Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(
-                color: kSliceColors[i % kSliceColors.length],
-                shape: BoxShape.circle),
+    return PressScale(
+      scale: 0.98,
+      // 图例可点：以前整条是死的，而分类排行右边明写着「点分类看明细」，
+      // 环形图这一块却没有任何入口。
+      onTap: () {
+        final buckets = <Bucket>[
+          ...?ref.read(bucketsProvider('out')).valueOrNull,
+          ...?ref.read(bucketsProvider('in')).valueOrNull,
+        ];
+        Bucket? target;
+        for (final b in buckets) {
+          if (b.title == slice.label) target = b;
+        }
+        if (target == null) {
+          ScaffoldMessenger.of(context)
+              .toast('「${slice.label}」找不到对应分类（可能已合并）');
+          return;
+        }
+        Navigator.of(context).push(AppPageRoute(
+          page: CategoryDetailPage(
+            bucket: target,
+            range: ref.read(insightRangeProvider),
           ),
-          const SizedBox(width: 7),
-          Expanded(
-            child: Text(slice.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 12, color: Palette.ink(context))),
-          ),
-          Text(trailing,
-              style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: Palette.inkSoft(context),
-                  fontFeatures: const [FontFeature.tabularFigures()])),
-        ],
+        ));
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                  // 跟环形图/流水行图标同一个分类色，图例才对得上
+                  color: Palette.categoryColor(context, slice.label),
+                  shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 7),
+            Expanded(
+              child: Text(slice.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, color: Palette.ink(context))),
+            ),
+            Text(trailing,
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Palette.inkSoft(context),
+                    fontFeatures: const [FontFeature.tabularFigures()])),
+            const SizedBox(width: 2),
+            Icon(Icons.chevron_right, size: 14, color: Palette.inkFaint(context)),
+          ],
+        ),
       ),
     );
   }
@@ -806,6 +883,15 @@ class _RankListState extends ConsumerState<_RankList> {
               if (n.hasChildren && _expanded.contains(n.bucketId))
                 for (final c in n.children) _row(context, c, total, 1),
             ],
+            // 截断要说出来：以前超过 20 个分类直接消失，用户会以为
+            // 统计漏了分类（金额小的那几个确实看不见）。
+            if (nodes.length > 20)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text('另有 ${nodes.length - 20} 个分类没列出来（金额较小）',
+                    style: TextStyle(
+                        fontSize: 10.5, color: Palette.inkFaint(context))),
+              ),
             const SizedBox(height: 6),
           ],
         );
@@ -840,8 +926,17 @@ class _RankListState extends ConsumerState<_RankList> {
           if (b.id == n.bucketId) target = b;
         }
         if (target != null) {
-          Navigator.of(context)
-              .push(AppPageRoute(page: CategoryDetailPage(bucket: target)));
+          // 带着当前筛选区间进去：以前详情页只看「近 6 个月」的全部流水，
+          // 在「本周」点「餐饮 ¥320」进去看到「近 6 个月 ¥5800」，像算错了。
+          Navigator.of(context).push(AppPageRoute(
+            page: CategoryDetailPage(
+              bucket: target,
+              range: ref.read(insightRangeProvider),
+            ),
+          ));
+        } else {
+          // 分类被删了但历史数据还在排行里，别点了没反应
+          ScaffoldMessenger.of(context).toast('这个分类已经删掉了');
         }
       },
       child: Padding(
@@ -1083,22 +1178,27 @@ class _ScopeSegments extends StatelessWidget {
   }
 }
 
-/// 区间行：`2026/10/01 ⌄   ~   2026/10/31 ⌄`
+/// 区间行：`‹ 2026/10/01 ⌄   ~   2026/10/31 ⌄ ›`
 ///
 /// 箭头只出现在**能点**的一端 —— 周/月/年右端是算出来的区间末，
 /// 给它画个下拉箭头等于骗用户去点。
+/// 两端的 ‹ › 是按粒度整段平移（-1 周 / -1 月 / -1 年）。
 class _RangeLine extends StatelessWidget {
   const _RangeLine({
     required this.scope,
     required this.range,
     this.onFrom,
     this.onTo,
+    this.onPrev,
+    this.onNext,
   });
 
   final InsightScope scope;
   final ({DateTime from, DateTime to}) range;
   final VoidCallback? onFrom;
   final VoidCallback? onTo;
+  final VoidCallback? onPrev;
+  final VoidCallback? onNext;
 
   static String _fmt(DateTime d) => '${d.year}/'
       '${d.month.toString().padLeft(2, '0')}/'
@@ -1123,6 +1223,7 @@ class _RangeLine extends StatelessWidget {
     }
     return Row(
       children: [
+        if (onPrev != null) _arrow(context, Icons.chevron_left, onPrev!),
         Expanded(
           child: Align(
             alignment: Alignment.centerLeft,
@@ -1130,7 +1231,7 @@ class _RangeLine extends StatelessWidget {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 4),
           child: Text('~',
               style: TextStyle(
                   fontSize: 14,
@@ -1143,7 +1244,21 @@ class _RangeLine extends StatelessWidget {
             child: _end(context, range.to, onTo),
           ),
         ),
+        if (onNext != null) _arrow(context, Icons.chevron_right, onNext!),
       ],
+    );
+  }
+
+  /// 平移一档。32×32 的点击区 + 8 的呼吸位，避免和日期那端的点击互相抢。
+  Widget _arrow(BuildContext context, IconData icon, VoidCallback onTap) {
+    return PressScale(
+      scale: 0.9,
+      onTap: onTap,
+      child: SizedBox(
+        width: 32,
+        height: 32,
+        child: Icon(icon, size: 20, color: Palette.inkSoft(context)),
+      ),
     );
   }
 
@@ -1276,7 +1391,10 @@ class _Trend extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final mode = ref.watch(trendModeProvider);
-    final async = ref.watch(monthSeriesProvider(6));
+    // 锚点跟着统计页自己的筛选走（以前锁在首页当月，翻到 3 月时这张卡不动）
+    final anchor = ref.watch(insightAnchorProvider);
+    final async =
+        ref.watch(monthSeriesProvider((count: 6, anchor: anchor)));
     return async.when(
       skipLoadingOnReload: true,
       loading: () => const Padding(
@@ -1301,7 +1419,8 @@ class _Trend extends ConsumerWidget {
       error: (e, _) => ErrorRetryView(
         message: '读取失败',
         detail: '$e',
-        onRetry: () async => ref.invalidate(monthSeriesProvider(6)),
+        onRetry: () async =>
+            ref.invalidate(monthSeriesProvider((count: 6, anchor: anchor))),
       ),
       data: (points) {
         int valueOf(p) => switch (mode) {
@@ -1314,6 +1433,29 @@ class _Trend extends ConsumerWidget {
           final v = valueOf(p).abs();
           return v > m ? v : m;
         });
+        // 空态：以前 maxV==0 会画 6 根 2dp 的平柱 + 月份数字，
+        // 看着像渲染失败（资产页的净资产图早就有兜底文案，这里没有）。
+        if (maxV == 0) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('近 6 个月',
+                  style:
+                      TextStyle(fontSize: 12, color: Palette.inkSoft(context))),
+              const SizedBox(height: 10),
+              Container(
+                height: 72,
+                alignment: Alignment.center,
+                child: Text(
+                  mode == TrendMode.net
+                      ? '这 6 个月还没有收支'
+                      : '这 6 个月还没有${mode == TrendMode.expense ? '支出' : '收入'}',
+                  style: TextStyle(fontSize: 12, color: Palette.inkFaint(context)),
+                ),
+              ),
+            ],
+          );
+        }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1537,7 +1679,27 @@ class _MiniRankPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (items.isEmpty) return const SizedBox.shrink();
+    // 空数据时给一句短空态，而不是整块消失：
+    // shrink 会让页面高度突然跳一截（上面那张卡跟着上移），像点坏了。
+    if (items.isEmpty) {
+      return Panel(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title,
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Palette.inkSoft(context))),
+            const SizedBox(height: 8),
+            Text('这个区间还没有数据',
+                style:
+                    TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
+          ],
+        ),
+      );
+    }
     final top = items.take(6).toList();
     final maxCents = top.first.cents <= 0 ? 1 : top.first.cents;
     return Panel(
@@ -1588,6 +1750,14 @@ class _MiniRankPanel extends StatelessWidget {
             ),
             const SizedBox(height: 9),
           ],
+          // 只显示前 6 项，剩下的要说明，不然用户以为统计漏了
+          if (items.length > 6)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text('另有 ${items.length - 6} 项没列出来',
+                  style: TextStyle(
+                      fontSize: 10.5, color: Palette.inkFaint(context))),
+            ),
           if (footnote != null)
             Text(footnote!,
                 style:
@@ -1607,7 +1777,8 @@ class _TagRankPanel extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final list = ref.watch(tagTotalsProvider).valueOrNull ?? const [];
+    final range = ref.watch(insightRangeProvider);
+    final list = ref.watch(tagTotalsProvider(range)).valueOrNull ?? const [];
     return _MiniRankPanel(
       title: '标签占比',
       items: [for (final t in list) (label: t.tag, cents: t.cents)],
@@ -1628,12 +1799,14 @@ class _PocketSplitPanel extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final list = ref.watch(pocketTotalsProvider).valueOrNull ?? const [];
+    final range = ref.watch(insightRangeProvider);
+    final list = ref.watch(pocketTotalsProvider(range)).valueOrNull ?? const [];
     return _MiniRankPanel(
       title: '账户收支',
       items: [
+        // displayName：简称优先，和资产页/流水行看到的是同一个名字
         for (final p in list)
-          (label: '${glyphLabel(p.pocket.glyph)} ${p.pocket.title}',
+          (label: '${glyphLabel(p.pocket.glyph)} ${p.pocket.displayName}',
               cents: p.cents),
       ],
       symbol: symbol,
@@ -1651,14 +1824,77 @@ class _PrevComparePanel extends ConsumerWidget {
     required this.symbol,
     required this.hide,
     required this.type,
+    required this.scope,
+    required this.range,
   });
 
   final String symbol;
   final bool hide;
   final InsightType type;
+  final InsightScope scope;
+  final ({DateTime from, DateTime to}) range;
+
+  /// 非「月」粒度：只做**合计**对照（上一个等长区间）。
+  /// 不做分类逐项对比 —— 周报里列 6 个分类的上周对比信息量太低，卡片会很高。
+  Widget _rangeCompare(BuildContext context, WidgetRef ref) {
+    final days = range.to.difference(range.from).inDays + 1;
+    final prevTo = range.from.subtract(const Duration(days: 1));
+    final prevFrom = prevTo.subtract(Duration(days: days - 1));
+    final curAsync = ref.watch(insightTotalsForProvider(range));
+    final prevAsync =
+        ref.watch(insightTotalsForProvider((from: prevFrom, to: prevTo)));
+    final cur = curAsync.valueOrNull;
+    final prev = prevAsync.valueOrNull;
+    final label = switch (scope) {
+      InsightScope.week => '与上周比',
+      InsightScope.year => '与去年比',
+      _ => '与上一个 $days 天比',
+    };
+    final curCents = cur == null
+        ? 0
+        : (type == InsightType.income ? cur.incomeCents : cur.expenseCents);
+    final prevCents = prev == null
+        ? 0
+        : (type == InsightType.income ? prev.incomeCents : prev.expenseCents);
+    final delta = _deltaText(curCents, prevCents);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(label,
+                style: TextStyle(fontSize: 12, color: Palette.inkSoft(context))),
+            const Spacer(),
+            Text('$days 天 vs 前 $days 天',
+                style:
+                    TextStyle(fontSize: 10.5, color: Palette.inkFaint(context))),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Text(hide ? '****' : '$symbol${centsToText(curCents)}',
+                style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    color: Palette.ink(context),
+                    fontFeatures: const [FontFeature.tabularFigures()])),
+            const SizedBox(width: 8),
+            Text(hide ? '****' : '上一段 $symbol${centsToText(prevCents)}',
+                style:
+                    TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
+            const Spacer(),
+            if (delta != null) _deltaChip(context, delta),
+          ],
+        ),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    if (scope != InsightScope.month) return _rangeCompare(context, ref);
+
     final cur = ref.watch(insightRankProvider).valueOrNull ?? const <RankNode>[];
     final prev =
         ref.watch(insightPrevRankProvider).valueOrNull ?? const <int?, int>{};

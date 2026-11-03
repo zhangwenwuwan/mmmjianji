@@ -15,10 +15,23 @@ void main() {
     databaseFactory = databaseFactoryFfi;
   });
 
-  setUp(() {
+  setUp(() async {
     // 必须显式标记已引导：RootGate 读不到这个键就会停在欢迎页，
     // 那底下「找得到明细 tab」的断言必然失败。
     SharedPreferences.setMockInitialValues({'onboarded_v1': true});
+
+    // 2026-10-28 加：这里原来**不删库**，用的是 .dart_tool 里上一次跑测试残留的库。
+    // 首页改成「首帧就建树」之后，残留的流水会让首页在启动那一帧就跑一批重查询
+    // （月序列 / 排名 / 近 6 个月净值），settle 的轮数不够收尾 →
+    // "A Timer is still pending even after the widget tree was disposed"。
+    // 这个测试单独跑时库是空的，所以一直没暴露；串行全量才炸。
+    final dir = await databaseFactory.getDatabasesPath();
+    try {
+      await databaseFactory.deleteDatabase('$dir/jianji_ledger.db');
+    } catch (_) {
+      // 删不掉就沿用旧库：断言只看「首帧能渲染 + 四个 tab 能建树」，
+      // 有数据最多多花几轮查询。
+    }
   });
 
   /// 让真实的文件/数据库异步跑完（pump 的假时钟推不动这些）。
@@ -33,13 +46,13 @@ void main() {
     }
   }
 
-  /// 走完真实启动链路：读偏好 → 启动幕（呼吸 600ms + 张开 700ms）。
+  /// 走完真实启动链路：读偏好 → 启动幕（呼吸 180ms + 张开 420ms）。
   ///
   /// 这段路径上有两类等待，混着处理会卡住：
   /// - SharedPreferences 是平台通道，假时钟推不动它 → 只能用 runAsync 真的等。
   /// - 幕的呼吸/张开是动画，得 pump(时长) 把假时钟推过去，
-  ///   两段加起来 1300ms（见 ui/splash_page.dart 的 kBootBreath / kBootOpen），
-  ///   推不够就停在"幕还没开、首页还没插进来"的半路。
+  ///   两段加起来 600ms（见 ui/splash_page.dart 的 kBootBreath / kBootOpen），
+  ///   推不够就停在"幕还没开完"的半路。
   /// 所以这里两边都推：runAsync 走真实时间，pump(时长) 推进画。
   Future<void> boot(WidgetTester tester) async {
     for (var i = 0; i < 10; i++) {
@@ -47,11 +60,11 @@ void main() {
           () => Future<void>.delayed(const Duration(milliseconds: 80)));
       await tester.pump(const Duration(milliseconds: 80));
     }
-    // 幕：呼吸 600 + 张开 700，留足余量
-    for (var i = 0; i < 10; i++) {
+    // 幕：呼吸 180 + 张开 420，留足余量
+    for (var i = 0; i < 8; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 200));
   }
 
   testWidgets('首帧立刻渲染，不等任何插件', (tester) async {
@@ -61,17 +74,22 @@ void main() {
     expect(tester.takeException(), isNull, reason: '首帧 build 不应抛异常');
     // 首帧是启动幕——它本身就是「不 await 任何插件」的画面，
     // 所以这一帧能出来，就说明启动路径上没有任何 await 卡着。
-    // 首页要等幕开始张开才插进来（Key 见 main.dart 的 boot-curtain）。
+    // 2026-10-28 起首页是**首帧就垫在幕底下**的（不再等幕张开才插），
+    // 所以两个 key 这一帧都在。
     expect(find.byKey(const ValueKey('boot-curtain')), findsOneWidget);
-    expect(find.byKey(const ValueKey('boot-target')), findsNothing);
+    expect(find.byKey(const ValueKey('boot-target')), findsOneWidget);
 
     await boot(tester);
+    // 再 settle 一轮：首页从「幕张开」那一刻起才真正开始建数据，
+    // Reveal 的 Future.delayed（每块最多 360ms）和 sqflite 的事务定时器
+    // 都还挂着，不收尾就会报 "A Timer is still pending"。
+    await settle(tester);
     expect(tester.takeException(), isNull, reason: '进主界面不应抛异常');
     expect(find.text('首页'), findsWidgets);
     // 幕只演一次，演完必须摘掉。
-    // ⚠️ 这条是在钉 Stack 的 key：首页是幕开始张开时才插进来的，
-    // 两个 child 没各自带 key 的话，Flutter 按下标配对会把幕的 State 顶掉重建，
-    // 呼吸从头再来一轮 —— 表现是启动动画永远差一拍、总时长翻倍。
+    // ⚠️ 这条是在钉 Stack 的 key：幕摘掉之后首页在 children 里从下标 1 变成 0，
+    // 两个 child 没各自带 key 的话，Flutter 按下标配对会以为「下标 0 从幕变成了首页」，
+    // 直接把首页的 State 扔掉重建 —— 滚动位置和已加载的数据全丢（等于白启动一次）。
     expect(find.byKey(const ValueKey('boot-curtain')), findsNothing);
   });
 

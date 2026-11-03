@@ -9,6 +9,7 @@ import '../core/aggregate.dart';
 import '../core/home_modules.dart';
 import '../core/rules.dart';
 import '../data/store.dart';
+import '../services/app_log.dart';
 import '../services/icon_service.dart';
 import '../state/ledger_state.dart';
 import '../state/settings.dart';
@@ -22,10 +23,19 @@ import 'wheel_date_picker.dart';
 import 'export_page.dart';
 import 'glass.dart';
 import 'illustrations.dart';
+import 'month_summary_page.dart';
 import 'motion.dart';
 import 'pull_to_add.dart';
 import 'search_page.dart';
 import 'theme.dart';
+
+/// 首页（流水列表）的滚动控制器：由 [LedgerPage] 建，由底栏「再点一次回顶部」消费。
+///
+/// 为什么是模块级变量而不是 provider：Riverpod **不允许在 initState/dispose 里
+/// 修改别的 provider**（会抛 "Tried to modify a provider"），而控制器恰好要在
+/// 这两个时机挂上/摘下。首页全 App 只有一个实例，用单点变量是安全的，
+/// 消费方（底栏）每次都判 `hasClients`。
+ScrollController? homeScrollController;
 
 /// 账目：按月看流水，按日分组。
 ///
@@ -48,6 +58,25 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
   bool _batch = false;
   final Set<int> _selected = <int>{};
 
+  /// 首页滚动控制器：挂到 CustomScrollView 上，同时放进 [homeScrollProvider]，
+  /// 让底栏「再点一次首页」能把它滚回顶部。
+  ScrollController? _scroll;
+
+  @override
+  void initState() {
+    super.initState();
+    _scroll = ScrollController();
+    homeScrollController = _scroll;
+  }
+
+  @override
+  void dispose() {
+    if (homeScrollController == _scroll) homeScrollController = null;
+    _scroll?.dispose();
+    _scroll = null;
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final month = ref.watch(monthProvider);
@@ -56,6 +85,8 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
     final bookAsync = ref.watch(activeBookProvider);
     // 用「本期可用」（含上月结转），否则顶部"还能花多少"会和预算页对不上
     final budget = ref.watch(effectiveBudgetProvider).valueOrNull ?? 0;
+    // 本月预算口径已花（和预算页同口径），用于首页超支提示。
+    final budgetSpent = ref.watch(budgetSpentProvider).valueOrNull ?? 0;
     final totals = totalsAsync.valueOrNull ?? (incomeCents: 0, expenseCents: 0);
     final settings = ref.watch(settingsProvider);
     final coverPath = settings.coverPath;
@@ -89,8 +120,12 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
     final currencyOf = {for (final p in pocketsForRate) p.id: p.currency};
     final baseCurrency =
         ref.watch(activeBookProvider).valueOrNull?.baseCurrency ?? 'CNY';
+    // 日期头「当日收支净额」和日历页 dailyTotalsProvider 是同一个统计口径，
+    // 都必须扣掉 AA 他人承担部分，否则同一天在两处显示的支出对不上。
+    // 注意：下面每条流水行仍显示 amountCents 全额（那是实际垫付的流水），
+    // 差额靠行上的「AA 代付」标记解释。
     int toBaseOf(Entry e) => toBaseCents(
-          e.amountCents,
+          e.statsCents,
           e.currency ?? currencyOf[e.pocketId] ?? baseCurrency,
           baseCurrency,
           rates,
@@ -104,6 +139,7 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
     final Widget body = PullToAdd(
       onTrigger: () => openEntryEditor(context, ref),
       child: CustomScrollView(
+        controller: _scroll,
         // 内容不够一屏时也要能下拉，否则短列表在顶部根本拉不动、触发不了记账
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: [
@@ -173,7 +209,9 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
               // 冷启动时这几块按 [BootRevealItem] 的序号依次浮上来：
               // 顶栏 → 本月概览 → 各模块 → 流水。序号让 _stagger 排。
               SliverPadding(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 88),
+                // 底部 88（给悬浮胶囊让位）不在这里，挪到流水之后 ——
+                // 分组改成 sliver 之后它们不再共用同一个 SliverPadding。
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
                 sliver: SliverList(
                   delegate: SliverChildListDelegate([
                     // 「本月概览」固定钉在最上面：不再参与模块顺序与显隐。
@@ -197,26 +235,35 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
                         month: month,
                         totals: totals,
                         budget: budget,
+                        spent: budgetSpent,
                       ),
                       2,
                     ),
                     if (visibleNow.isEmpty)
                       BootRevealItem(
                         index: 6,
-                        child: _EmptyHome(
-                          onAction: () => openEntryEditor(context, ref),
-                        ),
-                      )
-                    else
-                      // 流水从模块后面接着排（序号封顶见
-                      // BootRevealTimeline.maxIndex，20 组的月份也不会排到天边）。
-                      ..._stagger(
-                        _buildGroups(context, visibleNow, toBaseOf),
-                        2 + settings.modulesVisible.length,
+                        // 空态后面要留底部空白（滚动区结束），否则最后一行贴着屏幕底边
+                        // 开了「隐藏转账」且这个月只有转账时，不能说「还没有记录」
+                        // （明明记了 3 笔，还引导他再去记一笔）。
+                        child: entriesNow.isNotEmpty
+                            ? _EmptyHome(
+                                title: '这个月只有转账',
+                                subtitle: '转账已在设置里隐藏，没别的流水可显示',
+                                icon: Icons.swap_horiz_rounded,
+                                onAction: () => openEntryEditor(context, ref),
+                              )
+                            : _EmptyHome(
+                                onAction: () => openEntryEditor(context, ref),
+                              ),
                       ),
                   ]),
                 ),
               ),
+              // 流水（分组自带日期吸顶头，所以是独立的 sliver，不再塞进上面的列表）
+              if (visibleNow.isNotEmpty)
+                ..._buildGroups(context, visibleNow, toBaseOf),
+              // 底部 88 给悬浮胶囊让位：最后一条流水不能被压住且滚不出来
+              const SliverToBoxAdapter(child: SizedBox(height: 88)),
             ],
           ),
         ],
@@ -401,6 +448,7 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
     required DateTime month,
     required ({int incomeCents, int expenseCents}) totals,
     required int budget,
+    required int spent,
   }) {
     final out = <Widget>[];
     for (final m in modules) {
@@ -414,7 +462,7 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
         case HomeModule.safeToSpend:
           out.add(_SafeToSpendCard(budgetCents: budget, totals: totals));
         case HomeModule.budgetHint:
-          out.add(_BudgetHintCard(budgetCents: budget));
+          out.add(_BudgetHintCard(budgetCents: budget, spentCents: spent));
         case HomeModule.backupHint:
           out.add(const _BackupHintCard());
         case HomeModule.lastMonth:
@@ -459,6 +507,9 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
             ]
           : entries;
 
+  /// 按日分组的流水。返回的是 **sliver**（不是普通 widget）：
+  /// 日期头是 `SliverPersistentHeader(pinned: true)`，滚到月中时它停在顶栏下面，
+  /// 否则屏幕上没有任何地方告诉你现在看的是几号。
   List<Widget> _buildGroups(
       BuildContext context, List<Entry> entries, int Function(Entry) toBase) {
     final groups = <String, List<Entry>>{};
@@ -478,64 +529,150 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
         return sum + (e.flow == 'in' ? cents : -cents);
       });
       final delay = Duration(milliseconds: (40 * gi).clamp(0, 240));
-      widgets.add(Reveal(
-        delay: delay,
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(top: 6, bottom: 6, left: 2),
-              child: Row(
-                children: [
-                  Text('${day.month} 月 ${day.day} 日',
-                      style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: Palette.inkSoft(context))),
-                  Text(' · ${_weekday(day)}',
-                      style: TextStyle(
-                          fontSize: 12, color: Palette.inkFaint(context))),
-                  const Spacer(),
-                  MoneyText(net,
-                      flow: net >= 0 ? 'in' : 'out',
-                      // 与下面流水行一致：列表里的数字不带币种符号。
-                      // 顶部「本月支出」大卡保留 ¥（那是主角汇总）。
-                      showSymbol: false,
-                      style: TextStyle(
-                          fontSize: 12,
-                          color: Palette.inkFaint(context),
-                          fontFeatures: const [FontFeature.tabularFigures()])),
-                ],
-              ),
-            ),
-            Panel(
+      // 日期头吸顶（pinned）。多个 pinned header 会依次堆叠，
+      // 所以它停在首页顶栏（_LedgerHeader）的正下方，不会盖住它。
+      widgets.add(SliverPersistentHeader(
+        pinned: true,
+        delegate: _DayHeaderDelegate(day: day, net: net),
+      ));
+      widgets.add(SliverPadding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+        sliver: SliverToBoxAdapter(
+          child: Reveal(
+            delay: delay,
+            child: Panel(
               padding: EdgeInsets.zero,
               child: Column(
                 children: [
                   for (var i = 0; i < list.length; i++) ...[
                     if (i > 0) const Divider(height: 1, indent: 56),
-                    EntryRow(
-                      entry: list[i],
-                      // 非 null = 显示勾选框
-                      selected:
-                          _batch ? _selected.contains(list[i].id) : null,
-                      onLongPress: () => _toggleEntry(list[i]),
-                      // 批量模式下点行 = 勾选/取消；否则进编辑页（EntryRow 内部默认）
-                      onTap: _batch ? () => _toggleEntry(list[i]) : null,
-                    ),
+                    // 非批量模式：左滑直接删除（记错一笔金额是最高频的纠错）。
+                    // 以前要走「点行 → 编辑页 → 点删除 → 确认」四步。
+                    // 批量模式不套 Dismissible：那会儿点行是勾选，横向拖动会和它打架。
+                    if (_batch)
+                      EntryRow(
+                        key: ValueKey('entry-${list[i].id}'),
+                        entry: list[i],
+                        // 非 null = 显示勾选框
+                        selected: _selected.contains(list[i].id),
+                        onLongPress: () => _toggleEntry(list[i]),
+                        onTap: () => _toggleEntry(list[i]),
+                      )
+                    else
+                      Dismissible(
+                        key: ValueKey('swipe-${list[i].id}'),
+                        direction: DismissDirection.endToStart,
+                        background: Container(
+                          alignment: Alignment.centerRight,
+                          padding: const EdgeInsets.only(right: 18),
+                          color: Palette.expense.withValues(alpha: 0.10),
+                          child: Icon(Icons.delete_outline,
+                              size: 18, color: Palette.expense),
+                        ),
+                        confirmDismiss: (_) =>
+                            _swipeDelete(context, list[i].id),
+                        onDismissed: (_) {},
+                        child: EntryRow(
+                          key: ValueKey('entry-${list[i].id}'),
+                          entry: list[i],
+                          onLongPress: () => _toggleEntry(list[i]),
+                        ),
+                      ),
                   ],
                 ],
               ),
             ),
-            const SizedBox(height: 8),
-          ],
+          ),
         ),
       ));
+      widgets.add(const SliverToBoxAdapter(child: SizedBox(height: 8)));
     }
     return widgets;
   }
 
+  /// 左滑删除：软删除 + 5 秒可撤销（和编辑页删除同一条路径、同一套文案）。
+  ///
+  /// 返回 true 才真正把这一行滑走。删除失败时返回 false，行会弹回来，
+  /// 不会出现"行没了但数据还在"的幻觉。
+  Future<bool> _swipeDelete(BuildContext context, int entryId) async {
+    try {
+      final store = await ref.read(storeProvider.future);
+      await store.softDeleteEntries([entryId]);
+      bumpRevision(ref);
+      if (context.mounted) _offerUndoDelete(context, ref, entryId);
+      return true;
+    } catch (e) {
+      AppLog.error('ledger', '左滑删除失败', e);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .toast('删除失败，详情见「我的 → 数据管理 → 日志中心」');
+      }
+      return false;
+    }
+  }
+
   static String _weekday(DateTime d) =>
       const ['周一', '周二', '周三', '周四', '周五', '周六', '周日'][d.weekday - 1];
+}
+
+/// 吸顶的日期头（「10 月 3 日 · 周五　-120」）。
+///
+/// 为什么必须钉住：首页顶栏 2026-10-26 起瘦成一行（账本 chip + 日历 + 搜索），
+/// 年月条被删了，往下滚两屏之后屏幕上没有任何地方写着"现在看的是几号"。
+///
+/// ⚠️ 背景必须**不透明**：pinned header 是浮在内容上的，半透明会让流水从底下穿过去。
+/// 正在被下一组顶掉（overlapsContent）时补一条 hairline 底边，边界才清楚。
+class _DayHeaderDelegate extends SliverPersistentHeaderDelegate {
+  const _DayHeaderDelegate({required this.day, required this.net});
+
+  final DateTime day;
+  final int net;
+
+  static const double _height = 30;
+
+  @override
+  double get minExtent => _height;
+
+  @override
+  double get maxExtent => _height;
+
+  @override
+  Widget build(
+      BuildContext context, double shrinkOffset, bool overlapsContent) {
+    return Container(
+      color: Palette.paper(context),
+      decoration: overlapsContent
+          ? BoxDecoration(
+              border: Border(
+                  bottom: BorderSide(color: Palette.hairline(context))))
+          : null,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      alignment: Alignment.centerLeft,
+      child: Row(
+        children: [
+          Text('${day.month} 月 ${day.day} 日',
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Palette.inkSoft(context))),
+          Text(' · ${_LedgerPageState._weekday(day)}',
+              style: TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
+          const Spacer(),
+          MoneyText(net,
+              flow: net >= 0 ? 'in' : 'out',
+              showSymbol: false,
+              style: TextStyle(
+                  fontSize: 12,
+                  color: Palette.inkFaint(context),
+                  fontFeatures: const [FontFeature.tabularFigures()])),
+        ],
+      ),
+    );
+  }
+
+  @override
+  bool shouldRebuild(covariant _DayHeaderDelegate oldDelegate) =>
+      oldDelegate.day != day || oldDelegate.net != net;
 }
 
 /// 年度账单提醒卡（对齐原版 home_page 的年度报告提醒）：
@@ -861,7 +998,11 @@ class _LedgerHeader extends SliverPersistentHeaderDelegate {
 }
 
 
-/// 上月报告卡：看本月时提示上月收支，点「查看」直接切到上个月。
+/// 上月报告卡：看本月时提示上月收支，点进去看**该月报告**。
+///
+/// 注意：不能在这里改 `monthProvider` 翻月。首页是「只看本月」的，
+/// `LedgerPage.build` 一旦发现 month != 当月就会立刻归位（第 107 行），
+/// 点了等于没点（2026-11-02 用户报的 bug）。改成 push 独立页。
 class _LastMonthCard extends ConsumerWidget {
   const _LastMonthCard({required this.month});
 
@@ -874,21 +1015,33 @@ class _LastMonthCard extends ConsumerWidget {
     if (month.year != now.year || month.month != now.month) {
       return const SizedBox.shrink();
     }
-    final series = ref.watch(monthSeriesProvider(2)).valueOrNull;
+    final series =
+        ref.watch(monthSeriesProvider((count: 2, anchor: month))).valueOrNull;
     if (series == null || series.length < 2) return const SizedBox.shrink();
     final prev = series[0];
     if (prev.incomeCents == 0 && prev.expenseCents == 0) {
       return const SizedBox.shrink();
     }
     final prevMonth = DateTime(month.year, month.month - 1);
+    // 看过就不再提：token 用**被归档的那个月**，所以同一个月只会出现一次。
+    // （不走"本月内不再显示"，因为这张卡讲的是别的月份的事，看过就结束了。）
+    final token = AppSettings.hintToken('archive', prevMonth);
+    if (ref.watch(settingsProvider).isHintDismissed(token)) {
+      return const SizedBox.shrink();
+    }
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Reveal(
         // 整卡可点：点哪儿都翻到上个月（原来只有「查看」两个小字能点）
         child: PressScale(
           scale: 0.98,
-          onTap: () => ref.read(monthProvider.notifier).state =
-              shiftMonth(month, -1),
+          // 跳到独立的「该月报告」页：不改 monthProvider，避免被首页归位抹掉。
+          onTap: () {
+            // 先记"看过了"再跳：从报告页返回时首页已经重建，卡片自然不再出现。
+            ref.read(settingsProvider.notifier).dismissHint(token);
+            Navigator.of(context).push(
+                AppPageRoute(page: MonthSummaryPage(month: prevMonth)));
+          },
           child: Panel(
             child: Row(
               children: [
@@ -924,21 +1077,113 @@ class _LastMonthCard extends ConsumerWidget {
 }
 
 /// 预算引导卡：没设预算时给一个直达入口，可关掉。
-class _BudgetHintCard extends StatefulWidget {
-  const _BudgetHintCard({required this.budgetCents});
+class _BudgetHintCard extends ConsumerStatefulWidget {
+  const _BudgetHintCard({required this.budgetCents, required this.spentCents});
 
   final int budgetCents;
+  final int spentCents;
 
   @override
-  State<_BudgetHintCard> createState() => _BudgetHintCardState();
+  ConsumerState<_BudgetHintCard> createState() => _BudgetHintCardState();
 }
 
-class _BudgetHintCardState extends State<_BudgetHintCard> {
+class _BudgetHintCardState extends ConsumerState<_BudgetHintCard> {
   bool _dismissed = false;
 
   @override
   Widget build(BuildContext context) {
-    if (widget.budgetCents > 0 || _dismissed) return const SizedBox.shrink();
+    if (_dismissed) return const SizedBox.shrink();
+    final budget = widget.budgetCents;
+    final settings = ref.watch(settingsProvider);
+    final symbol = settings.symbol;
+
+    // 「点过就不再烦」：token 按月，本月内不再出现，下个月重新提醒一次。
+    // 以前这张卡只能本次会话关，冷启动又原样弹回来 —— 用户点了、进了预算页、
+    // 也没设预算，下次开机还是那条，久了就当装饰看了。
+    //
+    // ⚠️ 引导态和预警态**必须用不同的 token**：用户把「设个月度预算」关掉之后
+    // 很可能就顺手去设了预算，若共用一个 token，这个月真超支了也再也看不到 ——
+    // 等于把最该响的警报静音了。关掉的是「劝」，不是「报」。
+    final month = ref.watch(monthProvider);
+    final guideToken = AppSettings.hintToken('budget', month);
+    final warnToken = AppSettings.hintToken('budgetwarn', month);
+
+    // 分类超支：总额可能还宽裕，但某个分类已经爆了 —— 这才是最该提醒的情形。
+    // 之前这张卡只算总预算，分类超支在首页完全看不出来。
+    final overBuckets = [
+      for (final b in ref.watch(bucketBudgetStatusProvider).valueOrNull ??
+          const <BucketBudgetStatus>[])
+        if (b.spentCents > b.budgetCents) b,
+    ];
+
+    // ① 没设总预算 → 引导卡（可关）；但若已有分类超支，优先报超支。
+    if (budget <= 0) {
+      if (overBuckets.isNotEmpty) {
+        return _overShell(context, overBuckets, symbol, warnToken);
+      }
+      if (settings.isHintDismissed(guideToken)) {
+        return const SizedBox.shrink();
+      }
+      return _shell(
+        context,
+        token: guideToken,
+        leading: Icon(Icons.pie_chart_outline,
+            size: 18, color: Palette.brand(context)),
+        child: const Text('设个月度预算，超支前会提醒你',
+            style: TextStyle(fontSize: 13)),
+      );
+    }
+    // ② 设了预算：只在「快用完 / 已超支」时露出来，平时不占屏。
+    final spent = widget.spentCents;
+    final ratio = budget == 0 ? 0.0 : spent / budget;
+    if (ratio < 0.8) {
+      if (overBuckets.isNotEmpty) {
+        return _overShell(context, overBuckets, symbol, warnToken);
+      }
+      return const SizedBox.shrink();
+    }
+    if (settings.isHintDismissed(warnToken)) return const SizedBox.shrink();
+    final over = spent >= budget;
+    final color = over ? Palette.expense : const Color(0xFFB26A00);
+    final pct = (ratio * 100).round();
+    final text = over
+        ? '本月预算已超支 $symbol${centsToText(spent - budget)}'
+        : '本月预算已用 $pct%，还能花 $symbol${centsToText(budget - spent)}';
+    return _shell(
+      context,
+      token: warnToken,
+      leading: Icon(
+          over ? Icons.error_outline : Icons.warning_amber_rounded,
+          size: 18,
+          color: color),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(text,
+              style: TextStyle(
+                  fontSize: 13, fontWeight: FontWeight.w600, color: color)),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: ratio.clamp(0.0, 1.0),
+              minHeight: 5,
+              color: color,
+              backgroundColor: color.withValues(alpha: 0.15),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 统一的提示条外壳：整卡可点进预算页；右侧 ✕ 与「点进去」都记一次本月已提示。
+  Widget _shell(BuildContext context,
+      {required Widget leading,
+      required Widget child,
+      required String token}) {
+    void dismiss() =>
+        ref.read(settingsProvider.notifier).dismissHint(token);
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Reveal(
@@ -947,23 +1192,24 @@ class _BudgetHintCardState extends State<_BudgetHintCard> {
         // 48 的点击区，会先吃掉落在它身上的点击，不会误跳预算页）。
         child: PressScale(
           scale: 0.98,
-          onTap: () => Navigator.of(context)
-              .push(AppPageRoute(page: const BudgetPage())),
+          onTap: () {
+            dismiss(); // 先记账再跳，返回时这张卡就已经不在了
+            Navigator.of(context).push(AppPageRoute(page: const BudgetPage()));
+          },
           child: Panel(
             child: Row(
               children: [
-                Icon(Icons.pie_chart_outline,
-                    size: 18, color: Palette.brand(context)),
+                leading,
                 const SizedBox(width: 10),
-                const Expanded(
-                  child: Text('设个月度预算，超支前会提醒你',
-                      style: TextStyle(fontSize: 13)),
-                ),
+                Expanded(child: child),
                 Icon(Icons.chevron_right,
                     size: 16, color: Palette.inkFaint(context)),
                 IconButton(
-                  tooltip: '不再提示',
-                  onPressed: () => setState(() => _dismissed = true),
+                  tooltip: '本月不再提示',
+                  onPressed: () {
+                    dismiss();
+                    setState(() => _dismissed = true); // 立刻消失，不等重建
+                  },
                   icon: Icon(Icons.close,
                       size: 18, color: Palette.inkFaint(context)),
                 ),
@@ -974,14 +1220,40 @@ class _BudgetHintCardState extends State<_BudgetHintCard> {
       ),
     );
   }
+
+  /// 分类超支提示：只说「哪个分类超了多少」，不画进度条——总预算可能还没到线，
+  /// 再堆一条进度条反而让人以为总额也危险了。
+  Widget _overShell(BuildContext context, List<BucketBudgetStatus> items,
+      String symbol, String token) {
+    final head = items.length == 1
+        ? '「${items.first.title}」已超预算 '
+            '$symbol${centsToText(items.first.spentCents - items.first.budgetCents)}'
+        : '${items.length} 个分类超预算：'
+            '${items.take(2).map((b) => '${b.title} $symbol${centsToText(b.spentCents - b.budgetCents)}').join('、')}'
+            '${items.length > 2 ? ' 等' : ''}';
+    return _shell(
+      context,
+      token: token,
+      leading:
+          Icon(Icons.error_outline, size: 18, color: Palette.expense),
+      child: Text(head,
+          style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: Palette.expense)),
+    );
+  }
 }
 
 /// 备份提醒：从没导出过 / 太久没导出，就在首页给一条提示条。
 ///
 /// 阈值取 7 天是按「丢数据的容忍窗口」拍的：超过一周没备份，
 /// 手机一坏丢的就是一周的账。刚备份过就完全不出现 —— 天天弹等于没有，
-/// 用户会把它当成装饰而不是提醒。本次会话可以关掉（不落盘：
-/// 下个冷启动该提醒还是提醒，因为它本来就不是一次性的事）。
+/// 用户会把它当成装饰而不是提醒。
+///
+/// 关掉后**本月不再出现**（落盘，`backup:YYYY-MM`）：以前只在本次会话关，
+/// 冷启动又原样弹回来，用户点过、也进过导出页，下次开机还是那条。
+/// 下个月如果还没备份，会重新提醒一次 —— 备份这件事不该永久静音。
 class _BackupHintCard extends ConsumerStatefulWidget {
   const _BackupHintCard();
 
@@ -995,7 +1267,8 @@ class _BackupHintCardState extends ConsumerState<_BackupHintCard> {
 
   @override
   Widget build(BuildContext context) {
-    final days = ref.watch(settingsProvider.select((s) => s.daysSinceBackup));
+    final settings = ref.watch(settingsProvider);
+    final days = settings.daysSinceBackup;
     final String text;
     if (days == null) {
       text = '还没导出过备份，数据只存在这台手机上';
@@ -1006,7 +1279,11 @@ class _BackupHintCardState extends ConsumerState<_BackupHintCard> {
     } else {
       return const SizedBox.shrink();
     }
-    if (_dismissed) return const SizedBox.shrink();
+    final hintToken = AppSettings.hintToken('backup', DateTime.now());
+    if (_dismissed || settings.isHintDismissed(hintToken)) {
+      return const SizedBox.shrink();
+    }
+    void dismiss() => ref.read(settingsProvider.notifier).dismissHint(hintToken);
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Reveal(
@@ -1014,8 +1291,11 @@ class _BackupHintCardState extends ConsumerState<_BackupHintCard> {
         // 整卡可点（同上）
         child: PressScale(
           scale: 0.98,
-          onTap: () => Navigator.of(context)
-              .push(AppPageRoute(page: const ExportPage())),
+          onTap: () {
+            dismiss(); // 先记账再跳，返回时这张卡就已经不在了
+            Navigator.of(context)
+                .push(AppPageRoute(page: const ExportPage()));
+          },
           child: Panel(
             child: Row(
               children: [
@@ -1027,8 +1307,11 @@ class _BackupHintCardState extends ConsumerState<_BackupHintCard> {
                 Icon(Icons.chevron_right,
                     size: 16, color: Palette.inkFaint(context)),
                 IconButton(
-                  tooltip: '本次不再提示',
-                  onPressed: () => setState(() => _dismissed = true),
+                  tooltip: '本月不再提示',
+                  onPressed: () {
+                    dismiss();
+                    setState(() => _dismissed = true); // 立刻消失，不等重建
+                  },
                   icon: Icon(Icons.close,
                       size: 18, color: Palette.inkFaint(context)),
                 ),
@@ -1246,24 +1529,12 @@ class EntryRow extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // 必须含归档分类：归档 ≠ 删除，否则一归档全部旧账都显示「未分类」
-    final allBuckets =
-        ref.watch(allBucketsProvider).valueOrNull ?? const <Bucket>[];
-    Bucket? bucket;
-    for (final b in allBuckets) {
-      if (b.id == entry.bucketId) {
-        bucket = b;
-        break;
-      }
-    }
-    final allPockets =
-        ref.watch(allPocketsProvider).valueOrNull ?? const <Pocket>[];
-    Pocket? fromPocket;
-    Pocket? toPocket;
-    for (final p in allPockets) {
-      if (p.id == entry.pocketId) fromPocket = p;
-      if (p.id == entry.toPocketId) toPocket = p;
-    }
+    // 必须含归档分类：归档 ≠ 删除，否则一归档全部旧账都显示「未分类」。
+    // 走 id → 对象 的索引（见 bucketByIdProvider），不再每行线性扫一遍。
+    final bucket = ref.watch(bucketByIdProvider)[entry.bucketId];
+    final pocketMap = ref.watch(pocketByIdProvider);
+    final fromPocket = pocketMap[entry.pocketId];
+    final toPocket = pocketMap[entry.toPocketId];
     final base =
         ref.watch(activeBookProvider).valueOrNull?.baseCurrency ?? 'CNY';
     // 币种后缀要优先用「本笔币种」，否则在人民币账户上记一笔美元，
@@ -1297,6 +1568,12 @@ class EntryRow extends ConsumerWidget {
     final subtitleText = [
       if (accountLabel != null && accountLabel.trim().isNotEmpty)
         accountLabel.trim(),
+      // AA 分摊：欠款人 + 他承担的金额写进副标题（主金额仍是实际垫付全额），
+      // 用户一眼能解释「日期头净额为什么比这一行小」。
+      if (entry.hasSplit &&
+          (entry.aaCounterparty ?? '').trim().isNotEmpty)
+        (entry.aaCounterparty!).trim(),
+      if (entry.hasSplit) 'AA 代付 ${centsToText(entry.splitCents)}',
       if (extra != null && extra.isNotEmpty) extra,
     ].join(' · ');
 
@@ -1323,7 +1600,9 @@ class EntryRow extends ConsumerWidget {
               const SizedBox(width: 10),
             ],
             // 自定义图片图标：铺满正方形、不要灰底（对齐参考图）。
-            // emoji / 默认图标仍放浅灰圆角盒里 —— 单个 emoji 悬空更难看。
+            // emoji / 默认图标放「分类固定色 14%」的圆角盒 ——
+            // 2026-10-28 之前是无彩灰底，一屏全是灰方块，等于没有颜色。
+            // 转账没有分类，用中性灰，否则「转账」会跟着某个分类的颜色跑。
             if (IconService.isImage(glyph))
               SizedBox(
                 width: 40,
@@ -1336,7 +1615,11 @@ class EntryRow extends ConsumerWidget {
                 height: 40,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: Palette.hairline(context).withValues(alpha: 0.6),
+                  color: (isTransfer
+                          ? Palette.inkFaint(context)
+                          : Palette.categoryColor(
+                              context, bucket?.title ?? '未分类'))
+                      .withValues(alpha: 0.14),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: AppGlyph(glyph, size: 18),
@@ -1357,6 +1640,10 @@ class EntryRow extends ConsumerWidget {
                                 fontWeight: FontWeight.w500,
                                 color: Palette.ink(context))),
                       ),
+                      if (entry.hasSplit) ...[
+                        const SizedBox(width: 6),
+                        _badge(context, 'AA', done: true),
+                      ],
                       if (entry.reimburse == 1) ...[
                         const SizedBox(width: 6),
                         _badge(context, '报销中'),
@@ -1494,8 +1781,21 @@ class _HomeHeroCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final settings = ref.watch(settingsProvider);
     final net = incomeCents - expenseCents;
+    // 2026-10-28：汇总卡加一层薄荷渐变底。
+    // 原来它和下面的流水卡一样是纯白，整页只有"深绿按钮 + 红色金额"两个重点，
+    // 最该有分量的汇总反而最轻。渐变从薄荷到近卡色（深色模式同理），
+    // 不抢文字，但一眼能分出"这是汇总、下面是流水"。
+    final mint = Palette.mint(context);
     return Panel(
       padding: EdgeInsets.zero,
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [
+          mint,
+          Color.lerp(mint, Palette.card(context), 0.55)!,
+        ],
+      ),
       child: HillCardBackground(
         opacity: 0.07,
         child: Padding(
@@ -1597,19 +1897,23 @@ class _AddEntryButton extends StatelessWidget {
         width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 11),
         decoration: BoxDecoration(
-          color: brand,
+          // 2026-10-28：从深绿实心降级成「薄荷底 + 品牌色字 + 细边」。
+          // 原来它是全页最重的一块（比金额还抢眼），一进首页眼睛先被它拽走；
+          // 而它只是个入口，不是内容。现在退到"可点但安静"，焦点回到金额和流水。
+          color: brand.withValues(alpha: 0.10),
           borderRadius: BorderRadius.circular(AppRadius.control),
+          border: Border.all(color: brand.withValues(alpha: 0.28)),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.add, color: Colors.white, size: 18),
+            Icon(Icons.add, color: brand, size: 18),
             const SizedBox(width: 6),
             Text('添加一条新记账',
                 style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w700,
-                    color: Colors.white)),
+                    color: brand)),
           ],
         ),
       ),
@@ -1619,9 +1923,19 @@ class _AddEntryButton extends StatelessWidget {
 
 /// 首页空状态：线描插画 + 引导（替代原来的图标型 EmptyView）。
 class _EmptyHome extends StatelessWidget {
-  const _EmptyHome({required this.onAction});
+  const _EmptyHome({
+    required this.onAction,
+    this.title = '这个月还没有记录',
+    this.subtitle = '记一笔，看看钱花在哪了',
+    this.icon,
+  });
 
   final VoidCallback onAction;
+  final String title;
+  final String subtitle;
+
+  /// 给了就用它替代默认插画（「只有转账」这种场景用插画说不清楚）。
+  final IconData? icon;
 
   @override
   Widget build(BuildContext context) {
@@ -1629,12 +1943,15 @@ class _EmptyHome extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 24),
       child: Column(
         children: [
-          const EmptyIllustration(kind: EmptyKind.paper, size: 76),
+          if (icon == null)
+            const EmptyIllustration(kind: EmptyKind.paper, size: 76)
+          else
+            Icon(icon, size: 48, color: Palette.inkFaint(context)),
           const SizedBox(height: 10),
-          Text('这个月还没有记录',
+          Text(title,
               style: TextStyle(fontSize: 14, color: Palette.inkSoft(context))),
           const SizedBox(height: 4),
-          Text('记一笔，看看钱花在哪了',
+          Text(subtitle,
               style: TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
           const SizedBox(height: 12),
           PressScale(
@@ -1652,7 +1969,7 @@ class _EmptyHome extends StatelessWidget {
                 children: [
                   Icon(Icons.add, size: 16, color: Palette.brand(context)),
                   const SizedBox(width: 4),
-                  Text('记第一笔',
+                  Text(icon == null ? '记第一笔' : '记一笔',
                       style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
