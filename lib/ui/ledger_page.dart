@@ -1625,18 +1625,21 @@ class EntryRow extends ConsumerWidget {
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          if (isLast)
-            Positioned(
-                left: 13.25,
-                top: 0,
-                height: 13,
-                child: Container(width: 1.5, color: line))
-          else
-            Positioned(
-                left: 13.25,
-                top: isFirst ? 13 : 0,
-                bottom: 0,
-                child: Container(width: 1.5, color: line)),
+          // 单笔（既是首行也是末行）不画线：否则节点上方会多出一小截断头线。
+          if (!(isFirst && isLast)) ...[
+            if (isLast)
+              Positioned(
+                  left: 13.25,
+                  top: 0,
+                  height: 13,
+                  child: Container(width: 1.5, color: line))
+            else
+              Positioned(
+                  left: 13.25,
+                  top: isFirst ? 13 : 0,
+                  bottom: 0,
+                  child: Container(width: 1.5, color: line)),
+          ],
           Positioned(
             top: 0,
             left: 1,
@@ -1989,7 +1992,9 @@ class _HomeHeroCard extends ConsumerWidget {
               const SizedBox(height: AppSpace.xs),
               MoneyText(
                 net,
-                flow: net >= 0 ? 'in' : 'out',
+                // 不传 flow：MoneyText 在 flow 非空时会强制用收支色（in=深绿 / out=红），
+                // 而这张卡是品牌色深底，深绿字直接糊进背景。颜色交给 style，
+                // 正负号仍由 moneyLabel 按数值处理（无 flow 时负数照样带负号）。
                 style: TextStyle(
                   fontSize: 28,
                   fontWeight: FontWeight.w700,

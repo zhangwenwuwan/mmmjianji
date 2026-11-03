@@ -89,8 +89,15 @@ class _DailyReceiptPageState extends ConsumerState<DailyReceiptPage> {
     final pockets = await store.allPockets();
     final currencyOf = {for (final p in pockets) p.id: p.currency};
     final pocketName = {for (final p in pockets) p.id: p.displayName};
-    final buckets = await store.buckets(book.id, 'out', includeArchived: true);
-    final bucketName = {for (final b in buckets) b.id: b.title};
+    // 必须同时取「支出 + 收入」两类：收入流水挂在 in 分类下，
+    // 只查 out 会让每一笔收入都掉进「未分类」。
+    final outBuckets =
+        await store.buckets(book.id, 'out', includeArchived: true);
+    final inBuckets =
+        await store.buckets(book.id, 'in', includeArchived: true);
+    final bucketName = {
+      for (final b in [...outBuckets, ...inBuckets]) b.id: b.title,
+    };
     final entries = await store.entriesOfDay(book.id, _day);
 
     var expense = 0;
