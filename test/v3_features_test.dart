@@ -191,10 +191,11 @@ void main() {
         databasePathProvider.overrideWithValue(dbPath),
       ]);
       addTearDown(container.dispose);
-      // 锚定到 2026-10
-      container.read(monthProvider.notifier).state = DateTime(2026, 10);
+      // 锚点由调用方传（不再从 monthProvider 里读）
+      final anchor = DateTime(2026, 10);
 
-      final points = await container.read(monthSeriesProvider(3).future);
+      final points = await container
+          .read(monthSeriesProvider((count: 3, anchor: anchor)).future);
       expect(points.length, 3);
       expect(points.first.month.month, 8);
       expect(points.last.month.month, 10);

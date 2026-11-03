@@ -166,7 +166,7 @@ HeatmapData buildHeatmap(List<Entry> entries,
     if (diff < 0 || diff >= weeks * 7) continue;
     final week = diff ~/ 7;
     final weekday = diff % 7;
-    grid[week][weekday] += e.amountCents;
+    grid[week][weekday] += e.statsCents;
   }
   var maxCents = 0;
   for (final w in grid) {
@@ -231,13 +231,13 @@ MoodStats moodStats(List<Entry> entries) {
   var markedCents = 0;
   for (final e in entries) {
     if (e.mood == 0) continue;
-    markedCents += e.amountCents;
+    markedCents += e.statsCents;
     switch (e.mood) {
       case 1:
         worthIt++;
       case 3:
         regret++;
-        regretCents += e.amountCents;
+        regretCents += e.statsCents;
       default:
         neutral++;
     }

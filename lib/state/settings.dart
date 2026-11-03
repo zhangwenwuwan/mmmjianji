@@ -47,8 +47,13 @@ class AppSettings {
     this.hideTransfers = false,
     this.lastBackupAt = 0,
     this.defaultPocketId = 0,
+    this.lastBucketOutId = 0,
+    this.lastBucketInId = 0,
     this.avatarPath = '',
     this.nickname = '',
+    this.dueReminderEnabled = false,
+    this.dueReminderLeadDays = 3,
+    this.hintsDismissed = '',
   });
 
   final ThemeMode themeMode;
@@ -149,6 +154,14 @@ class AppSettings {
   /// 这个 id 可能是**已删除账户**的残留，用之前必须校验存在性。
   final int defaultPocketId;
 
+  /// 记账页**上次用过的分类**（支出 / 收入各存一个）。0 = 还没记过。
+  ///
+  /// 为什么要有：账户有 [defaultPocketId] 兜底，分类却每次都重置成列表第一个。
+  /// 常用分类排在第 7 个的人，每天记 5 笔就要多点 5 次。
+  /// 和 defaultPocketId 一样，这个 id 可能是已删除分类的残留，用前必须校验存在。
+  final int lastBucketOutId;
+  final int lastBucketInId;
+
   /// 「我的」页头像：相册选的图落盘后的**绝对路径**。空 = 用默认钱包图标。
   ///
   /// 为什么这次存绝对路径（而自定义图标存的是相对文件名）：头像只有一张，
@@ -158,6 +171,30 @@ class AppSettings {
 
   /// 昵称。空 = 显示默认的「记账人」。
   final String nickname;
+
+  /// 到期提醒总开关：信用卡还款日 / 账单日、借还款到期、目标截止日，
+  /// 提前 [dueReminderLeadDays] 天 + 当天各发一条本地通知。
+  final bool dueReminderEnabled;
+
+  /// 提前多少天开始提醒（默认 3）。只影响"提前那条"的时间，当天那条永远发。
+  final int dueReminderLeadDays;
+
+  /// 首页提醒卡「已经提示过」的记录，逗号分隔的 token（形如 `budget:2026-11`）。
+  ///
+  /// 为什么需要：预算引导 / 备份提醒 / 「X 月收支已归档」这三张卡以前只在
+  /// **本次会话**里能关，冷启动又原样弹回来 —— 用户点了、进去了、也没设预算，
+  /// 下次开机还是那条，久了就变成"墙上的装饰"，真该看的时候反而没人看。
+  /// 现在点过就记下来：预算/备份按月记（下个月重新提醒一次），
+  /// 归档卡按"被归档的那个月"记（看过就永远不再提）。
+  final String hintsDismissed;
+
+  /// 这条提醒是否已经被点掉了。
+  bool isHintDismissed(String token) =>
+      token.isNotEmpty && hintsDismissed.split(',').contains(token);
+
+  /// token 约定：`<kind>:<yyyy-MM>`。kind = budget / backup / archive。
+  static String hintToken(String kind, DateTime month) =>
+      '$kind:${month.year}-${month.month.toString().padLeft(2, '0')}';
 
   /// 昵称或默认值。UI 一律读这个，不要自己判空两遍。
   String get displayName => nickname.trim().isEmpty ? '记账人' : nickname.trim();
@@ -224,8 +261,13 @@ class AppSettings {
     bool? hideTransfers,
     int? lastBackupAt,
     int? defaultPocketId,
+    int? lastBucketOutId,
+    int? lastBucketInId,
     String? avatarPath,
     String? nickname,
+    bool? dueReminderEnabled,
+    int? dueReminderLeadDays,
+    String? hintsDismissed,
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -254,8 +296,13 @@ class AppSettings {
         hideTransfers: hideTransfers ?? this.hideTransfers,
         lastBackupAt: lastBackupAt ?? this.lastBackupAt,
         defaultPocketId: defaultPocketId ?? this.defaultPocketId,
+        lastBucketOutId: lastBucketOutId ?? this.lastBucketOutId,
+        lastBucketInId: lastBucketInId ?? this.lastBucketInId,
         avatarPath: avatarPath ?? this.avatarPath,
         nickname: nickname ?? this.nickname,
+        dueReminderEnabled: dueReminderEnabled ?? this.dueReminderEnabled,
+        dueReminderLeadDays: dueReminderLeadDays ?? this.dueReminderLeadDays,
+        hintsDismissed: hintsDismissed ?? this.hintsDismissed,
       );
 }
 
@@ -300,8 +347,13 @@ class SettingsNotifier extends Notifier<AppSettings> {
   static const _kHideTransfers = 'hide_transfers';
   static const _kLastBackupAt = 'last_backup_at';
   static const _kDefaultPocket = 'default_pocket_id';
+  static const _kLastBucketOut = 'last_bucket_out_id';
+  static const _kLastBucketIn = 'last_bucket_in_id';
   static const _kAvatar = 'avatar_path';
   static const _kNickname = 'nickname';
+  static const _kDueEnabled = 'due_reminder_enabled';
+  static const _kDueLead = 'due_reminder_lead_days';
+  static const _kHintsDismissed = 'home_hints_dismissed';
 
   SharedPreferences? _prefs;
   bool _started = false;
@@ -374,8 +426,13 @@ class SettingsNotifier extends Notifier<AppSettings> {
       hideTransfers: prefs.getBool(_kHideTransfers) ?? false,
       lastBackupAt: prefs.getInt(_kLastBackupAt) ?? 0,
       defaultPocketId: prefs.getInt(_kDefaultPocket) ?? 0,
+      lastBucketOutId: prefs.getInt(_kLastBucketOut) ?? 0,
+      lastBucketInId: prefs.getInt(_kLastBucketIn) ?? 0,
       avatarPath: prefs.getString(_kAvatar) ?? '',
       nickname: prefs.getString(_kNickname) ?? '',
+      dueReminderEnabled: prefs.getBool(_kDueEnabled) ?? false,
+      dueReminderLeadDays: prefs.getInt(_kDueLead) ?? 3,
+      hintsDismissed: prefs.getString(_kHintsDismissed) ?? '',
     );
   }
 
@@ -555,6 +612,21 @@ class SettingsNotifier extends Notifier<AppSettings> {
     }
   }
 
+  /// 开关到期提醒。
+  Future<void> setDueReminderEnabled(bool value) async {
+    _touched = true;
+    state = state.copyWith(dueReminderEnabled: value);
+    await _prefs?.setBool(_kDueEnabled, value);
+  }
+
+  /// 设置提前多少天提醒（最小 1 天，避免"提前 0 天"和当天通知重复）。
+  Future<void> setDueReminderLeadDays(int days) async {
+    _touched = true;
+    final v = days < 1 ? 1 : days;
+    state = state.copyWith(dueReminderLeadDays: v);
+    await _prefs?.setInt(_kDueLead, v);
+  }
+
   Future<void> setHideTransfers(bool value) async {
     _touched = true;
     state = state.copyWith(hideTransfers: value);
@@ -566,6 +638,21 @@ class SettingsNotifier extends Notifier<AppSettings> {
     _touched = true;
     state = state.copyWith(defaultPocketId: id);
     await _prefs?.setInt(_kDefaultPocket, id);
+  }
+
+  /// 记住「上次用过的分类」。[flow] 用 'out' / 'in'，记账页保存成功后调用。
+  ///
+  /// 为什么要单独存两个而不是一个：支出和收入是两套分类树（餐饮 / 工资），
+  /// 共用一个的话，记完一笔工资转去记午饭，默认分类会被拽成收入那棵树的。
+  Future<void> setLastBucket(String flow, int id) async {
+    _touched = true;
+    if (flow == 'in') {
+      state = state.copyWith(lastBucketInId: id);
+      await _prefs?.setInt(_kLastBucketIn, id);
+    } else {
+      state = state.copyWith(lastBucketOutId: id);
+      await _prefs?.setInt(_kLastBucketOut, id);
+    }
   }
 
   /// 保存首页模块顺序（传完整顺序，内部落盘成 id 串）
@@ -638,6 +725,25 @@ class SettingsNotifier extends Notifier<AppSettings> {
     _touched = true;
     state = state.copyWith(budgetDeductOver: value);
     await _prefs?.setBool(_kBudgetDeductOver, value);
+  }
+
+  /// 记下「这条首页提醒已经点过了」。
+  ///
+  /// 只记 token 不记时间：token 里自带月份，跨月自然失效，不需要清理任务。
+  /// 重复调用是幂等的 —— 用户在卡片上连点两下也不会写出两条。
+  Future<void> dismissHint(String token) async {
+    if (token.isEmpty || state.isHintDismissed(token)) return;
+    final parts = [
+      ...state.hintsDismissed.split(',').where((t) => t.isNotEmpty),
+      token,
+    ];
+    // 只留最近 24 条：预算/备份每月各 1 条 + 归档卡每月 1 条，够两年用，
+    // 又不至于让这个字符串无限变长。
+    final trimmed = parts.length > 24 ? parts.sublist(parts.length - 24) : parts;
+    final next = trimmed.join(',');
+    _touched = true;
+    state = state.copyWith(hintsDismissed: next);
+    await _prefs?.setString(_kHintsDismissed, next);
   }
 
   Future<void> setCoverFollow(bool value) async {

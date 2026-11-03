@@ -86,7 +86,16 @@ class RootGate extends StatefulWidget {
 class _RootGateState extends State<RootGate> {
   static const _kOnboarded = 'onboarded_v1';
 
-  /// 首页内容开始浮上来的时刻：呼吸 600ms + 幕张开 350ms。
+  /// 上次播完启动动画的时刻（毫秒时间戳）。
+  ///
+  /// 2026-10-28 加：引擎首帧只要 443ms，动画再压到 600ms 也还是"每次开都等"。
+  /// 记账工具一天开七八次，仪式感只在第一次有意义 —— 所以**24 小时内只播一次**。
+  /// 用 SharedPreferences 存，不动数据库（这个值丢了最多多播一次动画，不值得进 schema）。
+  static const _kBootPlayedAt = 'boot_played_at';
+
+  static const _kBootInterval = Duration(hours: 24);
+
+  /// 首页内容开始浮上来的时刻：呼吸 + 幕张开到 120ms 处。
   ///
   /// 用绝对时刻而不是「从现在起 delay」，因为各块是数据驱动陆续创建的，
   /// 晚创建 400ms 的那一块不该再从头排一次队。
@@ -96,26 +105,59 @@ class _RootGateState extends State<RootGate> {
 
   bool _showSplash = true;
 
-  /// 首页是否已经插到幕底下（幕开始张开时才插）。
-  bool _targetIn = false;
-
   /// 默认 true：万一读偏好失败，也不要每次都弹欢迎页
   bool _onboarded = true;
+
+  /// initState 的时刻，用来判断"prefs 回来时动画进行到哪了"。
+  late final DateTime _bootStartedAt = DateTime.now();
 
   @override
   void initState() {
     super.initState();
     Future.microtask(() async {
       var onboarded = true;
+      var playedRecently = false;
       try {
         final prefs = await SharedPreferences.getInstance();
         onboarded = prefs.getBool(_kOnboarded) ?? false;
+        final lastAt = prefs.getInt(_kBootPlayedAt) ?? 0;
+        if (lastAt > 0) {
+          playedRecently = DateTime.now().millisecondsSinceEpoch - lastAt <
+              _kBootInterval.inMilliseconds;
+        }
       } catch (e) {
         AppLog.warn('boot', '读取引导状态失败: $e');
       }
       if (!mounted) return;
-      setState(() => _onboarded = onboarded);
+
+      // 24 小时内播过 → 直接进首页，不演幕。
+      //
+      // ⚠️ 只在**呼吸阶段还没结束**时才允许中途跳过：
+      // prefs 首次读取可能要 50~100ms，万一 slow 到 200ms 以上，幕已经在张开了，
+      // 这时把 _showSplash 置 false 会让画面从"圆开到一半"直接跳到首页 —— 更难看。
+      // 判断窗口放在 kBootBreath 内，跳过就是干净的「底色 → 首页」。
+      final elapsed = DateTime.now().difference(_bootStartedAt);
+      final canSkip = playedRecently && elapsed < kBootBreath;
+
+      setState(() {
+        _onboarded = onboarded;
+        if (canSkip) _showSplash = false;
+      });
+      if (canSkip) _timeline.active = false;
     });
+  }
+
+  /// 记下"这一轮动画播完了"，下次 24 小时内不再播。
+  ///
+  /// 故意放在播完时写、而不是开始时写：用户中途杀掉进程的话，下次还能看到完整的。
+  Future<void> _markBootPlayed() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(
+          _kBootPlayedAt, DateTime.now().millisecondsSinceEpoch);
+    } catch (e) {
+      AppLog.warn('boot', '记录启动动画时刻失败: $e');
+    }
   }
 
   Future<void> _finishWelcome() async {
@@ -134,29 +176,31 @@ class _RootGateState extends State<RootGate> {
         : WelcomePage(key: const ValueKey('welcome'), onDone: _finishWelcome);
 
     // ⚠️ 两个 child 必须各自带 key：
-    // 首页是在幕开始张开时才插入的，插进来之后幕在 children 里从下标 0 变成 1。
+    // 幕摘掉之后，首页在 children 里从下标 1 变成 0。
     // 不给 key 的话 Flutter 按下标配对，会以为下标 0 从「幕」变成了「首页」，
-    // 直接把幕的 State 扔掉重建 —— 幕张开到一半会瞬间归零、闪一下首页。
+    // 直接把首页的 State 扔掉重建 —— 滚动位置、已加载的数据全丢（等于白启动一次）。
     return BootRevealScope(
       timeline: _timeline,
       child: Stack(
         fit: StackFit.expand,
         children: [
-          if (_targetIn)
-            Positioned.fill(
-              key: const ValueKey('boot-target'),
-              child: target,
-            ),
+          // 首页**始终**垫在幕底下（2026-10-28 起首帧就插，不再等幕张开）。
+          // 这样幕张开时露出的是真的、已经加载完数据的首页，不是空壳。
+          Positioned.fill(
+            key: const ValueKey('boot-target'),
+            child: target,
+          ),
           if (_showSplash)
             Positioned.fill(
               key: const ValueKey('boot-curtain'),
               child: SplashCurtain(
-                onOpenStart: () {
-                  if (mounted) setState(() => _targetIn = true);
-                },
+                // 首页已经在首帧插好，这里不用再做事。
+                // 保留回调是因为 SplashCurtain 用它做时序锚点（"幕开始张开了"）。
+                onOpenStart: () {},
                 onDone: () {
                   // 启动这一轮结束了：之后新建的内容块不再排队浮入
                   _timeline.active = false;
+                  _markBootPlayed();
                   if (mounted) setState(() => _showSplash = false);
                 },
               ),

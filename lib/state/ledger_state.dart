@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/aggregate.dart';
 import '../core/budget_rules.dart';
 import '../core/currency.dart';
+import '../core/due_reminders.dart';
 import '../core/rules.dart';
 import '../data/store.dart';
 import '../services/biometric_service.dart';
@@ -185,6 +186,35 @@ final pendingReimburseProvider = FutureProvider<int>((ref) async {
   return sum;
 });
 
+/// AA 待收：所有 AA 分摊支出 + 各自已收回金额 + 待收总额（主币种分）。
+///
+/// 待收 = split_cents − Σ(指向它的回款)。回款行是派生收入、不计收支，
+/// 删掉它待收就自动复原，不需要额外的"已收"状态。
+final aaReceivableProvider = FutureProvider<
+    ({int pendingCents, List<({Entry entry, int settledCents})> items})>(
+    (ref) async {
+  final store = await ref.watch(storeProvider.future);
+  final book = await ref.watch(activeBookProvider.future);
+  final rates = await ref.watch(ratesProvider.future);
+  ref.watch(revisionProvider);
+  final entries = await store.aaEntries(book.id);
+  final settled = await store.aaSettledByEntry(book.id);
+  final pockets = await store.allPockets();
+  final currencyOf = {for (final p in pockets) p.id: p.currency};
+  var pending = 0;
+  final items = <({Entry entry, int settledCents})>[];
+  for (final e in entries) {
+    final s = settled[e.id] ?? 0;
+    items.add((entry: e, settledCents: s));
+    final left = (e.splitCents - s).clamp(0, e.splitCents);
+    if (left > 0) {
+      final cur = e.currency ?? currencyOf[e.pocketId] ?? book.baseCurrency;
+      pending += toBaseCents(left, cur, book.baseCurrency, rates);
+    }
+  }
+  return (pendingCents: pending, items: items);
+});
+
 // ---------------------------------------------------------------- 月度
 final entriesProvider = FutureProvider<List<Entry>>((ref) async {
   final store = await ref.watch(storeProvider.future);
@@ -227,7 +257,7 @@ final totalsProvider =
     // 「不计入收支」的笔不进合计（余额照算，只是不参与统计）
     if (e.excludeFromStats) continue;
     final from = e.currency ?? currencyOf[e.pocketId] ?? book.baseCurrency;
-    final base = toBaseCents(e.amountCents, from, book.baseCurrency, rates);
+    final base = toBaseCents(e.statsCents, from, book.baseCurrency, rates);
     if (e.flow == 'in') {
       income += base;
     } else {
@@ -262,7 +292,7 @@ final dailyTotalsProvider = FutureProvider<
     // ⚠️ 必须带上 e.currency：本笔可以单独选币种。
     // 漏了它，首页「本月支出」是折算后的，日历格子却是裸数字，同一屏两个口径。
     final from = e.currency ?? currencyOf[e.pocketId] ?? book.baseCurrency;
-    final base = toBaseCents(e.amountCents, from, book.baseCurrency, rates);
+    final base = toBaseCents(e.statsCents, from, book.baseCurrency, rates);
     final key = dayKey(e.day);
     final current = map[key] ?? (incomeCents: 0, expenseCents: 0);
     map[key] = e.flow == 'in'
@@ -309,7 +339,8 @@ Future<int> budgetSpentOf(LedgerStore store, Book book, DateTime month) async {
     if (e.flow != 'out') continue;
     if (e.excludeFromBudget) continue;
     final from = e.currency ?? currencyOf[e.pocketId] ?? book.baseCurrency;
-    spent += toBaseCents(e.amountCents, from, book.baseCurrency, rates);
+    // 与 SQL 版 bucketSpent 口径一致：AA 他人承担部分不占我的预算。
+    spent += toBaseCents(e.statsCents, from, book.baseCurrency, rates);
   }
   return spent;
 }
@@ -404,18 +435,89 @@ final bucketSpentProvider = FutureProvider<Map<int?, int>>((ref) async {
   return map;
 });
 
-/// 本月各标签支出（主币种分），按金额降序。
+/// 单个分类的预算达标情况（主币种分，已折算）。
+///
+/// [spentCents] 已经含子分类——和 [bucketSpentProvider] 同一口径。
+typedef BucketBudgetStatus = ({
+  int bucketId,
+  String title,
+  String glyph,
+  int budgetCents,
+  int spentCents,
+});
+
+/// 本月各分类的预算达标清单，按「超出金额」降序（没超的会排到后面）。
+///
+/// 为什么做成不依赖 ref 的纯函数：预算提醒要在 Shell 里按**当前自然月**算
+/// （不受首页翻月影响），而首页提示条要跟着 [monthProvider] 走。两条路都得用
+/// 同一份计算，否则会出现「首页说超了、通知没发」这种口径分裂。
+Future<List<BucketBudgetStatus>> bucketBudgetStatusOf(
+    LedgerStore store, Book book, DateTime month) async {
+  final budgets = await store.bucketBudgets(book.id, month);
+  if (budgets.isEmpty) return const [];
+  final rates = await store.rates(book.id);
+  final raw = await store.bucketSpent(book.id, month);
+  final spent = <int, int>{};
+  for (final r in raw) {
+    final id = r.bucketId;
+    if (id == null) continue; // 未分类的不参与分类预算
+    spent[id] =
+        (spent[id] ?? 0) + toBaseCents(r.cents, r.currency, book.baseCurrency, rates);
+  }
+  final tree = await store.buckets(book.id, 'out');
+  final parentOf = <int, int?>{for (final b in tree) b.id: b.parentId};
+  // 和 bucketSpentProvider 一样把子分类并进父分类：给「餐饮」设了预算、
+  // 钱却记在「外卖」上，不算进来预算就等于失效。
+  for (final e in List.of(spent.entries)) {
+    final p = parentOf[e.key];
+    if (p == null) continue;
+    spent[p] = (spent[p] ?? 0) + e.value;
+  }
+  final byId = {for (final b in tree) b.id: b};
+  final out = <BucketBudgetStatus>[];
+  for (final entry in budgets.entries) {
+    final b = byId[entry.key];
+    if (b == null) continue; // 分类已删，残留的预算行不参与提醒
+    out.add((
+      bucketId: entry.key,
+      title: b.title,
+      glyph: b.glyph,
+      budgetCents: entry.value,
+      spentCents: spent[entry.key] ?? 0,
+    ));
+  }
+  out.sort((a, b) =>
+      (b.spentCents - b.budgetCents).compareTo(a.spentCents - a.budgetCents));
+  return out;
+}
+
+/// 首页用：跟着 [monthProvider] 走（首页只认本月）。
+final bucketBudgetStatusProvider =
+    FutureProvider<List<BucketBudgetStatus>>((ref) async {
+  final store = await ref.watch(storeProvider.future);
+  final book = await ref.watch(activeBookProvider.future);
+  final month = ref.watch(monthProvider);
+  ref.watch(revisionProvider);
+  return bucketBudgetStatusOf(store, book, month);
+});
+
+/// 区间内各标签支出（主币种分），按金额降序。
 ///
 /// 注意：一笔账单有多个标签时会**在每个标签下各计一次**，所以各项相加
-/// 可能大于当月总支出。统计页必须写清楚，否则用户会以为算错了。
-final tagTotalsProvider =
-    FutureProvider<List<({String tag, int cents})>>((ref) async {
+/// 可能大于区间总支出。统计页必须写清楚，否则用户会以为算错了。
+///
+/// ⚠️ 区间由调用方传（统计页传自己的筛选范围）。以前这里 watch 的是
+/// `monthProvider`（首页钉死的当月），于是统计页翻到 3 月、切到「本周」时
+/// 上半页跟着变、底部这张卡还在显示当月 —— 用户会以为统计算错了。
+final tagTotalsProvider = FutureProvider.family<
+    List<({String tag, int cents})>,
+    ({DateTime from, DateTime to})>((ref, range) async {
   final store = await ref.watch(storeProvider.future);
   final book = await ref.watch(activeBookProvider.future);
   final rates = await ref.watch(ratesProvider.future);
-  final month = ref.watch(monthProvider);
   ref.watch(revisionProvider);
-  final raw = await store.tagSpent(book.id, month);
+  final raw = await store.tagSpent(book.id, range.from,
+      from: range.from, to: range.to);
   final acc = <String, int>{};
   for (final r in raw) {
     acc[r.tag] = (acc[r.tag] ?? 0) +
@@ -427,15 +529,18 @@ final tagTotalsProvider =
   return list;
 });
 
-/// 本月各账户支出（主币种分），按金额降序
-final pocketTotalsProvider =
-    FutureProvider<List<({Pocket pocket, int cents})>>((ref) async {
+/// 区间内各账户支出（主币种分），按金额降序
+///
+/// ⚠️ 同 [tagTotalsProvider]：区间由调用方传，不再锁死当月。
+final pocketTotalsProvider = FutureProvider.family<
+    List<({Pocket pocket, int cents})>,
+    ({DateTime from, DateTime to})>((ref, range) async {
   final store = await ref.watch(storeProvider.future);
   final book = await ref.watch(activeBookProvider.future);
   final rates = await ref.watch(ratesProvider.future);
-  final month = ref.watch(monthProvider);
   ref.watch(revisionProvider);
-  final raw = await store.pocketSpent(book.id, month);
+  final raw = await store.pocketSpent(book.id, range.from,
+      from: range.from, to: range.to);
   final pockets = await ref.watch(allPocketsProvider.future);
   final byId = {for (final p in pockets) p.id: p};
   final acc = <int, int>{};
@@ -467,12 +572,16 @@ class MonthPoint {
   int get netCents => incomeCents - expenseCents;
 }
 
-final monthSeriesProvider =
-    FutureProvider.family<List<MonthPoint>, int>((ref, count) async {
+final monthSeriesProvider = FutureProvider.family<List<MonthPoint>,
+    ({int count, DateTime anchor})>((ref, args) async {
   final store = await ref.watch(storeProvider.future);
   final book = await ref.watch(activeBookProvider.future);
   final rates = await ref.watch(ratesProvider.future);
-  final anchorMonth = ref.watch(monthProvider);
+  // ⚠️ 锚点由调用方传（首页传自己 watch 的月份、统计页传 insightAnchor）。
+  // 以前这里 watch `monthProvider`，统计页的「近 6 个月」永远跟着首页当月，
+  // 翻到 3 月时上半页变、趋势卡不动。
+  final anchorMonth = args.anchor;
+  final count = args.count;
   ref.watch(revisionProvider);
 
   final pockets = await store.allPockets();
@@ -488,7 +597,7 @@ final monthSeriesProvider =
       if (e.flow != 'in' && e.flow != 'out') continue;
       if (e.excludeFromStats) continue;
       final base = toBaseCents(
-          e.amountCents,
+          e.statsCents,
           e.currency ?? currencyOf[e.pocketId] ?? book.baseCurrency,
           book.baseCurrency,
           rates);
@@ -614,19 +723,22 @@ List<int> bucketFamilyIds(List<Bucket> all, int id) => [
 
 final categoryMonthlyProvider = FutureProvider.family<
     List<({String month, int cents})>,
-    ({int id, String flow})>((ref, key) async {
+    ({int id, String flow, DateTime? from, DateTime? to})>((ref, key) async {
   final store = await ref.watch(storeProvider.future);
   final book = await ref.watch(activeBookProvider.future);
   final rates = await ref.watch(ratesProvider.future);
   ref.watch(revisionProvider);
   final tree = await ref.watch(bucketsProvider(key.flow).future);
-  // 走势跟着用户选中的月份走，不是永远看最近 6 个月
+  // 走势跟着用户选中的月份走，不是永远看最近 6 个月。
+  // from/to 非空时（从统计页带着筛选进来）看的是那一段区间，不是最近 6 个月。
   final anchor = ref.watch(monthProvider);
   final raw = await store.bucketMonthly(
     book.id,
     bucketFamilyIds(tree, key.id),
     flow: key.flow,
     anchor: anchor,
+    from: key.from,
+    to: key.to,
   );
   final merged = <String, int>{};
   for (final r in raw) {
@@ -727,7 +839,15 @@ final netWorthCandlesProvider =
   final store = await ref.watch(storeProvider.future);
   final book = await ref.watch(activeBookProvider.future);
   final rates = await ref.watch(ratesProvider.future);
-  ref.watch(revisionProvider);
+  // ⚠️ 这里**故意不** watch `revisionProvider`。
+  //
+  // 这个 provider 是「逐日扫描」：6 个月 × 每个账户每天一行，是全 App 最重的
+  // 一次查询。以前它跟着 revision 走，于是**在首页记一笔**、人在首页，
+  // 后台的资产页也会把这次扫描重跑一遍（资产页 tab 是常驻的）。
+  // 现在改成「由入口决定何时刷新」：Shell 切到资产页时才 invalidate 它，
+  // 见 shell.dart 的 onSelect。数据最多旧一个 tab 切换的时间。
+  //
+  // 代价：如果将来有别的页面也用这张图，记得自己在进入时 invalidate。
 
   final now = DateTime.now();
   final from = DateTime(now.year, now.month - (months - 1), 1);
@@ -746,6 +866,39 @@ final goalsProvider = FutureProvider<List<Goal>>((ref) async {
   final book = await ref.watch(activeBookProvider.future);
   ref.watch(revisionProvider);
   return store.goals(book.id);
+});
+
+/// 到期提醒聚合：把本账本里账户的还款日/账单日、目标截止日、借还款到期日，
+/// 转成一组 [DueReminder]（纯计算在 core/due_reminders.dart）。
+///
+/// 跟着 [revisionProvider] 重算（新增/删除信用卡、改了目标日期都要即时反映），
+/// 也跟着设置里的「提前天数 / 币种符号」走。
+/// 真正发通知是 [ReminderService.syncDueReminders]，由 Shell 在设置或数据
+/// 变化时触发，这里只负责"有哪些事要在哪天提醒"。
+final dueRemindersProvider = FutureProvider<List<DueReminder>>((ref) async {
+  final pockets = await ref.watch(pocketsProvider.future);
+  final goals = await ref.watch(goalsProvider.future);
+  final debts = await ref.watch(debtsProvider.future);
+  final settings = ref.watch(settingsProvider);
+  ref.watch(revisionProvider);
+  return buildDueReminders(
+    pockets,
+    goals,
+    debts,
+    now: DateTime.now(),
+    leadDays: settings.dueReminderLeadDays,
+    symbol: settings.symbol,
+  );
+});
+
+/// 记账模板（一键落库）：某账本下的全部模板。
+///
+/// 跟着 [revisionProvider] 重算（新增/删除/编辑模板要即时反映到记账页顶部的胶囊）。
+final templatesProvider =
+    FutureProvider.family<List<Template>, int>((ref, bookId) async {
+  final store = await ref.watch(storeProvider.future);
+  ref.watch(revisionProvider);
+  return store.templates(bookId);
 });
 
 final recurringsProvider = FutureProvider<List<Recurring>>((ref) async {
@@ -870,6 +1023,42 @@ final insightTypeProvider =
   };
 }
 
+/// 当前可见的底栏页面（0 首页 / 1 统计 / 2 资产 / 3 我的）。
+///
+/// 为什么需要它：四个 tab 是常驻的（`Stack + Offstage`），看不见的页面照样
+/// 会跟着 `revisionProvider` 重算自己的 provider。重查询（逐日净值扫描、
+/// 详情页长列表）可以据此只在可见时刷新，见 `netWorthCandlesProvider` 的注释。
+final activeTabProvider = StateProvider<int>((ref) => 0);
+
+/// id → 分类 / 账户 的索引。
+///
+/// 为什么要有：首页每一行 `EntryRow` 都在 build 里对 `allBuckets`、`allPockets`
+/// 各做一次线性扫描找自己的分类/账户。一屏 10 行 × 每月 300 笔重建时
+/// 就是几千次无谓比较，而记账保存后正好要重建整个列表。
+/// 用 map 之后每行 O(1)，且 provider 只在数据本身变化时才重算。
+final bucketByIdProvider = Provider<Map<int, Bucket>>((ref) {
+  final all = ref.watch(allBucketsProvider).valueOrNull ?? const <Bucket>[];
+  return {for (final b in all) b.id: b};
+});
+
+final pocketByIdProvider = Provider<Map<int, Pocket>>((ref) {
+  final all = ref.watch(allPocketsProvider).valueOrNull ?? const <Pocket>[];
+  return {for (final p in all) p.id: p};
+});
+
+/// 统计页**当前筛选区间**（把 scope + anchor + custom 一起算成起止日）。
+///
+/// 底部那几张卡（趋势 / 标签 / 账户）以前各自 watch `monthProvider`，
+/// 和上半页不是一个时间轴。现在它们统一读这个，切任何粒度都跟着走。
+final insightRangeProvider =
+    Provider<({DateTime from, DateTime to})>((ref) {
+  return insightRange(
+    ref.watch(insightScopeProvider),
+    ref.watch(insightAnchorProvider),
+    custom: ref.watch(insightCustomRangeProvider),
+  );
+});
+
 /// 洞察页收支合计（主币种分），随范围切换。
 final insightTotalsProvider =
     FutureProvider<({int incomeCents, int expenseCents})>((ref) async {
@@ -891,7 +1080,39 @@ final insightTotalsProvider =
     if (e.flow != 'in' && e.flow != 'out') continue;
     if (e.excludeFromStats) continue;
     final from = e.currency ?? currencyOf[e.pocketId] ?? book.baseCurrency;
-    final base = toBaseCents(e.amountCents, from, book.baseCurrency, rates);
+    final base = toBaseCents(e.statsCents, from, book.baseCurrency, rates);
+    if (e.flow == 'in') {
+      income += base;
+    } else {
+      expense += base;
+    }
+  }
+  return (incomeCents: income, expenseCents: expense);
+});
+
+/// 任意区间的收支合计（给「与上一个等长区间比」用）。
+///
+/// 和 [insightTotalsProvider] 同一套口径，只是区间由调用方给：
+/// 月度有 `insightPrevRankProvider` 做「上月 1 日 ~ 同一天」的对照，
+/// 周/年/自定义以前**整张对比卡都不显示**，等于没有参照。
+final insightTotalsForProvider = FutureProvider.family<
+    ({int incomeCents, int expenseCents}),
+    ({DateTime from, DateTime to})>((ref, range) async {
+  final store = await ref.watch(storeProvider.future);
+  final book = await ref.watch(activeBookProvider.future);
+  final rates = await ref.watch(ratesProvider.future);
+  ref.watch(revisionProvider);
+
+  final entries = await store.entriesBetween(book.id, range.from, range.to);
+  final pocketList = await store.allPockets();
+  final currencyOf = {for (final p in pocketList) p.id: p.currency};
+  var income = 0;
+  var expense = 0;
+  for (final e in entries) {
+    if (e.flow != 'in' && e.flow != 'out') continue;
+    if (e.excludeFromStats) continue;
+    final from = e.currency ?? currencyOf[e.pocketId] ?? book.baseCurrency;
+    final base = toBaseCents(e.statsCents, from, book.baseCurrency, rates);
     if (e.flow == 'in') {
       income += base;
     } else {

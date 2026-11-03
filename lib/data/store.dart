@@ -227,6 +227,9 @@ class Entry {
     this.reimburseEntryId,
     this.deletedAt,
     this.adjustment = false,
+    this.splitCents = 0,
+    this.aaOfEntryId,
+    this.aaCounterparty,
   });
 
   final int id;
@@ -292,6 +295,25 @@ class Entry {
   /// 一改「只看校准」就筛不出来；而且导出给别人时语义也该跟着走。
   final bool adjustment;
 
+  /// AA 分摊「他人承担」金额（分），仅支出有意义。
+  ///
+  /// 语义：这笔支出我**全额垫付**（amount_cents 从账户实打实扣走），但其中
+  /// split_cents 是别人该还我的，不算「我的消费」。所以：
+  /// - 账户余额 / 净资产口径：用 [amountCents] 全额（钱确实出去了）；
+  /// - 「我的消费」统计口径：用 [statsCents] = amount − split。
+  /// 别人还钱时另记一笔收入，不在这里冲抵，才对得上现金流。
+  final int splitCents;
+
+  /// AA 回款关联：这笔是「别人还我 AA 钱」时自动生成的收入，指向原来那笔支出。
+  /// null = 普通流水。回款金额 = amountCents，且 excludeFromStats 恒为 true
+  /// （只加账户余额、不算收入，否则统计会变成"赚了一笔"）。
+  final int? aaOfEntryId;
+
+  /// AA 欠款人（谁该还我这笔）。null/空 = 没记。仅分摊支出有意义。
+  final String? aaCounterparty;
+
+  bool get isAaSettle => aaOfEntryId != null;
+
   /// 本笔实际币种（没有单独指定就跟随账户）
   String currencyWith(String pocketCurrency) => currency ?? pocketCurrency;
 
@@ -300,6 +322,18 @@ class Entry {
 
   bool get isExpense => flow == 'out';
   bool get isTransfer => flow == 'transfer';
+
+  /// 是否 AA 分摊（有他人承担部分）
+  bool get hasSplit => splitCents > 0 && flow == 'out';
+
+  /// 「我的消费」统计口径金额（分）：支出扣掉 AA 他人承担部分，收入/转账原样。
+  ///
+  /// 所有「花了多少」的统计（收支合计 / 分类排行 / 占比 / 趋势 / 预算 /
+  /// 日历 / 搜索汇总 / 热力图 / 情绪 / 报告 / 小组件）都该用它，别再直接
+  /// 拿 [amountCents]。clamp 到 [0, amount] 是防脏数据（split>amount 或负）。
+  int get statsCents => flow == 'out'
+      ? (amountCents - splitCents).clamp(0, amountCents)
+      : amountCents;
 
   Entry copyWith({
     int? pocketId,
@@ -322,6 +356,9 @@ class Entry {
     int? reimburseEntryId,
     DateTime? deletedAt,
     bool? adjustment,
+    int? splitCents,
+    int? aaOfEntryId,
+    String? aaCounterparty,
     // 显式清除开关。
     // `x ?? this.x` 的写法没法把字段改成 null，而这三件事都需要写 null：
     //   ① 取消退款关联  ② 币种改回「跟随账户」  ③ 转账改回普通支出
@@ -356,6 +393,9 @@ class Entry {
         reimburseEntryId: reimburseEntryId ?? this.reimburseEntryId,
         deletedAt: deletedAt ?? this.deletedAt,
         adjustment: adjustment ?? this.adjustment,
+        splitCents: splitCents ?? this.splitCents,
+        aaOfEntryId: aaOfEntryId ?? this.aaOfEntryId,
+        aaCounterparty: aaCounterparty ?? this.aaCounterparty,
       );
 }
 
@@ -537,6 +577,93 @@ class Wish {
       );
 }
 
+/// 记账模板（一键落库）：把「账户 + 分类 + 金额 + 备注」打包成一个快捷项，
+/// 在记账页顶部点一下就直接记一笔，省掉每次重选。
+///
+/// 与 recurring（周期记账）的区别：模板是**手动触发**的快捷方式，
+/// 不产生定时任务；recurring 是每月自动生成。两者互不替代。
+class Template {
+  const Template({
+    required this.id,
+    required this.bookId,
+    required this.title,
+    required this.glyph,
+    required this.flow,
+    required this.pocketId,
+    this.toPocketId,
+    this.bucketId,
+    required this.amountCents,
+    required this.memo,
+    required this.tags,
+    this.currency,
+    required this.rank,
+  });
+
+  final int id;
+  final int bookId;
+
+  /// 模板名（如「午餐」「打车」）。
+  final String title;
+
+  /// 图标（emoji 或自定义图片前缀 `img:`）。
+  final String glyph;
+
+  /// 'out' / 'in' / 'transfer'
+  final String flow;
+
+  /// 记账账户（必填）。
+  final int pocketId;
+
+  /// 转账的转入账户（仅 transfer）。
+  final int? toPocketId;
+
+  /// 分类 id（支出/收入；转账为 null）。null = 未分类。
+  final int? bucketId;
+
+  /// 金额（账户币种的分）。0 = 不预设（只能用来「填入」草稿，不能直接落库）。
+  final int amountCents;
+
+  final String memo;
+  final String tags;
+
+  /// 本笔币种；null = 跟随账户。
+  final String? currency;
+
+  /// 排序权重（越小越靠前）。
+  final int rank;
+
+  Template copyWith({
+    int? id,
+    int? bookId,
+    String? title,
+    String? glyph,
+    String? flow,
+    int? pocketId,
+    int? toPocketId,
+    int? bucketId,
+    int? amountCents,
+    String? memo,
+    String? tags,
+    String? currency,
+    int? rank,
+  }) =>
+      Template(
+        id: id ?? this.id,
+        bookId: bookId ?? this.bookId,
+        title: title ?? this.title,
+        glyph: glyph ?? this.glyph,
+        flow: flow ?? this.flow,
+        pocketId: pocketId ?? this.pocketId,
+        toPocketId: toPocketId ?? this.toPocketId,
+        bucketId: bucketId ?? this.bucketId,
+        amountCents: amountCents ?? this.amountCents,
+        memo: memo ?? this.memo,
+        tags: tags ?? this.tags,
+        currency: currency ?? this.currency,
+        rank: rank ?? this.rank,
+      );
+}
+
 class LedgerStore {
   LedgerStore._(this._db, {this.withSamplePockets = true});
 
@@ -550,7 +677,7 @@ class LedgerStore {
   /// `allPockets().first` 这样的默认账户，改默认值会让十几处测试同时红。
   final bool withSamplePockets;
 
-  static const _version = 17;
+  static const _version = 21;
 
   static Future<LedgerStore> open({
     String? path,
@@ -640,6 +767,7 @@ class LedgerStore {
         bucket_id INTEGER,
         flow TEXT NOT NULL,
         amount_cents INTEGER NOT NULL,
+        split_cents INTEGER NOT NULL DEFAULT 0,
         memo TEXT NOT NULL DEFAULT '',
         day TEXT NOT NULL,
         tags TEXT NOT NULL DEFAULT '',
@@ -652,6 +780,8 @@ class LedgerStore {
         currency TEXT,
         to_amount_cents INTEGER,
         refund_of_id INTEGER,
+        aa_of_entry_id INTEGER,
+        aa_counterparty TEXT,
         deleted_at TEXT,
         created_at TEXT NOT NULL
       )
@@ -745,6 +875,26 @@ class LedgerStore {
         day_of_month INTEGER NOT NULL,
         last_run_month TEXT NOT NULL DEFAULT '',
         enabled INTEGER NOT NULL DEFAULT 1
+      )
+    ''');
+
+    // v18：记账模板（一键落库）。新表，无需补列，CREATE TABLE IF NOT EXISTS
+    // 对全新库和老库（v1~v17）都幂等。
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS templates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        book_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        glyph TEXT NOT NULL DEFAULT '📋',
+        flow TEXT NOT NULL,
+        pocket_id INTEGER NOT NULL,
+        to_pocket_id INTEGER,
+        bucket_id INTEGER,
+        amount_cents INTEGER NOT NULL DEFAULT 0,
+        memo TEXT NOT NULL DEFAULT '',
+        tags TEXT NOT NULL DEFAULT '',
+        currency TEXT,
+        rank INTEGER NOT NULL DEFAULT 0
       )
     ''');
 
@@ -882,6 +1032,21 @@ class LedgerStore {
   // 老库/老备份没有这一列，无条件幂等补。
   await _addColumnIfMissing(db, 'entries', 'reimburse_entry_id', 'INTEGER');
 
+  // v19：AA 分摊「他人承担」金额（分）。只对支出有意义：这笔我全额垫付，
+  // 其中 split_cents 是别人该还我的，不算「我的消费」。余额/净资产照全额算
+  // （钱确实出去了），只改统计口径（amount - split）。老库无条件幂等补。
+  await _addColumnIfMissing(
+      db, 'entries', 'split_cents', 'INTEGER NOT NULL DEFAULT 0');
+
+  // v20：AA 应收回款关联。别人还钱时自动生成的那笔**收入**，用这一列指回
+  // 原来那笔支出。待收 = split_cents − Σ(所有指向它的回款金额)。
+  // 用「回款行 + 指针」而不是在支出上存"已收金额"，是为了让它自带对账：
+  // 删原支出→回款一起删（否则余额虚增）；删回款→待收自然复原（没有残留状态）。
+  await _addColumnIfMissing(db, 'entries', 'aa_of_entry_id', 'INTEGER');
+
+  // v21：AA 欠款人（谁该还我这笔）。null/空 = 没记。只对分摊支出有意义。
+  await _addColumnIfMissing(db, 'entries', 'aa_counterparty', 'TEXT');
+
   // v8：附件（图片凭证）
     await db.execute('''
       CREATE TABLE IF NOT EXISTS attachments (
@@ -1006,6 +1171,7 @@ class LedgerStore {
         'rates',
         'goals',
         'recurring',
+        'templates',
         'debts',
         'debt_payments',
         'wishes',
@@ -1020,6 +1186,128 @@ class LedgerStore {
       }
     });
     await _seedIfEmpty();
+  }
+
+  // ---------------------------------------------------------------- 记账模板
+
+  /// 某账本下的全部模板（按 rank、id 升序）。
+  Future<List<Template>> templates(int bookId) async {
+    final rows = await _db.query('templates',
+        where: 'book_id = ?', whereArgs: [bookId], orderBy: 'rank, id');
+    return rows.map(_toTemplate).toList();
+  }
+
+  Template _toTemplate(Map<String, Object?> r) => Template(
+        id: r['id'] as int,
+        bookId: r['book_id'] as int,
+        title: (r['title'] as String?) ?? '',
+        glyph: (r['glyph'] as String?) ?? '📋',
+        flow: (r['flow'] as String?) ?? 'out',
+        pocketId: (r['pocket_id'] as int?) ?? 0,
+        toPocketId: r['to_pocket_id'] as int?,
+        bucketId: r['bucket_id'] as int?,
+        amountCents: (r['amount_cents'] as int?) ?? 0,
+        memo: (r['memo'] as String?) ?? '',
+        tags: (r['tags'] as String?) ?? '',
+        currency: r['currency'] as String?,
+        rank: (r['rank'] as int?) ?? 0,
+      );
+
+  Future<int> addTemplate({
+    required int bookId,
+    required String title,
+    required String glyph,
+    required String flow,
+    required int pocketId,
+    int? toPocketId,
+    int? bucketId,
+    required int amountCents,
+    required String memo,
+    required String tags,
+    String? currency,
+  }) async {
+    final rank = Sqflite.firstIntValue(await _db.rawQuery(
+            'SELECT COUNT(*) FROM templates WHERE book_id = ?', [bookId])) ??
+        0;
+    return _db.insert('templates', {
+      'book_id': bookId,
+      'title': title,
+      'glyph': glyph,
+      'flow': flow,
+      'pocket_id': pocketId,
+      'to_pocket_id': toPocketId,
+      'bucket_id': bucketId,
+      'amount_cents': amountCents,
+      'memo': memo,
+      'tags': tags,
+      'currency': currency,
+      'rank': rank,
+    });
+  }
+
+  Future<void> updateTemplate(Template t) => _db.update(
+        'templates',
+        {
+          'title': t.title,
+          'glyph': t.glyph,
+          'flow': t.flow,
+          'pocket_id': t.pocketId,
+          'to_pocket_id': t.toPocketId,
+          'bucket_id': t.bucketId,
+          'amount_cents': t.amountCents,
+          'memo': t.memo,
+          'tags': t.tags,
+          'currency': t.currency,
+          'rank': t.rank,
+        },
+        where: 'id = ?',
+        whereArgs: [t.id],
+      );
+
+  Future<void> deleteTemplate(int id) =>
+      _db.delete('templates', where: 'id = ?', whereArgs: [id]);
+
+  /// 删账本时连带清掉它名下的模板（模板引用了账本维度的分类/账户）。
+  Future<void> deleteTemplatesOfBook(int bookId) =>
+      _db.delete('templates', where: 'book_id = ?', whereArgs: [bookId]);
+
+  /// 用模板直接落一笔账（一键落库）。
+  ///
+  /// 与 [addEntry] 不同的是这里不校验币种/余额，因为模板是用户自己预设的、
+  /// 已经校验过的组合；只做"账户还在不在"的判断（账户被删了要报错而不是写孤儿）。
+  Future<int> addEntryFromTemplate(Template t, int bookId) async {
+    if (t.pocketId <= 0) {
+      throw StateError('模板「${t.title}」没有有效的记账账户');
+    }
+    final exists = Sqflite.firstIntValue(await _db
+            .rawQuery('SELECT COUNT(*) FROM pockets WHERE id = ?', [t.pocketId])) ??
+        0;
+    if (exists == 0) {
+      throw StateError('模板「${t.title}」的账户已不存在');
+    }
+    if (t.flow == 'transfer') {
+      if (t.toPocketId == null || t.toPocketId! <= 0) {
+        throw StateError('模板「${t.title}」是转账但没有转入账户');
+      }
+      final toExists = Sqflite.firstIntValue(await _db.rawQuery(
+              'SELECT COUNT(*) FROM pockets WHERE id = ?', [t.toPocketId!])) ??
+          0;
+      if (toExists == 0) {
+        throw StateError('模板「${t.title}」的转入账户已不存在');
+      }
+    }
+    return addEntry(
+      bookId: bookId,
+      pocketId: t.pocketId,
+      toPocketId: t.flow == 'transfer' ? t.toPocketId : null,
+      bucketId: t.flow == 'transfer' ? null : t.bucketId,
+      flow: t.flow,
+      amountCents: t.amountCents,
+      memo: t.memo,
+      day: DateTime.now(),
+      tags: t.tags,
+      currency: t.currency,
+    );
   }
 
   // ---------------------------------------------------------------- 账本
@@ -1128,6 +1416,7 @@ class LedgerStore {
         'rates',
         'bucket_budgets',
         'monthly_budgets',
+        'templates',
         'debts',
         'debt_payments',
         'wishes',
@@ -1433,6 +1722,7 @@ class LedgerStore {
     int? toAmountCents,
     int? refundOfId,
     bool adjustment = false,
+    int splitCents = 0,
   }) =>
       _db.insert('entries', {
         'book_id': bookId,
@@ -1441,6 +1731,8 @@ class LedgerStore {
         'bucket_id': bucketId,
         'flow': flow,
         'amount_cents': amountCents,
+        // AA 分摊：只对支出落库，且 clamp 到 [0, amount]（别人承担不会超过总额）。
+        'split_cents': flow == 'out' ? splitCents.clamp(0, amountCents) : 0,
         'memo': memo,
         'day': dayKey(day),
         'tags': tags,
@@ -1465,6 +1757,9 @@ class LedgerStore {
           'bucket_id': e.bucketId,
           'flow': e.flow,
           'amount_cents': e.amountCents,
+          'split_cents': e.flow == 'out' ? e.splitCents.clamp(0, e.amountCents) : 0,
+          'aa_of_entry_id': e.aaOfEntryId,
+          'aa_counterparty': e.aaCounterparty,
           'memo': e.memo,
           'fee_cents': e.feeCents,
           'discount_cents': e.discountCents,
@@ -1512,6 +1807,22 @@ class LedgerStore {
     );
   }
 
+  /// AA 回款是**派生收入**：由 [settleAa] 从原支出生成，回款行的
+  /// `aa_of_entry_id` 指回原支出（支出本身不存"已收"金额，避免两处状态要同步）。
+  ///
+  /// 删原支出时，把它派生的回款收入一起带走 —— 否则余额凭空多一截；
+  /// 删回款单独一行时**无需回退任何标记**：待收是按「Σ 回款」现算的，自然复原。
+  Future<List<int>> _aaLinkedIncomes(
+      DatabaseExecutor db, List<int> ids) async {
+    if (ids.isEmpty) return const <int>[];
+    final marks = List.filled(ids.length, '?').join(',');
+    final rows = await db.query('entries',
+        columns: ['id'],
+        where: 'aa_of_entry_id IN ($marks)',
+        whereArgs: ids);
+    return [for (final r in rows) r['id'] as int];
+  }
+
   /// 删除流水 → 移入回收站（软删除）。
   ///
   /// ⚠️ 只把 `deleted_at` 置为当前时间，**不删附件**（附件在永久删除时才清理，
@@ -1529,8 +1840,9 @@ class LedgerStore {
     if (ids.isEmpty) return 0;
     return _db.transaction((txn) async {
       final links = await _reimburseLinks(txn, ids);
-      // 一起删的：请求的 + 它们派生出来的报销收入
-      final all = <int>{...ids, ...links.derived}.toList();
+      final aaDerived = await _aaLinkedIncomes(txn, ids);
+      // 一起删的：请求的 + 它们派生出来的报销收入 / AA 回款收入
+      final all = <int>{...ids, ...links.derived, ...aaDerived}.toList();
       // 只有「派生收入被删、而它的原流水还留着」时才回退原流水。
       // 两边同时删（批量勾选 / 从编辑页删一笔已报销的支出）时**不动标记**：
       // 动了的话，从回收站恢复回来原流水会变成「待报销」，再点一次就重复入账。
@@ -1568,7 +1880,8 @@ class LedgerStore {
     if (ids.isEmpty) return 0;
     return _db.transaction((txn) async {
       final links = await _reimburseLinks(txn, ids);
-      final all = <int>{...ids, ...links.derived}.toList();
+      final aaDerived = await _aaLinkedIncomes(txn, ids);
+      final all = <int>{...ids, ...links.derived, ...aaDerived}.toList();
       final m = List.filled(all.length, '?').join(',');
       return txn.update(
         'entries',
@@ -1597,7 +1910,8 @@ class LedgerStore {
     final paths = <String>[];
     final removed = await _db.transaction((txn) async {
       final links = await _reimburseLinks(txn, ids);
-      final all = <int>{...ids, ...links.derived}.toList();
+      final aaDerived = await _aaLinkedIncomes(txn, ids);
+      final all = <int>{...ids, ...links.derived, ...aaDerived}.toList();
       final revert = links.parents
           .toSet()
           .difference({...ids, ...links.derived})
@@ -1669,6 +1983,9 @@ class LedgerStore {
         reimburseEntryId: r['reimburse_entry_id'] as int?,
         deletedAt: _parseDeletedAt(r['deleted_at']),
         adjustment: ((r['adjustment'] as int?) ?? 0) == 1,
+        splitCents: (r['split_cents'] as int?) ?? 0,
+        aaOfEntryId: r['aa_of_entry_id'] as int?,
+        aaCounterparty: r['aa_counterparty'] as String?,
       );
 
   /// 软删除时间列可能缺失（老备份/老库），统一解析。
@@ -1971,14 +2288,127 @@ class LedgerStore {
     });
   }
 
+  // ---------------------------------------------------------------- AA 应收
+
+  /// 收回一笔 AA 垫付：从 [pocketId] 记一笔「回款」收入（**不计收支**），
+  /// 冲掉剩余待收。返回生成的收入流水 id。
+  ///
+  /// 为什么回款要 `excludeFromStats`：分摊时这笔支出已经只按「我的份额」
+  /// （amount − split）进入统计；若回款再算一笔收入，等于"垫出去的钱收回来
+  /// 还赚了一笔"，结余会虚高。回款只加账户余额、不进统计，账才对得上。
+  Future<int> settleAa(int entryId, int pocketId,
+      {int? amountCents, DateTime? day}) async {
+    final rows =
+        await _db.query('entries', where: 'id = ?', whereArgs: [entryId]);
+    if (rows.isEmpty) throw StateError('这笔流水不存在');
+    final e = _toEntry(rows.first);
+    if (e.flow != 'out' || e.splitCents <= 0) {
+      throw StateError('这笔流水没有 AA 分摊');
+    }
+    // 已经收清就别重复生成（界面按钮会消失，但并发/重复点击仍可能进来）。
+    final settledRows = await _db.rawQuery(
+        'SELECT COALESCE(SUM(amount_cents), 0) AS s FROM entries '
+        'WHERE aa_of_entry_id = ? AND deleted_at IS NULL',
+        [entryId]);
+    final settled = (settledRows.first['s'] as num?)?.toInt() ?? 0;
+    final left = e.splitCents - settled;
+    if (left <= 0) {
+      final last = await _db.query('entries',
+          columns: ['id'],
+          where: 'aa_of_entry_id = ? AND deleted_at IS NULL',
+          whereArgs: [entryId],
+          orderBy: 'id DESC',
+          limit: 1);
+      return last.isEmpty ? -1 : last.first['id'] as int;
+    }
+    // 支持部分收回：本次金额夹在 [1, 待收] 之间（多传不会多收，少传就留着）。
+    final take = (amountCents ?? left).clamp(1, left);
+    final when = day ?? DateTime.now();
+    final memo = e.memo.trim().isEmpty ? 'AA 回款' : 'AA 回款 · ${e.memo.trim()}';
+    return _db.transaction((txn) async {
+      return txn.insert('entries', {
+        'book_id': e.bookId,
+        'pocket_id': pocketId,
+        'flow': 'in',
+        'amount_cents': take,
+        'memo': memo,
+        'day': dayKey(when),
+        'tags': 'AA回款',
+        'reimburse': 0,
+        'exclude_from_stats': 1,
+        'currency': e.currency,
+        'aa_of_entry_id': entryId,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+    });
+  }
+
+  /// 撤销某笔支出的全部 AA 回款（删掉派生收入，待收按 Σ 自动复原）。
+  Future<void> unsettleAa(int entryId) async {
+    await _db.delete('entries',
+        where: 'aa_of_entry_id = ?', whereArgs: [entryId]);
+  }
+
+  /// 设置 / 清除某笔 AA 分摊的欠款人（空串 = 清除）。
+  Future<void> setAaCounterparty(int entryId, String? name) async {
+    final v = (name ?? '').trim();
+    await _db.update('entries', {'aa_counterparty': v.isEmpty ? null : v},
+        where: 'id = ?', whereArgs: [entryId]);
+  }
+
+  /// AA 分摊的支出（split>0，未删除），按日期倒序。
+  Future<List<Entry>> aaEntries(int bookId) async {
+    final rows = await _db.query('entries',
+        where:
+            'book_id = ? AND flow = ? AND split_cents > 0 AND deleted_at IS NULL',
+        whereArgs: [bookId, 'out'],
+        orderBy: 'day DESC, id DESC');
+    return rows.map(_toEntry).toList();
+  }
+
+  /// 每笔支出已收回的金额：entryId → Σ 回款（未删除）。
+  Future<Map<int, int>> aaSettledByEntry(int bookId) async {
+    final rows = await _db.rawQuery(
+        'SELECT aa_of_entry_id AS eid, SUM(amount_cents) AS total '
+        'FROM entries WHERE book_id = ? AND aa_of_entry_id IS NOT NULL '
+        'AND deleted_at IS NULL GROUP BY aa_of_entry_id',
+        [bookId]);
+    return {
+      for (final r in rows)
+        (r['eid'] as int): (r['total'] as num?)?.toInt() ?? 0,
+    };
+  }
+
   // ---------------------------------------------------------------- 聚合（原币种分）
 
+  /// 本月收入 / 支出合计（**主币种分**）。
+  ///
+  /// ⚠️ 2026-11-03 修：原来是个裸 `SUM(amount_cents)`，**完全不做币种折算** ——
+  /// 只要账本里有一笔外币流水，这里就会把 10.00 USD 当成 ¥10 加进去。
+  /// 当时 `lib/` 里没有调用点，所以没人发现；但只要谁拿它做统计就会静默错账。
+  /// 现在按 `COALESCE(e.currency, p.currency)` 折算，且**逐笔 ROUND**
+  /// （和 Dart 的 `toBaseCents` 一致；先 SUM 再 round 会差几分）。
+  ///
+  /// AA 分摊也只算「我的份额」（`amount - split`），与 `Entry.statsCents` 同口径。
   Future<Map<String, int>> monthTotalsByFlow(int bookId, DateTime month) async {
     final rows = await _db.rawQuery('''
-      SELECT flow, SUM(amount_cents) AS total
-      FROM entries
-      WHERE book_id = ? AND deleted_at IS NULL AND day >= ? AND day <= ? AND exclude_from_stats = 0
-      GROUP BY flow
+      SELECT e.flow AS flow,
+             SUM(ROUND(
+               (CASE WHEN e.flow = 'out'
+                     THEN e.amount_cents - COALESCE(e.split_cents, 0)
+                     ELSE e.amount_cents END)
+               * CASE WHEN COALESCE(e.currency, p.currency, b.base_currency) = b.base_currency
+                      THEN 1.0
+                      ELSE COALESCE(r.rate, 1.0) END
+             )) AS total
+      FROM entries e
+      JOIN books b ON b.id = e.book_id
+      LEFT JOIN pockets p ON p.id = e.pocket_id
+      LEFT JOIN rates r ON r.book_id = e.book_id
+                       AND r.code = COALESCE(e.currency, p.currency)
+      WHERE e.book_id = ? AND e.deleted_at IS NULL
+        AND e.day >= ? AND e.day <= ? AND e.exclude_from_stats = 0
+      GROUP BY e.flow
     ''', [
       bookId,
       dayKey(firstDayOfMonth(month)),
@@ -2011,7 +2441,9 @@ class LedgerStore {
              COALESCE(b.title, '未分类') AS title,
              COALESCE(b.glyph, '🧾') AS glyph,
              COALESCE(e.currency, p.currency) AS currency,
-             SUM(e.amount_cents) AS total
+             SUM(CASE WHEN e.flow = 'out'
+                      THEN e.amount_cents - COALESCE(e.split_cents, 0)
+                      ELSE e.amount_cents END) AS total
       FROM entries e
       LEFT JOIN buckets b ON b.id = e.bucket_id
       JOIN pockets p ON p.id = e.pocket_id
@@ -2043,7 +2475,9 @@ class LedgerStore {
       SELECT COALESCE(b.title, '未分类') AS title,
              COALESCE(b.glyph, '🧾') AS glyph,
              COALESCE(e.currency, p.currency) AS currency,
-             SUM(e.amount_cents) AS total
+             SUM(CASE WHEN e.flow = 'out'
+                      THEN e.amount_cents - COALESCE(e.split_cents, 0)
+                      ELSE e.amount_cents END) AS total
       FROM entries e
       LEFT JOIN buckets b ON b.id = e.bucket_id
       JOIN pockets p ON p.id = e.pocket_id
@@ -2064,13 +2498,27 @@ class LedgerStore {
   }
 
   /// 每天 flow → 分（原币种直接相加；上层折算）。
+  /// 按天分组的收入 / 支出（**主币种分**，逐笔折算，口径同 [monthTotalsByFlow]）。
   Future<Map<String, Map<String, int>>> dailyTotalsByFlow(
       int bookId, DateTime month) async {
     final rows = await _db.rawQuery('''
-      SELECT day, flow, SUM(amount_cents) AS total
-      FROM entries
-      WHERE book_id = ? AND deleted_at IS NULL AND day >= ? AND day <= ? AND exclude_from_stats = 0
-      GROUP BY day, flow
+      SELECT e.day AS day, e.flow AS flow,
+             SUM(ROUND(
+               (CASE WHEN e.flow = 'out'
+                     THEN e.amount_cents - COALESCE(e.split_cents, 0)
+                     ELSE e.amount_cents END)
+               * CASE WHEN COALESCE(e.currency, p.currency, b.base_currency) = b.base_currency
+                      THEN 1.0
+                      ELSE COALESCE(r.rate, 1.0) END
+             )) AS total
+      FROM entries e
+      JOIN books b ON b.id = e.book_id
+      LEFT JOIN pockets p ON p.id = e.pocket_id
+      LEFT JOIN rates r ON r.book_id = e.book_id
+                       AND r.code = COALESCE(e.currency, p.currency)
+      WHERE e.book_id = ? AND e.deleted_at IS NULL
+        AND e.day >= ? AND e.day <= ? AND e.exclude_from_stats = 0
+      GROUP BY e.day, e.flow
     ''', [
       bookId,
       dayKey(firstDayOfMonth(month)),
@@ -2175,7 +2623,7 @@ class LedgerStore {
       int bookId, DateTime month) async {
     final rows = await _db.rawQuery('''
       SELECT e.bucket_id AS bid, COALESCE(e.currency, p.currency) AS currency,
-             SUM(e.amount_cents) AS total
+             SUM(e.amount_cents - COALESCE(e.split_cents, 0)) AS total
       FROM entries e
       JOIN pockets p ON p.id = e.pocket_id
       WHERE e.book_id = ? AND e.deleted_at IS NULL AND e.day >= ? AND e.day <= ? AND e.flow = 'out'
@@ -2204,10 +2652,17 @@ class LedgerStore {
     int bookId,
     DateTime month, {
     String flow = 'out',
+    // 任意区间（统计页的「周 / 年 / 全部 / 范围」）。给了就忽略 [month]，
+    // 口径完全一致，只是换起止日 —— 统计页底部那几张卡以前永远按当月算，
+    // 切了范围下半页不动，看着像统计出错。
+    DateTime? from,
+    DateTime? to,
   }) async {
     final rows = await _db.rawQuery('''
       SELECT e.tags AS tags, COALESCE(e.currency, p.currency) AS currency,
-             SUM(e.amount_cents) AS total
+             SUM(CASE WHEN e.flow = 'out'
+                      THEN e.amount_cents - COALESCE(e.split_cents, 0)
+                      ELSE e.amount_cents END) AS total
       FROM entries e
       JOIN pockets p ON p.id = e.pocket_id
       WHERE e.book_id = ? AND e.deleted_at IS NULL AND e.day >= ? AND e.day <= ? AND e.flow = ?
@@ -2215,8 +2670,8 @@ class LedgerStore {
       GROUP BY e.tags, COALESCE(e.currency, p.currency)
     ''', [
       bookId,
-      dayKey(firstDayOfMonth(month)),
-      dayKey(lastDayOfMonth(month)),
+      dayKey(from ?? firstDayOfMonth(month)),
+      dayKey(to ?? lastDayOfMonth(month)),
       flow,
     ]);
 
@@ -2244,10 +2699,15 @@ class LedgerStore {
     int bookId,
     DateTime month, {
     String flow = 'out',
+    // 同 [tagSpent]：给了就按任意区间查，不再锁死在某个月。
+    DateTime? from,
+    DateTime? to,
   }) async {
     final rows = await _db.rawQuery('''
       SELECT e.pocket_id AS pid, COALESCE(e.currency, p.currency) AS currency,
-             SUM(e.amount_cents) AS total
+             SUM(CASE WHEN e.flow = 'out'
+                      THEN e.amount_cents - COALESCE(e.split_cents, 0)
+                      ELSE e.amount_cents END) AS total
       FROM entries e
       JOIN pockets p ON p.id = e.pocket_id
       WHERE e.book_id = ? AND e.deleted_at IS NULL AND e.day >= ? AND e.day <= ? AND e.flow = ?
@@ -2255,8 +2715,8 @@ class LedgerStore {
       GROUP BY e.pocket_id, COALESCE(e.currency, p.currency)
     ''', [
       bookId,
-      dayKey(firstDayOfMonth(month)),
-      dayKey(lastDayOfMonth(month)),
+      dayKey(from ?? firstDayOfMonth(month)),
+      dayKey(to ?? lastDayOfMonth(month)),
       flow,
     ]);
     return [
@@ -2791,16 +3251,21 @@ class LedgerStore {
     // 原来硬编码 DateTime.now()，翻到 2025 年 3 月看分类详情，
     // 走势图还是最近 6 个月，月份切换器等于失灵。
     DateTime? anchor,
+    // 任意区间（从统计页带着筛选点进来时用）。给了它，[months]/[anchor] 都不生效。
+    DateTime? from,
+    DateTime? to,
   }) async {
     if (bucketIds.isEmpty) return const [];
     final marks = List.filled(bucketIds.length, '?').join(',');
     final now = anchor ?? DateTime.now();
-    final from = DateTime(now.year, now.month - months + 1);
-    final to = lastDayOfMonth(now);
+    final rangeFrom = from ?? DateTime(now.year, now.month - months + 1);
+    final rangeTo = to ?? lastDayOfMonth(now);
     final rows = await _db.rawQuery(
       "SELECT substr(e.day, 1, 7) AS m, "
       "COALESCE(e.currency, p.currency) AS currency, "
-      "SUM(e.amount_cents) AS total "
+      "SUM(CASE WHEN e.flow = 'out' "
+      "THEN e.amount_cents - COALESCE(e.split_cents, 0) "
+      "ELSE e.amount_cents END) AS total "
       "FROM entries e JOIN pockets p ON p.id = e.pocket_id "
       "WHERE e.book_id = ? AND e.bucket_id IN ($marks) AND e.flow = ? "
       "AND e.deleted_at IS NULL AND e.day >= ? AND e.day <= ? AND e.exclude_from_stats = 0 "
@@ -2812,9 +3277,9 @@ class LedgerStore {
         bookId,
         ...bucketIds,
         flow,
-        dayKey(firstDayOfMonth(from)),
+        dayKey(firstDayOfMonth(rangeFrom)),
         // 上界同样重要：原来没有它，未来日期的账也会算进走势
-        dayKey(to),
+        dayKey(rangeTo),
       ],
     );
     return rows
@@ -3097,6 +3562,8 @@ class LedgerStore {
     DateTime? from,
     DateTime? to,
     bool matchAny = false,
+    // 列表用：默认最多 300 条防爆；分类详情要「翻到底」，传大值突破上限。
+    int limit = 300,
   }) async {
     final c = _searchWhere(
       bookId,
@@ -3115,7 +3582,7 @@ class LedgerStore {
     );
     final rows = await _db.rawQuery(
       "SELECT e.* FROM entries e LEFT JOIN buckets b ON b.id = e.bucket_id "
-      "WHERE ${c.where} ORDER BY e.day DESC, e.id DESC LIMIT 300",
+      "WHERE ${c.where} ORDER BY e.day DESC, e.id DESC LIMIT $limit",
       c.args,
     );
     return rows.map(_toEntry).toList();
@@ -3159,7 +3626,9 @@ class LedgerStore {
     );
     final rows = await _db.rawQuery(
       "SELECT e.flow AS flow, COALESCE(e.currency, p.currency) AS currency, "
-      "SUM(e.amount_cents) AS total "
+      "SUM(CASE WHEN e.flow = 'out' "
+      "THEN e.amount_cents - COALESCE(e.split_cents, 0) "
+      "ELSE e.amount_cents END) AS total "
       "FROM entries e "
       "LEFT JOIN buckets b ON b.id = e.bucket_id "
       "LEFT JOIN pockets p ON p.id = e.pocket_id "
@@ -3447,6 +3916,7 @@ class LedgerStore {
       'rates': await _db.query('rates'),
       'goals': await _db.query('goals'),
       'recurring': await _db.query('recurring'),
+      'templates': await _db.query('templates'),
       'monthNotes': await _db.query('month_notes'),
     };
     return const JsonEncoder.withIndent('  ').convert(payload);
@@ -3470,6 +3940,7 @@ class LedgerStore {
       'rates': 'rates',
       'goals': 'goals',
       'recurring': 'recurring',
+      'templates': 'templates',
       'monthNotes': 'month_notes',
     };
     await _db.transaction((txn) async {

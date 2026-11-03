@@ -4,6 +4,17 @@ import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
 import '../data/store.dart';
+import 'app_log.dart';
+
+/// 备份结果：写好了 / 今天已有 / 失败。
+enum AutoBackupResult { written, skipped, failed }
+
+class AutoBackupRun {
+  const AutoBackupRun(this.result, {this.file});
+
+  final AutoBackupResult result;
+  final File? file;
+}
 
 /// 本地自动备份：每次启动写一份 JSON 到应用私有目录，只留最近几份。
 ///
@@ -38,8 +49,13 @@ class AutoBackup {
   }
 
   /// 跑一次备份。同一天只写一份（避免每次切前后台都写）。
-  /// 返回刚写入的文件；今天已备份过则返回 null。
-  static Future<File?> run(LedgerStore store) async {
+  ///
+  /// ⚠️ 返回值现在区分三种结果（以前"今天已备份"和"写盘失败"都返回 null，
+  /// UI 于是把失败报成"今天已经备份过了"，用户就不再手动导出了）：
+  /// - `AutoBackupResult.written` + [result.file]
+  /// - `AutoBackupResult.skipped`（今天已有）
+  /// - `AutoBackupResult.failed`（磁盘满 / 序列化异常）
+  static Future<AutoBackupRun> run(LedgerStore store) async {
     try {
       final d = await dir();
       final now = DateTime.now();
@@ -49,7 +65,7 @@ class AutoBackup {
       final existing = await list();
       final todayPrefix = 'auto_$stamp';
       if (existing.any((f) => p.basename(f.path).startsWith(todayPrefix))) {
-        return null;
+        return const AutoBackupRun(AutoBackupResult.skipped);
       }
       final json = await store.exportJson();
       final file = File(p.join(
@@ -58,10 +74,11 @@ class AutoBackup {
           '${now.minute.toString().padLeft(2, '0')}.json'));
       await file.writeAsString(json, flush: true);
       await prune();
-      return file;
-    } catch (_) {
-      // 备份失败不能影响正常使用
-      return null;
+      return AutoBackupRun(AutoBackupResult.written, file: file);
+    } catch (e) {
+      // 备份失败不能影响正常使用，但必须让人知道没备上
+      AppLog.error('backup', '自动备份失败', e);
+      return const AutoBackupRun(AutoBackupResult.failed);
     }
   }
 

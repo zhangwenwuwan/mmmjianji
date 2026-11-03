@@ -920,7 +920,9 @@ void main() {
       expect(id, isNotNull);
       expect(await balanceOf(cash.id), 95000);
 
-      final rows = await store.entriesOfMonth(bookId, DateTime(2026, 10));
+      // 校准流水记在「今天」，原工资是 10/1 —— 两者天然可能不同月，
+      // 所以要查本月（查 10 月在 11 月之后会找不到）。
+      final rows = await store.entriesOfMonth(bookId, DateTime.now());
       final adj = rows.firstWhere((e) => e.id == id);
       expect(adj.flow, 'out');
       expect(adj.amountCents, 5000);

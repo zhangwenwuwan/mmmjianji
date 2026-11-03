@@ -45,7 +45,7 @@ class WidgetBridge {
         // 和小部件展示口径保持一致：不计入收支的不算
         if (e.excludeFromStats) continue;
         final from = e.currency ?? currencyOf[e.pocketId] ?? book.baseCurrency;
-        final base = toBaseCents(e.amountCents, from, book.baseCurrency, rates);
+        final base = toBaseCents(e.statsCents, from, book.baseCurrency, rates);
         if (e.flow == 'in') {
           income += base;
         } else {
