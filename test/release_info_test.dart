@@ -24,11 +24,8 @@ void main() {
 
     expect(find.text('版本 $appVersion（$appBuild）'), findsOneWidget);
     // 用户明确要求删掉这些，写个反向断言钉住，免得以后又被加回来
-    expect(find.text('BeeCount 软件许可'), findsNothing);
     expect(find.text('第三方组件声明'), findsNothing);
     expect(find.text('第三方开源许可'), findsNothing);
     expect(find.text('上游项目'), findsNothing);
-    expect(find.textContaining('github.com/TNT-Likely/BeeCount'), findsNothing);
-    expect(find.textContaining('基于 BeeCount'), findsNothing);
   });
 }

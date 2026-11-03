@@ -2,7 +2,7 @@
   "app": "jianji",
   "schema": 16,
   "exportedAt": "2026-10-26T21:41:50.913901",
-  "source": "beecount",
+  "source": "legacy",
   "books": [
     {
       "id": 1,
