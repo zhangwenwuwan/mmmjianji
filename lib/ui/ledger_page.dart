@@ -26,6 +26,7 @@ import 'illustrations.dart';
 import 'month_summary_page.dart';
 import 'motion.dart';
 import 'pull_to_add.dart';
+import 'recycle_bin_page.dart';
 import 'search_page.dart';
 import 'theme.dart';
 
@@ -427,7 +428,25 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
     bumpRevision(ref);
     if (!mounted) return;
     _exitBatch();
-    _toast('已移入回收站 $count 条');
+    _showRecycledHint(count);
+  }
+
+  /// 批量删除后的提示：带「查看」，一键进回收站。
+  /// 之前只有一句 2 秒 toast —— 删错了得走 我的 → 数据管理 → 回收站 三层才找得回。
+  void _showRecycledHint(int count) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(
+        content: Text('已移入回收站 $count 条'),
+        duration: const Duration(seconds: 5),
+        action: SnackBarAction(
+          label: '查看',
+          onPressed: () => Navigator.of(context)
+              .push(AppPageRoute(page: const RecycleBinPage())),
+        ),
+      ));
   }
 
   void _toast(String msg) {

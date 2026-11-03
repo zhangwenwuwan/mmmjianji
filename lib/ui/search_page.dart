@@ -12,6 +12,7 @@ import '../state/settings.dart';
 import 'amount_input.dart';
 import 'common.dart';
 import 'ledger_page.dart';
+import 'recycle_bin_page.dart';
 import 'motion.dart';
 import 'theme.dart';
 
@@ -784,8 +785,18 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       _batch = false;
       _selected.clear();
     });
-    ScaffoldMessenger.of(context)
-        .toast('已移入回收站 $count 条');
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(
+        content: Text('已移入回收站 $count 条'),
+        duration: const Duration(seconds: 5),
+        action: SnackBarAction(
+          label: '查看',
+          onPressed: () => Navigator.of(context)
+              .push(AppPageRoute(page: const RecycleBinPage())),
+        ),
+      ));
     await _run();
   }
 

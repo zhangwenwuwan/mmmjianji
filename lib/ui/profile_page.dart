@@ -11,7 +11,6 @@ import '../state/ledger_state.dart';
 import '../state/settings.dart';
 import 'about_page.dart';
 import 'common.dart';
-import 'data_manage_page.dart';
 import 'month_notes_page.dart';
 import 'motion.dart';
 import 'profile_modules.dart';
@@ -85,9 +84,6 @@ class ProfilePage extends ConsumerWidget {
               _nav(context, Icons.assignment_turned_in_outlined, '报销',
                   '待报销 / 已报销', const ReimbursePage(),
                   badge: ref.watch(pendingReimburseCountProvider).valueOrNull),
-              const Divider(height: 1, indent: 16),
-              _nav(context, Icons.backup_outlined, '备份与恢复',
-                  '自动备份 / 恢复 / 清空', const DataManagePage()),
               const Divider(height: 1, indent: 16),
               _nav(context, Icons.auto_graph_rounded, '年度报告',
                   '全年汇总 + 分享海报', const ReportPage()),
