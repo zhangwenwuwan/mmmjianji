@@ -54,7 +54,7 @@ class _LockGateState extends ConsumerState<LockGate>
 
   /// 最近一次成功解锁的时间。**3 秒内不再回锁** —— 生物识别/系统凭据弹窗
   /// 本身会触发 resumed，不当心就「解锁成功 → 立刻回锁 → 再弹指纹」死循环，
-  /// 表现就是"指纹根本用不了"。这招是 1.2.8（BeeCount 系）验证过的。
+  /// 表现就是"指纹根本用不了"。这招在 1.2.8 验证过。
   DateTime? _lastUnlockAt;
 
   DateTime? _pausedAt;

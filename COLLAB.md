@@ -8,7 +8,7 @@
 
 ## 0. 一句话现状
 本地优先的 Flutter 个人记账 App。**v1.1.0+33 已交付**（release 为 debug 签名），完成全局紧凑化与 Clean 设计规范统一。
-两个 AI 协作继续完善功能与体验。本项目是蜜蜂记账 BeeCount 的修改版（BUSL 类协议，含强制开源义务）。
+两个 AI 协作继续完善功能与体验。
 
 ## 1. 技术栈与环境铁律（踩过坑，必读）
 - Flutter 3.44.2 / Dart ^3.6.0；Riverpod + sqflite（原 Drift 已移除）+ Material 3。

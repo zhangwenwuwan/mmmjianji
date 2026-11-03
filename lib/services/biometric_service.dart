@@ -67,7 +67,7 @@ class BiometricService {
 
   /// 弹系统验证。成功返回 true；用户取消/硬件异常/未录入一律 false。
   ///
-  /// 文案与 1.2.8（BeeCount 系）保持一致：那句 localizedReason 会直接显示在
+  /// 文案与 1.2.8 保持一致：那句 localizedReason 会直接显示在
   /// 系统的指纹/面容弹窗上，"解锁简记" 太短，用户不知道在验证什么。
   static Future<bool> authenticate() async {
     if (!_supported) return false;

@@ -4,11 +4,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:jianji/data/store.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
-/// 端到端：把 **BeeCount 真实导出的那份 JSON** 灌进简记，确认能进库、口径对。
+/// 端到端：把**旧版导出的那份整库 JSON** 灌进简记，确认能进库、口径对。
 ///
-/// fixture 来源：BeeCount 的 `test/jianji_export_test.dart` 里
-/// `JianjiExport.mapRows(fixtureRows())` 的产物（原样拷贝，没手改）。
-/// 这条链一旦断了（比如简记加了列、BeeCount 那边改了映射），这里会先红，
+/// fixture 是真实导出的备份原文（原样拷贝，没手改）。
+/// 这条链一旦断了（比如简记加了列、备份结构变了），这里会先红，
 /// 而不是等用户拿真数据导入时才发现「导入失败」。
 void main() {
   late Directory tmp;
@@ -29,9 +28,9 @@ void main() {
     await tmp.delete(recursive: true);
   });
 
-  test('能导入 BeeCount 导出的整库 JSON', () async {
+  test('能导入旧版导出的整库 JSON', () async {
     final raw =
-        File('test/fixtures/jianji_from_beecount.json').readAsStringSync();
+        File('test/fixtures/jianji_import_fixture.json').readAsStringSync();
 
     await store.importJson(raw);
 
@@ -108,7 +107,7 @@ void main() {
 
   test('不是简记备份的文件会被拒绝（防止误导入）', () async {
     expect(
-      () => store.importJson('{"app":"beecount","books":[]}'),
+      () => store.importJson('{"app":"other_app","books":[]}'),
       throwsA(isA<FormatException>()),
     );
   });
