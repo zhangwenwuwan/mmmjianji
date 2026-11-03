@@ -47,6 +47,19 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
   /// 「已隐藏账户」分区是否展开（对齐原版 _HiddenAccountsSection）
   bool _showHidden = false;
 
+  /// 微信 / 支付宝在资产页单列分组（用户要求），它们在 PocketKind 里仍是
+  /// bank —— 这里只做展示归类，不碰余额/负债/统计口径。
+  /// 老账户 typeId 可能为空（1.3.1 之前建的），用名称兜底。
+  static bool _isWechat(Pocket p) {
+    if (p.typeId == 'wechat' || p.typeId == 'wechatWallet') return true;
+    return p.displayName.contains('微信');
+  }
+
+  static bool _isAlipay(Pocket p) {
+    if (p.typeId == 'alipay') return true;
+    return p.displayName.contains('支付宝');
+  }
+
   @override
   Widget build(BuildContext context) {
     final balancesAsync = ref.watch(balancesProvider);
@@ -374,9 +387,47 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
               builder: (context) {
                 var i = 0;
                 final blocks = <Widget>[];
-                for (final kind in PocketKind.values) {
-                  final rows =
-                      visible.where((b) => b.pocket.kind == kind).toList();
+                // 2026-11-03：微信 / 支付宝从「银行卡」里拆出来单列一组。
+                // 它们的 kind 仍是 bank（余额口径、负债语义都不变），
+                // 差的只是展示分组 —— 所以只在这个页面按 typeId / 名称细分，
+                // 不动 PocketKind，统计、净资产、账户合计全部不受影响。
+                final groups = <({String title, bool Function(Pocket) match, bool liability})>[
+                  (
+                    title: '现金',
+                    match: (p) => p.kind == PocketKind.cash,
+                    liability: false
+                  ),
+                  (
+                    title: '银行卡',
+                    match: (p) =>
+                        p.kind == PocketKind.bank &&
+                        !_isWechat(p) &&
+                        !_isAlipay(p),
+                    liability: false
+                  ),
+                  (
+                    title: '微信',
+                    match: (p) => p.kind == PocketKind.bank && _isWechat(p),
+                    liability: false
+                  ),
+                  (
+                    title: '支付宝',
+                    match: (p) => p.kind == PocketKind.bank && _isAlipay(p),
+                    liability: false
+                  ),
+                  (
+                    title: '信用卡',
+                    match: (p) => p.kind == PocketKind.credit,
+                    liability: true
+                  ),
+                  (
+                    title: '负债',
+                    match: (p) => p.kind == PocketKind.debt,
+                    liability: true
+                  ),
+                ];
+                for (final g in groups) {
+                  final rows = visible.where((b) => g.match(b.pocket)).toList();
                   if (rows.isEmpty) continue;
                   var subtotal = 0;
                   for (final r in rows) {
@@ -386,13 +437,13 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                   }
                   blocks.add(_kindGroup(
                     context,
-                    kind.label,
+                    g.title,
                     rows,
                     base,
                     subtotal,
                     settings,
                     Duration(milliseconds: 80 + 40 * i),
-                    liability: kind.isLiability,
+                    liability: g.liability,
                   ));
                   blocks.add(const SizedBox(height: 18));
                   i++;

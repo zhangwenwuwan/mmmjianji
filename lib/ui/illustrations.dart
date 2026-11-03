@@ -64,21 +64,27 @@ class MountainPainter extends CustomPainter {
 
 /// 把 [MountainPainter] 铺到卡片右下角（不挡文字）。
 class HillCardBackground extends StatelessWidget {
-  const HillCardBackground({super.key, required this.child, this.opacity = 0.16});
+  const HillCardBackground(
+      {super.key, required this.child, this.opacity = 0.16, this.color});
 
   final Widget child;
   final double opacity;
 
+  /// 不传就按品牌色 + opacity 画（浅底卡片用）。
+  /// 深色 / 品牌色底上必须传白色，否则山形和背景同色，等于看不见。
+  final Color? color;
+
   @override
   Widget build(BuildContext context) {
-    final color = Palette.brand(context).withValues(alpha: opacity);
+    final hillColor =
+        color ?? Palette.brand(context).withValues(alpha: opacity);
     return Stack(
       children: [
         Positioned.fill(
           child: ClipRRect(
             borderRadius: BorderRadius.circular(8),
             child: CustomPaint(
-              painter: MountainPainter(color: color),
+              painter: MountainPainter(color: hillColor),
               size: Size.infinite,
             ),
           ),

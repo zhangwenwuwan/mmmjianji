@@ -1785,19 +1785,20 @@ class _HomeHeroCard extends ConsumerWidget {
     // 原来它和下面的流水卡一样是纯白，整页只有"深绿按钮 + 红色金额"两个重点，
     // 最该有分量的汇总反而最轻。渐变从薄荷到近卡色（深色模式同理），
     // 不抢文字，但一眼能分出"这是汇总、下面是流水"。
-    final mint = Palette.mint(context);
+    // 2026-11-03：和资产页头部卡片统一 —— 同一套品牌色渐变 + 白字。
+    // 之前这里是薄荷浅底，资产页是深底，同一个 App 出现两套"头部"观感。
+    final brand = Palette.brand(context);
+    final onHero = Colors.white;
+    final onHeroSoft = Colors.white.withValues(alpha: 0.78);
     return Panel(
       padding: EdgeInsets.zero,
       gradient: LinearGradient(
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
-        colors: [
-          mint,
-          Color.lerp(mint, Palette.card(context), 0.55)!,
-        ],
+        colors: [brand, brand.withValues(alpha: 0.78)],
       ),
       child: HillCardBackground(
-        opacity: 0.07,
+        color: Colors.white.withValues(alpha: 0.12),
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Column(
@@ -1806,15 +1807,14 @@ class _HomeHeroCard extends ConsumerWidget {
               Row(
                 children: [
                   Text('本月支出',
-                      style: TextStyle(
-                          fontSize: 13, color: Palette.inkSoft(context))),
+                      style: TextStyle(fontSize: 13, color: onHeroSoft)),
                   const Spacer(),
                   if (budgetCents > 0)
                     Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(
-                        color: Palette.brand(context).withValues(alpha: 0.12),
+                        color: Colors.white.withValues(alpha: 0.18),
                         borderRadius: BorderRadius.circular(999),
                       ),
                       child: Text(
@@ -1822,7 +1822,7 @@ class _HomeHeroCard extends ConsumerWidget {
                         style: TextStyle(
                             fontSize: 10.5,
                             fontWeight: FontWeight.w600,
-                            color: Palette.brand(context)),
+                            color: onHero),
                       ),
                     ),
                 ],
@@ -1834,19 +1834,15 @@ class _HomeHeroCard extends ConsumerWidget {
                 style: TextStyle(
                   fontSize: 28,
                   fontWeight: FontWeight.w700,
-                  color: Palette.expense,
+                  color: onHero,
                   fontFeatures: const [FontFeature.tabularFigures()],
                 ),
               ),
               const SizedBox(height: 10),
               Row(
                 children: [
-                  _mini(context, '收入', incomeCents, Palette.income),
-                  _mini(
-                      context,
-                      '结余',
-                      net,
-                      net >= 0 ? Palette.brand(context) : Palette.expense),
+                  _mini(context, '收入', incomeCents, onHero),
+                  _mini(context, '结余', net, onHero),
                 ],
               ),
             ],
@@ -1862,7 +1858,8 @@ class _HomeHeroCard extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(label,
-              style: TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
+              style: TextStyle(
+                  fontSize: 12, color: Colors.white.withValues(alpha: 0.7))),
           const SizedBox(height: 3),
           // 走 MoneyText：hidden 状态和「结余为负」都由它处理。
           // 原来这里手写 `centsToText(cents.abs())`，-12 会显示成「¥12」——
