@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/version.dart';
 import '../services/avatar_service.dart';
+import '../services/update_service.dart';
+import 'update_dialog.dart';
 import '../state/ledger_state.dart';
 import '../state/settings.dart';
 import 'about_page.dart';
@@ -84,6 +86,8 @@ class ProfilePage extends ConsumerWidget {
               const Divider(height: 1, indent: 16),
               _nav(context, Icons.auto_graph_rounded, '年度报告',
                   '全年汇总 + 分享海报', const ReportPage()),
+              const Divider(height: 1, indent: 16),
+              const _CheckUpdateTile(),
               const Divider(height: 1, indent: 16),
               _nav(context, Icons.info_outline, '关于简记',
                   '本地优先，没有账号、没有服务器', const AboutPage()),
@@ -318,11 +322,20 @@ class _AvatarCard extends ConsumerWidget {
     switch (action) {
       case 'pick':
         final old = ref.read(settingsProvider).avatarPath;
-        final path = await AvatarService.pickFromGallery(oldPath: old);
-        // 用户在相册里点了取消：什么都不做，也不要弹「失败」。
-        if (path == null || !context.mounted) return;
-        await ref.read(settingsProvider.notifier).setAvatar(path);
-        if (context.mounted) _toast(context, '头像已更新');
+        final out = await AvatarService.pickFromGallery(oldPath: old);
+        if (!context.mounted) return;
+        // 三种结果分开说：取消不弹，权限被拒要指路，其它失败要说清
+        switch (out.result) {
+          case PickResult.ok:
+            await ref.read(settingsProvider.notifier).setAvatar(out.path!);
+            if (context.mounted) _toast(context, '头像已更新');
+          case PickResult.cancelled:
+            break;
+          case PickResult.denied:
+            _toast(context, '相册权限被拒绝了，去系统设置里打开');
+          case PickResult.error:
+            _toast(context, '读图失败，详情见日志中心');
+        }
       case 'reset':
         await ref.read(settingsProvider.notifier).clearAvatar();
         await AvatarService.clear();
@@ -462,6 +475,79 @@ class _GridItem extends StatelessWidget {
                   fontWeight: FontWeight.w500,
                   color: Palette.ink(context))),
         ],
+      ),
+    );
+  }
+}
+
+/// 「检查更新」行：**只查有没有新版，不下载、不安装**。
+///
+/// 为什么不做成启动时自动检查：这是全 App 唯一一处联网（其余数据都只在本机），
+/// 静默请求会让「本地优先、没有服务器」这句话变得不诚实。
+/// 放在设置里、由用户点，行为可控，出问题也只影响这一行。
+class _CheckUpdateTile extends StatefulWidget {
+  const _CheckUpdateTile();
+
+  @override
+  State<_CheckUpdateTile> createState() => _CheckUpdateTileState();
+}
+
+class _CheckUpdateTileState extends State<_CheckUpdateTile> {
+  bool _checking = false;
+
+  /// 上次检查的结论，贴在副标题上（不用每次都弹 toast 才知道结果）
+  String? _hint;
+
+  Future<void> _check() async {
+    if (_checking) return;
+    setState(() {
+      _checking = true;
+      _hint = null;
+    });
+    final r = await UpdateService.check();
+    if (!mounted) return;
+    setState(() {
+      _checking = false;
+      _hint = switch (r.status) {
+        UpdateStatus.available => '发现新版本 ${r.info!.versionName}',
+        UpdateStatus.latest => '已是最新版本',
+        UpdateStatus.notConfigured => null,
+        UpdateStatus.failed => '上次检查失败',
+      };
+    });
+    if (!mounted) return;
+    switch (r.status) {
+      case UpdateStatus.available:
+        await showUpdateDialog(context, r.info!);
+      case UpdateStatus.latest:
+        ScaffoldMessenger.of(context).toast('已是最新版本 $appVersion');
+      case UpdateStatus.notConfigured:
+        ScaffoldMessenger.of(context).toast('当前版本还没接入更新服务');
+      case UpdateStatus.failed:
+        ScaffoldMessenger.of(context).toast('检查失败：${r.message}');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PressScale(
+      scale: 0.98,
+      onTap: _checking ? null : _check,
+      child: ListTile(
+        leading: const Icon(Icons.system_update_alt),
+        title: const Text('检查更新'),
+        subtitle: Text(
+          _hint ?? '当前 $appVersion（$appBuild）',
+          style: const TextStyle(fontSize: 12),
+        ),
+        trailing: _checking
+            ? SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: Palette.brand(context)),
+              )
+            : const Icon(Icons.chevron_right, size: 18),
       ),
     );
   }

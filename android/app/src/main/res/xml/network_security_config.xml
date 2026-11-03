@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  网络安全配置。
+
+  默认（base-config）**禁止明文 HTTP**：更新清单和 APK 都必须走 HTTPS。
+  这不是保守 —— 明文下 apkUrl 和 sha256 在同一份 JSON 里，中间人改一处
+  就能把包换掉，校验等于没有。
+
+  只对 127.0.0.1 / localhost 放行明文，用途只有一个：
+  配合 `adb reverse tcp:8080 tcp:8080`，让手机访问**电脑上的本机服务**，
+  用来验证「检查更新 → 下载 → 拉起安装器」这条链路。
+  127.0.0.1 只能被手机自己的进程或 adb 端口转发使用，外部攻击者必须先
+  控制手机才能利用，风险可以忽略；公网仍然一律 HTTPS。
+
+  ⚠️ 别图省事把它改成 cleartextTrafficPermitted="true" 放全局：
+  那等于允许任意 http 下载，而 App 唯一的联网就是下载安装包。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>

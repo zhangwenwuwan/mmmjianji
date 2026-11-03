@@ -83,6 +83,10 @@ android {
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+    // FileProvider：应用内更新要把下载好的 APK 以 content:// 交给系统安装器。
+    // 别的插件大概率已经传递引入了 androidx.core，但显式声明才不会因为
+    // 某个插件换实现/降版本而编译失败。版本跟随 compileSdk 34+ 的稳定线。
+    implementation("androidx.core:core-ktx:1.13.1")
 }
 
 kotlin {

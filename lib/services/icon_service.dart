@@ -5,6 +5,10 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'pick_result.dart';
+
+export 'pick_result.dart';
+
 /// 自定义图标（从相册选图当分类/账户/愿望的图标）。
 ///
 /// **约定**：`glyph` 字段里存
@@ -47,8 +51,9 @@ class IconService {
 
   /// 从相册选一张图 → 缩到 256px → 拷进私有目录 → 返回 `img:xxx.jpg`。
   ///
-  /// 返回 null = 用户取消（不是错误）。
-  static Future<String?> pickFromGallery() async {
+  /// 返回 [PickOutcome]：权限被拒（denied）和用户取消（cancelled）要分开说，
+  /// 否则被拒的人只看到「没有选中图片」，永远不知道要去设置里开权限。
+  static Future<PickOutcome> pickFromGallery() async {
     try {
       final picked = await ImagePicker().pickImage(
         source: ImageSource.gallery,
@@ -57,15 +62,20 @@ class IconService {
         maxHeight: 256,
         imageQuality: 85,
       );
-      if (picked == null) return null;
+      if (picked == null) return const PickOutcome(PickResult.cancelled);
 
       final dir = await _dir();
       final name = 'icon_${DateTime.now().millisecondsSinceEpoch}.jpg';
       await File(picked.path).copy(p.join(dir.path, name));
-      return '$_prefix$name';
+      return PickOutcome(PickResult.ok, path: '$_prefix$name');
     } catch (e) {
       debugPrint('自定义图标选择失败: $e');
-      return null;
+      final s = e.toString().toLowerCase();
+      return PickOutcome((s.contains('denied') ||
+              s.contains('permission') ||
+              s.contains('拒绝'))
+          ? PickResult.denied
+          : PickResult.error);
     }
   }
 

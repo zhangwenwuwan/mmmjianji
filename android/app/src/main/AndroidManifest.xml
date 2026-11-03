@@ -7,11 +7,26 @@
         android:maxSdkVersion="32"/>
     <!-- 生物识别解锁（local_auth）：指纹 / 面容 -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
+    <!-- ⚠️ 联网：只有「检查更新 / 下载新版本」用得到，但**必须有**。
+         Flutter 模板只在 debug/profile 的 Manifest 里加了这一条（为了 hot reload），
+         main 里默认没有 —— 于是 release 包一旦发网络请求就抛 SocketException，
+         界面上只会显示「网络连不上」，看起来像用户的网坏了。
+         2026-10-29 真机验证更新功能时才踩到：装了正式包、地址都对、端口也通，
+         就是连不上。 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- 应用内更新：下载完 APK 后拉起系统安装器。
+         ⚠️ 这不是"静默安装"权限 —— 普通 App 拿到它也只能弹系统安装界面让用户点。
+         用它在后台偷偷装别的包是 Google Play 明令禁止的；本 App 不上架、
+         只更新自己，且更新动作由用户主动点「立即更新」触发。
+         运行时还要 canRequestPackageInstalls() 为 true（用户得在系统设置里允许
+         「安装未知应用」），见 MainActivity.kt 的 jianji/update 通道。 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
 
 <application
         android:label="简记"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:networkSecurityConfig="@xml/network_security_config">
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -50,6 +65,28 @@
             android:name="io.flutter.embedding.android.EnableImpeller"
             android:value="false" />
     
+        <!-- 应用内更新：PackageInstaller 会话的安装结果回执（失败时 Toast 出 status）。
+             exported=false：只接收本 App 自己 PendingIntent 发出的广播。 -->
+        <receiver
+            android:name=".InstallResultReceiver"
+            android:exported="false" />
+
+        <!-- 应用内更新：把下载好的 APK 交给系统安装器。
+             Android 7+ 禁止 file:// 直接外传（FileUriExposedException），
+             必须由 FileProvider 生成 content:// URI 并临时授权读权限。
+             authorities 用 ${applicationId} 占位：Debug/Release 的 applicationId
+             一致（都是 com.jianji.ledger），Kotlin 侧用 packageName 拼同一个值。
+             路径见 res/xml/file_paths.xml（只暴露 cache/updates/）。 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <!-- 桌面小组件：本月概览 -->
         <receiver
             android:name=".SummaryWidgetProvider"

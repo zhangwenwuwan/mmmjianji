@@ -5,6 +5,10 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'pick_result.dart';
+
+export 'pick_result.dart';
+
 /// 「我的」页头像：从相册选一张图，缩到 512px 存进应用私有目录。
 ///
 /// 和 `IconService` 的区别：头像只有一张，所以这里**存绝对路径、不存相对名**。
@@ -24,10 +28,10 @@ class AvatarService {
     return dir;
   }
 
-  /// 选图并落盘，返回新文件的绝对路径。null = 用户取消或出错。
+  /// 选图并落盘，返回新文件的绝对路径。取消/权限被拒/出错分开返回。
   ///
   /// [oldPath] 传进来会顺手删掉，避免每换一次多留一个文件。
-  static Future<String?> pickFromGallery({String oldPath = ''}) async {
+  static Future<PickOutcome> pickFromGallery({String oldPath = ''}) async {
     try {
       final picked = await ImagePicker().pickImage(
         source: ImageSource.gallery,
@@ -36,16 +40,21 @@ class AvatarService {
         maxHeight: 512,
         imageQuality: 90,
       );
-      if (picked == null) return null;
+      if (picked == null) return const PickOutcome(PickResult.cancelled);
 
       final dir = await _dir();
       final name = 'avatar_${DateTime.now().millisecondsSinceEpoch}.jpg';
       final saved = await File(picked.path).copy(p.join(dir.path, name));
       await _prune(keep: saved.path);
-      return saved.path;
+      return PickOutcome(PickResult.ok, path: saved.path);
     } catch (e) {
       debugPrint('头像选择失败: $e');
-      return null;
+      final s = e.toString().toLowerCase();
+      return PickOutcome((s.contains('denied') ||
+              s.contains('permission') ||
+              s.contains('拒绝'))
+          ? PickResult.denied
+          : PickResult.error);
     }
   }
 

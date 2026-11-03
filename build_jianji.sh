@@ -85,7 +85,15 @@ else
   echo "    release 构建会在 gradle 阶段报错（不会退回 debug 签名）。"
 fi
 
+# test 要「先清掉源里已删除的旧文件」再拷，否则 cp 只增不减，
+# 源里删掉的测试会永远留在构建副本里继续被 `--check` 跑到
+# （2026-11-03 踩：删掉的临时探针在构建副本里"复活"，全量一直报红）。
+# 注意不能整目录 rm -rf：安全策略会拦成批删除，而且这里只需要删多出来的那几个。
 mkdir -p "$BC/test"
+while IFS= read -r f; do
+  rel="${f#"$BC/test/"}"
+  [[ -e "$SRC/test/$rel" ]] || rm -f "$f"
+done < <(find "$BC/test" -type f 2>/dev/null)
 cp -rf "$SRC/test/." "$BC/test/"
 echo "[2/5] 源码同步完成"
 
@@ -111,6 +119,43 @@ if ! grep -q "FlutterFragmentActivity" "$BC/android/app/src/main/kotlin/com/jian
 fi
 if ! grep -q "USE_BIOMETRIC" "$BC/android/app/src/main/AndroidManifest.xml"; then
   echo "❌ AndroidManifest 缺 USE_BIOMETRIC 权限 —— 生物识别会直接失败"
+  exit 1
+fi
+
+# 应用内更新（下载 APK 后拉起系统安装器）的三件套。
+# 缺任何一个的症状都是「点了没反应」或 SecurityException，而 Dart 侧只能看到
+# 一个笼统的失败码 —— 和指纹那次一样，UI 完全看不出原因，所以在这里卡住。
+if ! grep -q "REQUEST_INSTALL_PACKAGES" "$BC/android/app/src/main/AndroidManifest.xml"; then
+  echo "❌ AndroidManifest 缺 REQUEST_INSTALL_PACKAGES —— 更新下载完会装不上"
+  exit 1
+fi
+# 安装走的是 PackageInstaller 会话（见 MainActivity.kt 的注释：OPPO 的安装器
+# 读不了 FileProvider 的 content://，会报「解析程序包时出现问题」）。
+# FileProvider 现在只作为备用通道保留：配了就必须有 file_paths，否则运行时会抛
+# "Failed to find configured root"。
+if grep -q "fileprovider" "$BC/android/app/src/main/AndroidManifest.xml"; then
+  if [[ ! -f "$BC/android/app/src/main/res/xml/file_paths.xml" ]]; then
+    echo "❌ Manifest 有 FileProvider 但缺 res/xml/file_paths.xml"
+    exit 1
+  fi
+fi
+if ! grep -q "PackageInstaller" "$BC/android/app/src/main/kotlin/com/jianji/jianji/MainActivity.kt"; then
+  echo "❌ MainActivity 没走 PackageInstaller —— 部分 ROM 的安装器读不了 content://"
+  exit 1
+fi
+if ! grep -q "jianji/update" "$BC/android/app/src/main/kotlin/com/jianji/jianji/MainActivity.kt"; then
+  echo "❌ MainActivity 缺 jianji/update 通道 —— 下载完了也没有安装入口"
+  exit 1
+fi
+# INTERNET 权限：Flutter 模板只在 debug/profile 的 Manifest 里加，main 里没有。
+# 漏了它的症状是「release 包一切正常，只有联网功能报网络连不上」，
+# 排查时会一路怀疑 DNS / 端口 / 明文策略，实际上根本没权限。
+if ! grep -q "android.permission.INTERNET" "$BC/android/app/src/main/AndroidManifest.xml"; then
+  echo "❌ AndroidManifest 缺 INTERNET 权限 —— release 包无法检查更新/下载"
+  exit 1
+fi
+if [[ ! -f "$BC/android/app/src/main/res/xml/network_security_config.xml" ]]; then
+  echo "❌ 缺 network_security_config.xml —— 明文策略会退回系统默认，本机调试连不上"
   exit 1
 fi
 
@@ -191,8 +236,14 @@ fi
 flutter pub get
 
 # 5) 构建
+# UPDATE_URL 可选：注入更新清单地址（默认空 = 未接入，行为和以前一致）。
+# 为什么走 dart-define 而不是写死在代码里：
+#  - 正式包要指向你的域名，验证包要指向本机（adb reverse 的 127.0.0.1）；
+#  - 改常量就得改代码、还得再改回来，容易漏（漏了就是发出去的包里带着测试地址）。
+# 用法：UPDATE_URL=https://xxx/version.json ./build_jianji.sh --incr
 flutter build apk --"$BUILD_TYPE" --target-platform android-arm64 \
-  --dart-define=APP_VERSION="$VER" --dart-define=APP_BUILD="$BUILD_NUMBER"
+  --dart-define=APP_VERSION="$VER" --dart-define=APP_BUILD="$BUILD_NUMBER" \
+  --dart-define=UPDATE_URL="${UPDATE_URL:-}"
 echo "[5/6] 构建完成（$BUILD_TYPE）"
 
 # 6) 取出命名 APK
@@ -238,6 +289,17 @@ if [[ "$BUILD_TYPE" == "release" ]]; then
       exit 1
     fi
     echo "✅ 签名校验通过：jianji-release.jks / SHA-1 $GOT"
+  fi
+
+  # 6.6) 备份提醒：keystore 只存在于本机且被 gitignore，丢了就永远无法覆盖升级。
+  # 这里只提醒不拦构建 —— 备份丢失不该挡住"修个 bug 得赶紧出包"，但必须喊出来。
+  KEYSTORE="$SRC/android/jianji-release.jks"
+  BACKUP="$SRC/../签名备份/jianji-release.jks"
+  if [[ ! -f "$BACKUP" ]]; then
+    echo "⚠️  签名备份缺失：$BACKUP"
+    echo "    keystore 一旦丢失，已安装的 App 将无法覆盖升级（只能卸载重装并丢数据）。"
+  elif ! cmp -s "$KEYSTORE" "$BACKUP"; then
+    echo "⚠️  签名备份与当前 keystore 不一致（可能换过密钥但没更新备份）：$BACKUP"
   fi
 fi
 echo

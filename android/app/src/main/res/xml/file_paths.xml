@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider 允许暴露给系统安装器的路径。
+
+  只开 cache/updates/ 一条：下载的 APK 放在 getTemporaryDirectory()/updates/
+  （Android 上就是 context.getCacheDir()），装完/失败都会删掉。
+  千万不要写 root-path 或 external-path —— 那等于把整个私有目录和外部存储
+  都授权给拿到 content:// 的应用，是典型的信息泄露配置。
+-->
+<paths>
+    <cache-path name="updates" path="updates/" />
+</paths>

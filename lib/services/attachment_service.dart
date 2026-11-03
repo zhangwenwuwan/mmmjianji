@@ -5,6 +5,10 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'app_log.dart';
+import 'pick_result.dart';
+
+// 让原来只 import attachment_service 的调用方仍能拿到 PickResult / PickOutcome
+export 'pick_result.dart';
 
 /// 附件（图片凭证）的本地存储。
 ///
@@ -35,36 +39,34 @@ class AttachmentService {
   }
 
   /// 从相册选一张
-  static Future<String?> pickFromGallery(int bookId) async {
-    try {
-      final x = await _picker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 1600,
-        maxHeight: 1600,
-        imageQuality: 82,
-      );
-      if (x == null) return null;
-      return saveFile(File(x.path), bookId);
-    } catch (e) {
-      AppLog.warn('attachment', '相册选图失败: $e');
-      return null;
-    }
-  }
+  ///
+  /// 返回**结果对象**而不是裸路径：以前「用户主动取消」「权限被拒」「IO 异常」
+  /// 一律返回 null，UI 只弹「没有选中图片」—— 第一次被问权限时选了拒绝的人
+  /// 之后每次点都只看到这句话，既不知道是权限问题，也没有去设置的入口。
+  static Future<PickOutcome> pickFromGallery(int bookId) =>
+      _pick(ImageSource.gallery, bookId);
 
   /// 拍一张
-  static Future<String?> pickFromCamera(int bookId) async {
+  static Future<PickOutcome> pickFromCamera(int bookId) =>
+      _pick(ImageSource.camera, bookId);
+
+  static Future<PickOutcome> _pick(ImageSource source, int bookId) async {
     try {
       final x = await _picker.pickImage(
-        source: ImageSource.camera,
+        source: source,
         maxWidth: 1600,
         maxHeight: 1600,
         imageQuality: 82,
       );
-      if (x == null) return null;
-      return saveFile(File(x.path), bookId);
+      if (x == null) return const PickOutcome(PickResult.cancelled);
+      return PickOutcome(PickResult.ok, path: await saveFile(File(x.path), bookId));
     } catch (e) {
-      AppLog.warn('attachment', '拍照失败: $e');
-      return null;
+      AppLog.warn('attachment', '选图失败（$source）: $e');
+      // image_picker 拒权限时抛的是 PlatformException，code 里带 denied/permission
+      final s = e.toString().toLowerCase();
+      final denied =
+          s.contains('denied') || s.contains('permission') || s.contains('拒绝');
+      return PickOutcome(denied ? PickResult.denied : PickResult.error);
     }
   }
 
