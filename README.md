@@ -17,14 +17,6 @@
 - 应用锁 + 指纹 / 面容解锁
 - 内置自动更新（基于 GitHub Releases）
 
-## 基于 BeeCount
-
-本应用是 [BeeCount](https://github.com/TNT-Likely/BeeCount) 的修改版本，沿用其「BeeCount 软件许可协议」。
-根据协议：本软件仅供**非商业用途**免费使用、修改与分发；修改后的版本**必须公开源代码**并保留原始版权声明与许可协议。
-商业使用需另行获取商业授权，详见仓库内 `COMMERCIAL_LICENSE.md`（上游）或联系原作者。
-
-协议全文见：[LICENSE](LICENSE)（中文） / [LICENSE_EN](LICENSE_EN)（English）。
-
 ## 构建
 
 环境要求：Flutter SDK、Android SDK、JDK 17。
