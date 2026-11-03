@@ -97,7 +97,7 @@ class _ReportPageState extends ConsumerState<ReportPage> {
       if (e.excludeFromStats) continue;
       final from = e.currency ?? currencyOf[e.pocketId] ?? book.baseCurrency;
       if (!hasRate(from, book.baseCurrency, rates)) missingRate = true;
-      final base = toBaseCents(e.amountCents, from, book.baseCurrency, rates);
+      final base = toBaseCents(e.statsCents, from, book.baseCurrency, rates);
       final m = e.day.month - 1;
       if (e.flow == 'in') {
         monthlyIncome[m] += base;
@@ -514,7 +514,9 @@ class _RecentMonths extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final seriesAsync = ref.watch(monthSeriesProvider(6));
+    final month = ref.watch(monthProvider);
+    final seriesAsync =
+        ref.watch(monthSeriesProvider((count: 6, anchor: month)));
     return Panel(
       child: seriesAsync.when(
         skipLoadingOnReload: true,
