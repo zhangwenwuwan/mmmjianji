@@ -12,6 +12,7 @@ import '../state/settings.dart';
 import 'about_page.dart';
 import 'common.dart';
 import 'data_manage_page.dart';
+import 'month_notes_page.dart';
 import 'motion.dart';
 import 'profile_modules.dart';
 import 'reimburse_page.dart';
@@ -72,7 +73,11 @@ class ProfilePage extends ConsumerWidget {
         ),
         _grid(context, ref.watch(settingsProvider).profileHiddenSet),
         const SizedBox(height: 12),
-        SectionLabel('数据管理'),
+        // 这一组分两类东西：高频功能入口（报销 / 年度报告 / 月度总结）
+        // 和"设置类"（检查更新 / 关于）。原来标题叫「数据管理」，但下面
+        // 大半不是数据管理，而点「备份与恢复」进去的那页才叫「数据管理」——
+        // 两个同名不同义，用户找不着东西。改成「更多功能」。
+        SectionLabel('更多功能'),
         Panel(
           padding: EdgeInsets.zero,
           child: Column(
@@ -86,6 +91,12 @@ class ProfilePage extends ConsumerWidget {
               const Divider(height: 1, indent: 16),
               _nav(context, Icons.auto_graph_rounded, '年度报告',
                   '全年汇总 + 分享海报', const ReportPage()),
+              const Divider(height: 1, indent: 16),
+              // 2026-11-03：从「数据管理 → 月度总结」提到一级。
+              // 原来要 我的 → 数据管理 → 月度总结 三层才够得着，
+              // 用户翻月后就再也找不到写过的总结。
+              _nav(context, Icons.notes_outlined, '月度总结',
+                  '每月总结归档，可回看 / 复制', const MonthNotesPage()),
               const Divider(height: 1, indent: 16),
               const _CheckUpdateTile(),
               const Divider(height: 1, indent: 16),
