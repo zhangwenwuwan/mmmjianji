@@ -18,6 +18,7 @@ import 'report_page.dart';
 import 'boot_reveal.dart';
 import 'budget_page.dart';
 import 'common.dart';
+import 'daily_receipt_page.dart';
 import 'editor_page.dart';
 import 'wheel_date_picker.dart';
 import 'export_page.dart';
@@ -540,6 +541,17 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
     for (var gi = 0; gi < keys.length; gi++) {
       final key = keys[gi];
       final list = groups[key]!;
+      // 时间轴按时间正序（早 → 晚），和真实小票一致。
+      // 没记时分的老账排在最后，彼此按 id 倒序（新记的在前）。
+      list.sort((a, b) {
+        final ta = a.timeMinutes;
+        final tb = b.timeMinutes;
+        if (ta == null && tb == null) return b.id.compareTo(a.id);
+        if (ta == null) return 1;
+        if (tb == null) return -1;
+        final c = ta.compareTo(tb);
+        return c != 0 ? c : b.id.compareTo(a.id);
+      });
       final day = list.first.day;
       // 转账不算收支，「不计入收支」的笔也不算
       final net = list.fold<int>(0, (sum, e) {
@@ -552,7 +564,13 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
       // 所以它停在首页顶栏（_LedgerHeader）的正下方，不会盖住它。
       widgets.add(SliverPersistentHeader(
         pinned: true,
-        delegate: _DayHeaderDelegate(day: day, net: net),
+        delegate: _DayHeaderDelegate(
+          day: day,
+          net: net,
+          onReceipt: () => Navigator.of(context).push(
+            AppPageRoute(page: DailyReceiptPage(day: day)),
+          ),
+        ),
       ));
       widgets.add(SliverPadding(
         padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
@@ -564,7 +582,8 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
               child: Column(
                 children: [
                   for (var i = 0; i < list.length; i++) ...[
-                    if (i > 0) const Divider(height: 1, indent: 56),
+                    // 时间轴不需要横向分隔线：竖线本身就是分隔。
+                    if (i > 0) const SizedBox.shrink(),
                     // 非批量模式：左滑直接删除（记错一笔金额是最高频的纠错）。
                     // 以前要走「点行 → 编辑页 → 点删除 → 确认」四步。
                     // 批量模式不套 Dismissible：那会儿点行是勾选，横向拖动会和它打架。
@@ -576,6 +595,9 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
                         selected: _selected.contains(list[i].id),
                         onLongPress: () => _toggleEntry(list[i]),
                         onTap: () => _toggleEntry(list[i]),
+                        timeline: true,
+                        isFirst: i == 0,
+                        isLast: i == list.length - 1,
                       )
                     else
                       Dismissible(
@@ -595,6 +617,9 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
                           key: ValueKey('entry-${list[i].id}'),
                           entry: list[i],
                           onLongPress: () => _toggleEntry(list[i]),
+                          timeline: true,
+                          isFirst: i == 0,
+                          isLast: i == list.length - 1,
                         ),
                       ),
                   ],
@@ -642,10 +667,14 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
 /// ⚠️ 背景必须**不透明**：pinned header 是浮在内容上的，半透明会让流水从底下穿过去。
 /// 正在被下一组顶掉（overlapsContent）时补一条 hairline 底边，边界才清楚。
 class _DayHeaderDelegate extends SliverPersistentHeaderDelegate {
-  const _DayHeaderDelegate({required this.day, required this.net});
+  const _DayHeaderDelegate(
+      {required this.day, required this.net, required this.onReceipt});
 
   final DateTime day;
   final int net;
+
+  /// 点右侧小票图标 → 这一天的「每日小票」。
+  final VoidCallback onReceipt;
 
   static const double _height = 30;
 
@@ -684,6 +713,18 @@ class _DayHeaderDelegate extends SliverPersistentHeaderDelegate {
                   fontSize: 12,
                   color: Palette.inkFaint(context),
                   fontFeatures: const [FontFeature.tabularFigures()])),
+          const SizedBox(width: 6),
+          // 入口放在日期头上：哪一天的票就从哪一天的头进，
+          // 不用再造一个"每日小票"的功能页入口。
+          GestureDetector(
+            onTap: onReceipt,
+            behavior: HitTestBehavior.opaque,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Icon(Icons.receipt_long_outlined,
+                  size: 16, color: Palette.inkFaint(context)),
+            ),
+          ),
         ],
       ),
     );
@@ -691,7 +732,9 @@ class _DayHeaderDelegate extends SliverPersistentHeaderDelegate {
 
   @override
   bool shouldRebuild(covariant _DayHeaderDelegate oldDelegate) =>
-      oldDelegate.day != day || oldDelegate.net != net;
+      oldDelegate.day != day ||
+      oldDelegate.net != net ||
+      oldDelegate.onReceipt != onReceipt;
 }
 
 /// 年度账单提醒卡（对齐原版 home_page 的年度报告提醒）：
@@ -1533,6 +1576,9 @@ class EntryRow extends ConsumerWidget {
     this.onTap,
     this.onLongPress,
     this.selected,
+    this.timeline = false,
+    this.isFirst = false,
+    this.isLast = false,
   });
 
   final Entry entry;
@@ -1545,6 +1591,72 @@ class EntryRow extends ConsumerWidget {
 
   /// 非空 = 选择模式，行前显示勾选框
   final bool? selected;
+
+  /// 时间轴模式（2026-11-03 首页启用）：
+  /// 左侧显示时分、中间一列竖线 + 分类节点，右侧内容和金额不变。
+  /// 日历 / 账户详情 / 分类详情仍用原来的紧凑行 —— 那里一屏要放更多行。
+  final bool timeline;
+
+  /// 当天第一行 / 最后一行：竖线在首尾各收一段，不往上下伸出。
+  final bool isFirst;
+  final bool isLast;
+
+  /// 'HH:mm'；没记时分的老账显示 '--:--'（不编时间）。
+  String get _timeText {
+    final m = entry.timeMinutes;
+    if (m == null) return '--:--';
+    return '${(m ~/ 60).toString().padLeft(2, '0')}:'
+        '${(m % 60).toString().padLeft(2, '0')}';
+  }
+
+  /// 时间轴中间那一列：贯穿的竖线 + 分类节点。
+  ///
+  /// 用 Stack 而不是 Column + Expanded：节点要贴行顶（和时间、标题同一基线），
+  /// 而 Column 会把它放在行垂直中心，时间文字就和标题错位了。
+  Widget _rail(BuildContext context, String glyph, bool isTransfer,
+      String? categoryTitle) {
+    final line = Palette.hairline(context);
+    final tint = (isTransfer
+            ? Palette.inkFaint(context)
+            : Palette.categoryColor(context, categoryTitle ?? '未分类'))
+        .withValues(alpha: 0.14);
+    return SizedBox(
+      width: 28,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          if (isLast)
+            Positioned(
+                left: 13.25,
+                top: 0,
+                height: 13,
+                child: Container(width: 1.5, color: line))
+          else
+            Positioned(
+                left: 13.25,
+                top: isFirst ? 13 : 0,
+                bottom: 0,
+                child: Container(width: 1.5, color: line)),
+          Positioned(
+            top: 0,
+            left: 1,
+            child: Container(
+              width: 26,
+              height: 26,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: tint,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: IconService.isImage(glyph)
+                  ? AppGlyph(glyph, size: 26, fill: true, radius: 8)
+                  : AppGlyph(glyph, size: 14),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -1604,9 +1716,14 @@ class EntryRow extends ConsumerWidget {
             openEntryEditor(context, ref, existing: entry);
           },
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        child: Row(
-          children: [
+        padding: EdgeInsets.symmetric(
+            horizontal: 14, vertical: timeline ? 10 : 12),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: timeline
+                ? CrossAxisAlignment.stretch
+                : CrossAxisAlignment.center,
+            children: [
             // 批量选择模式：行前勾选框
             if (selected != null) ...[
               Icon(
@@ -1618,38 +1735,59 @@ class EntryRow extends ConsumerWidget {
               ),
               const SizedBox(width: 10),
             ],
-            // 自定义图片图标：铺满正方形、不要灰底（对齐参考图）。
-            // emoji / 默认图标放「分类固定色 14%」的圆角盒 ——
-            // 2026-10-28 之前是无彩灰底，一屏全是灰方块，等于没有颜色。
-            // 转账没有分类，用中性灰，否则「转账」会跟着某个分类的颜色跑。
-            if (IconService.isImage(glyph))
-              SizedBox(
-                width: 40,
-                height: 40,
-                child: AppGlyph(glyph, size: 40, fill: true, radius: 4),
-              )
-            else
-              Container(
-                width: 40,
-                height: 40,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: (isTransfer
-                          ? Palette.inkFaint(context)
-                          : Palette.categoryColor(
-                              context, bucket?.title ?? '未分类'))
-                      .withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(10),
+            if (timeline) ...[
+              _rail(context, glyph, isTransfer, bucket?.title),
+              const SizedBox(width: 8),
+            ] else ...[
+              // 自定义图片图标：铺满正方形、不要灰底（对齐参考图）。
+              // emoji / 默认图标放「分类固定色 14%」的圆角盒 ——
+              // 2026-10-28 之前是无彩灰底，一屏全是灰方块，等于没有颜色。
+              // 转账没有分类，用中性灰，否则「转账」会跟着某个分类的颜色跑。
+              if (IconService.isImage(glyph))
+                SizedBox(
+                  width: 40,
+                  height: 40,
+                  child: AppGlyph(glyph, size: 40, fill: true, radius: 4),
+                )
+              else
+                Container(
+                  width: 40,
+                  height: 40,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: (isTransfer
+                            ? Palette.inkFaint(context)
+                            : Palette.categoryColor(
+                                context, bucket?.title ?? '未分类'))
+                        .withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: AppGlyph(glyph, size: 18),
                 ),
-                child: AppGlyph(glyph, size: 18),
-              ),
-            const SizedBox(width: 12),
+              const SizedBox(width: 12),
+            ],
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
+                      // 时间轴内侧：时分紧跟在节点右边、标题前面。
+                      if (timeline) ...[
+                        SizedBox(
+                          width: 40,
+                          child: Text(_timeText,
+                              maxLines: 1,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Palette.inkFaint(context),
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures()
+                                ],
+                              )),
+                        ),
+                        const SizedBox(width: 6),
+                      ],
                       Flexible(
                         child: Text(title,
                             maxLines: 1,
@@ -1698,7 +1836,8 @@ class EntryRow extends ConsumerWidget {
                   ),
                   if (subtitleText.isNotEmpty)
                     Padding(
-                      padding: const EdgeInsets.only(top: 2),
+                      padding:
+                          EdgeInsets.only(top: 2, left: timeline ? 46 : 0),
                       child: Text(
                         subtitleText,
                         maxLines: 1,
@@ -1725,6 +1864,7 @@ class EntryRow extends ConsumerWidget {
               ),
             ),
           ],
+          ),
         ),
       ),
     );
@@ -1784,7 +1924,7 @@ class EntryRow extends ConsumerWidget {
   }
 }
 
-/// 首页汇总大卡：山水插画背景 + 本月支出大字 + 收入 / 结余。
+/// 首页汇总大卡：山水插画背景 + 本月结余大字 + 支出 / 收入。
 class _HomeHeroCard extends ConsumerWidget {
   const _HomeHeroCard({
     required this.expenseCents,
@@ -1825,7 +1965,7 @@ class _HomeHeroCard extends ConsumerWidget {
             children: [
               Row(
                 children: [
-                  Text('本月支出',
+                  Text('本月结余',
                       style: TextStyle(fontSize: 13, color: onHeroSoft)),
                   const Spacer(),
                   if (budgetCents > 0)
@@ -1848,8 +1988,8 @@ class _HomeHeroCard extends ConsumerWidget {
               ),
               const SizedBox(height: AppSpace.xs),
               MoneyText(
-                expenseCents,
-                flow: 'out',
+                net,
+                flow: net >= 0 ? 'in' : 'out',
                 style: TextStyle(
                   fontSize: 28,
                   fontWeight: FontWeight.w700,
@@ -1860,8 +2000,8 @@ class _HomeHeroCard extends ConsumerWidget {
               const SizedBox(height: 10),
               Row(
                 children: [
+                  _mini(context, '支出', expenseCents, onHero),
                   _mini(context, '收入', incomeCents, onHero),
-                  _mini(context, '结余', net, onHero),
                 ],
               ),
             ],

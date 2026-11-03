@@ -230,6 +230,7 @@ class Entry {
     this.splitCents = 0,
     this.aaOfEntryId,
     this.aaCounterparty,
+    this.timeMinutes,
   });
 
   final int id;
@@ -312,6 +313,11 @@ class Entry {
   /// AA 欠款人（谁该还我这笔）。null/空 = 没记。仅分摊支出有意义。
   final String? aaCounterparty;
 
+  /// 消费时分（0~1439，即 hour*60+minute）。null = 不知道（v21 及更早的账）。
+  ///
+  /// 只用于展示（首页时间轴）和同一日内的排序，**不参与任何统计口径**。
+  final int? timeMinutes;
+
   bool get isAaSettle => aaOfEntryId != null;
 
   /// 本笔实际币种（没有单独指定就跟随账户）
@@ -359,6 +365,7 @@ class Entry {
     int? splitCents,
     int? aaOfEntryId,
     String? aaCounterparty,
+    int? timeMinutes,
     // 显式清除开关。
     // `x ?? this.x` 的写法没法把字段改成 null，而这三件事都需要写 null：
     //   ① 取消退款关联  ② 币种改回「跟随账户」  ③ 转账改回普通支出
@@ -396,6 +403,7 @@ class Entry {
         splitCents: splitCents ?? this.splitCents,
         aaOfEntryId: aaOfEntryId ?? this.aaOfEntryId,
         aaCounterparty: aaCounterparty ?? this.aaCounterparty,
+        timeMinutes: timeMinutes ?? this.timeMinutes,
       );
 }
 
@@ -677,7 +685,7 @@ class LedgerStore {
   /// `allPockets().first` 这样的默认账户，改默认值会让十几处测试同时红。
   final bool withSamplePockets;
 
-  static const _version = 21;
+  static const _version = 22;
 
   static Future<LedgerStore> open({
     String? path,
@@ -710,6 +718,28 @@ class LedgerStore {
   static DateTime parseDay(String raw) {
     final s = raw.length >= 10 ? raw.substring(0, 10) : raw;
     return DateTime.parse(s);
+  }
+
+  /// 分钟数 → 存库用的 'HH:mm'；null 原样返回（= 不知道）。
+  static String? _timeKey(int? minutes) {
+    if (minutes == null) return null;
+    final m = minutes.clamp(0, 1439);
+    return '${(m ~/ 60).toString().padLeft(2, '0')}:'
+        '${(m % 60).toString().padLeft(2, '0')}';
+  }
+
+  /// 'HH:mm' → 分钟数。空 / 脏数据一律 null —— 宁可显示 --:--，也不猜时间。
+  static int? _parseTimeMinutes(Object? raw) {
+    if (raw == null) return null;
+    final s = raw.toString().trim();
+    if (s.isEmpty) return null;
+    final parts = s.split(':');
+    if (parts.length < 2) return null;
+    final h = int.tryParse(parts[0]);
+    final m = int.tryParse(parts[1]);
+    if (h == null || m == null) return null;
+    if (h < 0 || h > 23 || m < 0 || m > 59) return null;
+    return h * 60 + m;
   }
 
   Future<void> close() => _db.close();
@@ -770,6 +800,7 @@ class LedgerStore {
         split_cents INTEGER NOT NULL DEFAULT 0,
         memo TEXT NOT NULL DEFAULT '',
         day TEXT NOT NULL,
+        day_time TEXT,
         tags TEXT NOT NULL DEFAULT '',
         reimburse INTEGER NOT NULL DEFAULT 0,
         mood INTEGER NOT NULL DEFAULT 0,
@@ -1046,6 +1077,15 @@ class LedgerStore {
 
   // v21：AA 欠款人（谁该还我这笔）。null/空 = 没记。只对分摊支出有意义。
   await _addColumnIfMissing(db, 'entries', 'aa_counterparty', 'TEXT');
+
+  // v22：消费时分（'HH:mm'）。首页要按时间轴展示，必须知道几点几分。
+  //
+  // 为什么单独一列而不是把 day 改成 ISO 时间戳：
+  // - day 现在被 SQL 的 `day = ?` / `BETWEEN` 直接比较，改成带时分的字符串
+  //   会让所有按天过滤的查询（首页、日历、统计）全部失效，改动面极大；
+  // - 老数据的时分无从得知，只能留 NULL。新记账默认写当前时间，老账显示 --:--。
+  //   **不给历史数据编时间**：假时间比空白更容易让人误判。
+  await _addColumnIfMissing(db, 'entries', 'day_time', 'TEXT');
 
   // v8：附件（图片凭证）
     await db.execute('''
@@ -1723,6 +1763,7 @@ class LedgerStore {
     int? refundOfId,
     bool adjustment = false,
     int splitCents = 0,
+    int? timeMinutes,
   }) =>
       _db.insert('entries', {
         'book_id': bookId,
@@ -1735,6 +1776,7 @@ class LedgerStore {
         'split_cents': flow == 'out' ? splitCents.clamp(0, amountCents) : 0,
         'memo': memo,
         'day': dayKey(day),
+        'day_time': _timeKey(timeMinutes),
         'tags': tags,
         'reimburse': reimburse,
         'mood': mood,
@@ -1770,6 +1812,7 @@ class LedgerStore {
           'refund_of_id': e.refundOfId,
           'adjustment': e.adjustment ? 1 : 0,
           'day': dayKey(e.day),
+          'day_time': _timeKey(e.timeMinutes),
           'tags': e.tags,
           'reimburse': e.reimburse,
           'mood': e.mood,
@@ -1970,6 +2013,7 @@ class LedgerStore {
         amountCents: r['amount_cents'] as int,
         memo: r['memo'] as String,
         day: parseDay(r['day'] as String),
+        timeMinutes: _parseTimeMinutes(r['day_time']),
         tags: r['tags'] as String,
         reimburse: r['reimburse'] as int,
         mood: (r['mood'] as int?) ?? 0,

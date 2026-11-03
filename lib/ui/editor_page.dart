@@ -21,6 +21,18 @@ import 'theme.dart';
 import 'template_manage_page.dart';
 import 'wheel_date_picker.dart';
 
+/// 保存时该写什么时分：只有「记今天的账」才取当前时间。
+///
+/// 补记历史日期时具体几点无从得知，留空（首页显示 --:--）比编一个时间诚实。
+/// 编辑已有流水不会走这里 —— copyWith 不传该字段，保留库里原值。
+int? _saveTimeMinutes(DateTime day) {
+  final now = DateTime.now();
+  if (day.year != now.year || day.month != now.month || day.day != now.day) {
+    return null;
+  }
+  return now.hour * 60 + now.minute;
+}
+
 /// 记一笔（**一屏流程**，对齐一木记账）：
 ///
 /// 1. 顶部 TabBar：支出 / 收入 / 转账 / 债务，右上「取消」；
@@ -759,6 +771,7 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
         amountCents: _resultCents,
         memo: _memoCtrl.text.trim(),
         day: _day,
+        timeMinutes: _saveTimeMinutes(_day),
         tags: tags,
         reimburse: _flow == 'in' ? 0 : _reimburse,
         mood: _flow == 'in' ? 0 : _mood,
@@ -2235,6 +2248,7 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
           amountCents: _resultCents,
           memo: _memoCtrl.text.trim(),
           day: _day,
+          timeMinutes: _saveTimeMinutes(_day),
           tags: tags,
           reimburse: _isTransfer ? 0 : _reimburse,
           mood: _isTransfer ? 0 : _mood,
