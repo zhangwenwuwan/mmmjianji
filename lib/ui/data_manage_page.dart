@@ -16,7 +16,6 @@ import 'common.dart';
 import 'category_migration_page.dart';
 import 'export_page.dart';
 import 'log_center_page.dart';
-import 'month_notes_page.dart';
 import 'statement_share_page.dart';
 import 'data_actions.dart'
     show
@@ -213,17 +212,6 @@ class _DataManagePageState extends ConsumerState<DataManagePage> {
                     leading: const Icon(Icons.swap_horiz),
                     title: const Text('分类迁移'),
                     subtitle: const Text('把这类的流水整批改到另一类'),
-                  ),
-                ),
-                const Divider(height: 1, indent: 16),
-                PressScale(
-                  scale: 0.98,
-                  onTap: () => Navigator.of(context)
-                      .push(AppPageRoute(page: const MonthNotesPage())),
-                  child: const ListTile(
-                    leading: Icon(Icons.notes_outlined),
-                    title: Text('月度总结'),
-                    subtitle: Text('统计页写过的每月总结，可回看 / 复制'),
                   ),
                 ),
                 const Divider(height: 1, indent: 16),

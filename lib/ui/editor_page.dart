@@ -3337,6 +3337,17 @@ String _pocketKindLabel(PocketKind k) => switch (k) {
       PocketKind.debt => '负债',
     };
 
+/// 账户金额的说法：负债类（信用卡 / 花呗 / 白条）的 `balanceCents` 是
+/// **「欠多少」**，不是"账户里有多少钱"（见 store.pocketBalances 的注释：
+/// 负债 = 期初欠款 − 净流入，还款会让它变小）。
+///
+/// 之前统一写成「余额 ¥x」，信用卡的欠款额就变成了"余额"，用户以为账算错了。
+String pocketAmountLabel(Pocket p, int cents) {
+  final money = centsToText(cents < 0 ? -cents : cents);
+  if (p.kind.isLiability) return '${cents < 0 ? '多还' : '欠款'} $money';
+  return '余额 ${cents < 0 ? '-$money' : money}';
+}
+
 /// 账户选择器（收支 / 转账共用）：列表里直接显示**余额**。
 ///
 /// 转账以前用横滑标签，账户一多就变成"左右翻着找账户"；下拉一屏能扫完，
@@ -3363,8 +3374,8 @@ Future<int?> showPocketPicker(
             leading: AppGlyph(p.glyph, size: 18),
             title: Text('${p.displayName}${ownerLabel?.call(p) ?? ''}'),
             subtitle: Text(
-              '${_pocketKindLabel(p.kind)} · ${p.currency} · 余额 '
-              '${centsToText(balanceOf[p.id] ?? 0)}',
+              '${_pocketKindLabel(p.kind)} · ${p.currency} · '
+              '${pocketAmountLabel(p, balanceOf[p.id] ?? 0)}',
               style: const TextStyle(fontSize: 12),
             ),
             trailing:
@@ -3439,10 +3450,15 @@ Widget pocketSelectRow(
           ),
           if (sel != null)
             Text(
-              centsToText(balanceOf[sel.id] ?? 0),
+              // 转账右侧同理：信用卡显示的是欠款，写「欠」才不会误读成余额。
+              sel.kind.isLiability
+                  ? '欠 ${centsToText((balanceOf[sel.id] ?? 0).abs())}'
+                  : centsToText(balanceOf[sel.id] ?? 0),
               style: TextStyle(
                 fontSize: 12,
-                color: Palette.inkSoft(context),
+                color: sel.kind.isLiability
+                    ? Palette.expense
+                    : Palette.inkSoft(context),
                 fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),

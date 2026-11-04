@@ -2464,6 +2464,54 @@ class LedgerStore {
     };
   }
 
+  /// 有流水的月份，按月倒序；收支折算成账本主币、逐笔 ROUND。
+  ///
+  /// 口径和 [monthTotalsByFlow] 完全一致（剔除回收站、剔除「不计入收支」、
+  /// 支出只算「我的份额」），所以这里列出的数字，点进月报页看到的对得上。
+  ///
+  /// 为什么需要它：原来的「月度总结」只读 `month_notes`，没写过总结的月份
+  /// 一片空白 —— 用户以为"上月账单归档后找不到"，其实是这里根本没读账单。
+  Future<
+      List<
+          ({
+            String month,
+            int incomeCents,
+            int expenseCents,
+            int count
+          })>> monthsWithData(int bookId) async {
+    final rows = await _db.rawQuery('''
+      SELECT SUBSTR(e.day, 1, 7) AS m,
+             SUM(CASE WHEN e.flow = 'in'
+                      THEN ROUND(e.amount_cents * CASE
+                        WHEN COALESCE(e.currency, p.currency, b.base_currency) = b.base_currency
+                          THEN 1.0 ELSE COALESCE(r.rate, 1.0) END)
+                      ELSE 0 END) AS income,
+             SUM(CASE WHEN e.flow = 'out'
+                      THEN ROUND((e.amount_cents - COALESCE(e.split_cents, 0)) * CASE
+                        WHEN COALESCE(e.currency, p.currency, b.base_currency) = b.base_currency
+                          THEN 1.0 ELSE COALESCE(r.rate, 1.0) END)
+                      ELSE 0 END) AS expense,
+             SUM(CASE WHEN e.flow IN ('in', 'out') THEN 1 ELSE 0 END) AS cnt
+      FROM entries e
+      JOIN books b ON b.id = e.book_id
+      LEFT JOIN pockets p ON p.id = e.pocket_id
+      LEFT JOIN rates r ON r.book_id = e.book_id
+                       AND r.code = COALESCE(e.currency, p.currency)
+      WHERE e.book_id = ? AND e.deleted_at IS NULL AND e.exclude_from_stats = 0
+      GROUP BY m
+      ORDER BY m DESC
+    ''', [bookId]);
+    return [
+      for (final r in rows)
+        (
+          month: (r['m'] as String?) ?? '',
+          incomeCents: (r['income'] as num?)?.toInt() ?? 0,
+          expenseCents: (r['expense'] as num?)?.toInt() ?? 0,
+          count: (r['cnt'] as num?)?.toInt() ?? 0,
+        )
+    ]..removeWhere((e) => e.month.length < 7);
+  }
+
   /// 分类排行（保留 bucket_id，好让排行榜能点进分类详情 / 展开子分类）。
   /// 与原版 category_rank_row 对应。
   Future<

@@ -11,7 +11,7 @@ import '../state/ledger_state.dart';
 import '../state/settings.dart';
 import 'about_page.dart';
 import 'common.dart';
-import 'month_notes_page.dart';
+import 'month_archive_page.dart';
 import 'motion.dart';
 import 'profile_modules.dart';
 import 'reimburse_page.dart';
@@ -89,10 +89,10 @@ class ProfilePage extends ConsumerWidget {
                   '全年汇总 + 分享海报', const ReportPage()),
               const Divider(height: 1, indent: 16),
               // 2026-11-03：从「数据管理 → 月度总结」提到一级。
-              // 原来要 我的 → 数据管理 → 月度总结 三层才够得着，
-              // 用户翻月后就再也找不到写过的总结。
-              _nav(context, Icons.notes_outlined, '月度总结',
-                  '每月总结归档，可回看 / 复制', const MonthNotesPage()),
+              // 2026-11-05：改叫「月度归档」并补上账单——原来这页只读手写总结，
+              // 没写过总结的月份是空的，用户以为上月账单归档后找不到入口。
+              _nav(context, Icons.calendar_month_outlined, '月度归档',
+                  '每月账单 + 总结，随时回看', const MonthArchivePage()),
               const Divider(height: 1, indent: 16),
               const _CheckUpdateTile(),
               const Divider(height: 1, indent: 16),
