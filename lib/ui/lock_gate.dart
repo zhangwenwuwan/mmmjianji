@@ -7,6 +7,16 @@ import '../state/settings.dart';
 import 'motion.dart';
 import 'theme.dart';
 
+/// 解锁后这段时间内一律不回锁。
+///
+/// 系统生物识别/凭据弹窗自身会触发 `paused → resumed`，不排除就
+/// 「解锁成功 → 立刻回锁 → 再弹」死循环（1.2.8 踩过，表现是"指纹根本用不了"）。
+///
+/// 为什么做成可改的顶层变量：这条规则是**时间**相关的，widget 测试里没法
+/// 把 `DateTime.now()` 往前拨。测试把它设成 0 才能验证「切走就上锁」。
+@visibleForTesting
+Duration lockUnlockGuard = const Duration(seconds: 3);
+
 /// 应用锁：冷启动就要锁；切到后台超过 [_LockGateState._gracePeriod] 再回来也要锁。
 ///
 /// ⚠️ 这里的状态来源是「本次会话是否已解锁」，**不是**一个一次性的 `_locked` 布尔。
@@ -61,6 +71,12 @@ class _LockGateState extends ConsumerState<LockGate>
   final _pinCtrl = TextEditingController();
   String? _error;
 
+  /// 当前是否在前台。
+  ///
+  /// 用来防止 **App 在后台时自动弹生物识别框**：后台弹出来只会被系统取消，
+  /// 用户回到前台看到的是一句「指纹没通过」，像是锁坏了。
+  bool _foreground = true;
+
   @override
   void initState() {
     super.initState();
@@ -74,39 +90,78 @@ class _LockGateState extends ConsumerState<LockGate>
     super.dispose();
   }
 
+  /// 刚解锁 3 秒内一律不动锁：系统生物识别/凭据弹窗自身会触发
+  /// paused → resumed，不排除就「解锁成功 → 立刻回锁 → 再弹」死循环（1.2.8 踩过）。
+  bool _justUnlocked() {
+    final last = _lastUnlockAt;
+    if (last == null || lockUnlockGuard <= Duration.zero) return false;
+    return DateTime.now().difference(last) < lockUnlockGuard;
+  }
+
+  /// 真正挂上锁。抽出来是因为「切走时」和「回来时」两条路都要用。
+  void _lockNow() {
+    if (!mounted) return;
+    setState(() {
+      _unlocked = false;
+      _bioTried = false;
+      _pinCtrl.clear();
+      _error = null;
+      _bioHint = null;
+    });
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (!ref.read(settingsProvider).lockEnabled) return;
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.hidden) {
-      // 自己弹的生物识别框也会让 App 进入后台；这种不算真的切走。
-      // 不排除的话，grace=0 时验证一通过就立刻又被锁上（表现为「指纹根本用不了」）。
-      if (_authing) return;
-      _pausedAt = DateTime.now();
-    } else if (state == AppLifecycleState.resumed) {
-      final pausedAt = _pausedAt;
-      _pausedAt = null;
-      // 刚解锁 3 秒内一律不回锁：系统生物识别/凭据弹窗本身会触发 resumed，
-      // 这是 1.2.8 就修过的坑，不搬过来会「解开又立刻锁上」。
-      final last = _lastUnlockAt;
-      if (last != null &&
-          DateTime.now().difference(last) < const Duration(seconds: 3)) {
-        return;
-      }
-      if (pausedAt != null && shouldLockAfter(
-            pausedAt: pausedAt,
-            now: DateTime.now(),
-            grace: _grace(),
-          )) {
-        setState(() {
-          _unlocked = false;
-          _bioTried = false;
-          _pinCtrl.clear();
-          _error = null;
-          _bioHint = null;
-        });
-      }
+    if (state == AppLifecycleState.resumed) {
+      _onResumed();
+    } else {
+      _onBackground();
     }
+  }
+
+  /// 任何非 resumed 状态都当成「可能切走了」。
+  ///
+  /// 只认 `paused` 会漏锁：手势导航、下拉通知栏、最近任务里快速切一下，
+  /// 系统都可能只发 `inactive → resumed`，`_pausedAt` 一直是 null，
+  /// 回到前台就不上锁 —— 这就是"有时候就是不上锁"的来源。
+  void _onBackground() {
+    _foreground = false;
+    if (!ref.read(settingsProvider).lockEnabled) return;
+    if (_authing) return; // 自己弹的生物识别框造成的后台，不算真的切走
+    if (_justUnlocked()) return;
+    _pausedAt ??= DateTime.now();
+    if (!_unlocked) return; // 已经锁着，不用再动
+    // 宽限期 0（"每次切回都上锁"）→ 现在就锁。
+    // 原来等 resumed 才 setState，用户回到前台会先看到一帧真实账目，
+    // 看起来就是"延迟上锁 / 锁界面慢半拍"。
+    if (_grace() != Duration.zero) return;
+    _lockNow();
+  }
+
+  void _onResumed() {
+    final wasBackground = !_foreground;
+    _foreground = true;
+    final pausedAt = _pausedAt;
+    _pausedAt = null;
+
+    // 后台期间已经锁上了：重建一次，一是让锁定界面就位，
+    // 二是让 build 里的「自动弹指纹」有机会在前台执行。
+    if (wasBackground && !_unlocked && mounted) {
+      setState(() {});
+      return;
+    }
+
+    if (!ref.read(settingsProvider).lockEnabled) return;
+    if (_authing || _justUnlocked()) return;
+    if (pausedAt == null) return;
+    if (!shouldLockAfter(
+      pausedAt: pausedAt,
+      now: DateTime.now(),
+      grace: _grace(),
+    )) {
+      return;
+    }
+    _lockNow();
   }
 
   /// 当前生效的宽限期。偏好没补水完 → 按 0（最严格）处理。
@@ -204,8 +259,9 @@ class _LockGateState extends ConsumerState<LockGate>
     // 没开锁，或本次会话已解锁 → 正常显示
     if (!settings.lockEnabled || _unlocked) return widget.child;
 
-    // 指纹：开着就让系统自己弹一次（省一次点击），失败就老老实实输 PIN
-    if (settings.biometricEnabled && !_bioTried) {
+    // 指纹：开着就让系统自己弹一次（省一次点击），失败就老老实实输 PIN。
+    // 必须等 App 在前台才弹 —— 后台弹只会被系统取消，回前台只剩一句"没通过"。
+    if (settings.biometricEnabled && !_bioTried && _foreground) {
       _bioTried = true;
       WidgetsBinding.instance.addPostFrameCallback((_) => _tryBiometric());
     }

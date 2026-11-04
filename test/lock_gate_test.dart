@@ -18,6 +18,13 @@ import 'package:jianji/ui/lock_gate.dart';
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+    // 「解锁后 3 秒不回锁」那条守卫是为系统生物识别弹窗准备的；测试里
+    // 没有弹窗，把它关掉才能验证「切走就上锁」。
+    lockUnlockGuard = Duration.zero;
+  });
+
+  tearDown(() {
+    lockUnlockGuard = const Duration(seconds: 3);
   });
 
   Future<AppSettings> pumpGate(WidgetTester tester, {required bool locked}) async {
@@ -117,7 +124,91 @@ void main() {
       expect(find.text('CHILD'), findsOneWidget,
           reason: '已解锁的会话不该因为重建又被锁上');
     });
+    testWidgets('每次切回都上锁（grace=0）：切走就锁，回前台不用再等', (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'lock_enabled': true,
+        'pin_hash': _hash('salt', '1234'),
+        'pin_salt': 'salt',
+        'lock_grace_seconds': 0,
+      });
+      await pumpGate(tester, locked: true);
+      await tester.pumpAndSettle();
+      await _unlockWith(tester, '1234');
+      expect(find.text('CHILD'), findsOneWidget);
+
+      // 切到后台：应当**当场**锁上。
+      // 原来要等 resumed 才 setState，用户回到前台会先看到一帧真实账目，
+      // 表现就是「延迟上锁 / 锁界面慢半拍」。
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      expect(find.text('简记已锁定'), findsOneWidget,
+          reason: '离开时就要锁，不能等回到前台');
+
+      // 回来：hidden → inactive → resumed（Framework 要求的合法顺序）
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      expect(find.text('简记已锁定'), findsOneWidget);
+      expect(find.text('CHILD'), findsNothing);
+    });
+
+    testWidgets('只发 inactive → resumed（手势导航/通知栏）也会上锁', (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'lock_enabled': true,
+        'pin_hash': _hash('salt', '1234'),
+        'pin_salt': 'salt',
+        'lock_grace_seconds': 0,
+      });
+      await pumpGate(tester, locked: true);
+      await tester.pumpAndSettle();
+      await _unlockWith(tester, '1234');
+
+      // 某些系统路径不会发 paused，只发 inactive。
+      // 只认 paused 的老逻辑会漏锁 —— 这就是"有时候就是不上锁"。
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+
+      expect(find.text('简记已锁定'), findsOneWidget);
+      expect(find.text('CHILD'), findsNothing);
+    });
+
+    testWidgets('宽限期 30 秒：马上回来不锁', (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'lock_enabled': true,
+        'pin_hash': _hash('salt', '1234'),
+        'pin_salt': 'salt',
+        'lock_grace_seconds': 30,
+      });
+      await pumpGate(tester, locked: true);
+      await tester.pumpAndSettle();
+      await _unlockWith(tester, '1234');
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+
+      expect(find.text('CHILD'), findsOneWidget,
+          reason: '宽限期内的短暂切换不该回锁');
+    });
   });
+}
+
+/// 输 PIN 解锁（4 位会自动提交，这里仍点一次"解锁"兜住老数据）。
+Future<void> _unlockWith(WidgetTester tester, String pin) async {
+  await tester.enterText(find.byType(TextField), pin);
+  await tester.pump();
+  if (find.text('解锁').evaluate().isNotEmpty) {
+    await tester.tap(find.text('解锁'));
+    await tester.pumpAndSettle();
+  }
 }
 
 /// 与 `SettingsNotifier.hashPin` 相同的 FNV-1a 64 位实现（复制过来只为构造测试数据）。

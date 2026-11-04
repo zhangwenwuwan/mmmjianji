@@ -3337,21 +3337,54 @@ String _pocketKindLabel(PocketKind k) => switch (k) {
       PocketKind.debt => '负债',
     };
 
-/// 账户金额的说法：负债类（信用卡 / 花呗 / 白条）的 `balanceCents` 是
-/// **「欠多少」**，不是"账户里有多少钱"（见 store.pocketBalances 的注释：
-/// 负债 = 期初欠款 − 净流入，还款会让它变小）。
+/// 账户金额的说法。选账户时用户想知道的是「这账户现在能花多少」，
+/// 而不同类型的"能花多少"完全不是一回事：
 ///
-/// 之前统一写成「余额 ¥x」，信用卡的欠款额就变成了"余额"，用户以为账算错了。
+/// - 现金 / 银行卡 / 微信 / 支付宝：`balanceCents` 就是余额。
+/// - **信用卡**：`balanceCents` 是「欠多少」（见 store.pocketBalances：
+///   负债 = 期初欠款 − 净流入）。用户真正关心的是**可用额度** = 额度 − 欠款，
+///   直接写「欠款 500」等于让人自己做减法。没设额度才退回说欠款。
+/// - 其他负债（房贷/车贷/借入）：没有额度概念，说「欠款」。
+///
+/// 之前一律写成「余额 ¥x」，信用卡的欠款额就变成了"余额"，看着像账算错了。
 String pocketAmountLabel(Pocket p, int cents) {
-  final money = centsToText(cents < 0 ? -cents : cents);
-  if (p.kind.isLiability) return '${cents < 0 ? '多还' : '欠款'} $money';
-  return '余额 ${cents < 0 ? '-$money' : money}';
+  final owed = cents.abs();
+  if (p.kind == PocketKind.credit) {
+    final limit = p.creditLimitCents;
+    if (limit > 0) {
+      final available = limit - owed;
+      // 超限：算出来的"可用"是负数，别显示成 -120 这种反直觉的东西
+      if (available < 0) return '超限 ${centsToText(-available)}';
+      return '可用 ${centsToText(available)}';
+    }
+    return '欠款 ${centsToText(owed)}';
+  }
+  if (p.kind.isLiability) return '欠款 ${centsToText(owed)}';
+  return '余额 ${cents < 0 ? '-${centsToText(owed)}' : centsToText(owed)}';
 }
 
-/// 账户选择器（收支 / 转账共用）：列表里直接显示**余额**。
+/// 「从 / 到」那一行空间紧，只保留最短的说法：
+/// 信用卡写「可用 x」（这是转账/付款时真正关心的），其他负债写「欠 x」，
+/// 普通账户直接给数字（前面已经有账户名，不需要"余额"两个字）。
+String _compactAmountLabel(Pocket p, int cents) {
+  if (p.kind == PocketKind.credit && p.creditLimitCents > 0) {
+    final available = p.creditLimitCents - cents.abs();
+    return available < 0
+        ? '超限 ${centsToText(-available)}'
+        : '可用 ${centsToText(available)}';
+  }
+  if (p.kind.isLiability) return '欠 ${centsToText(cents.abs())}';
+  return centsToText(cents);
+}
+
+/// 账户选择器（收支 / 转账共用）：列表里直接显示**余额 / 可用额度**。
 ///
 /// 转账以前用横滑标签，账户一多就变成"左右翻着找账户"；下拉一屏能扫完，
 /// 还能顺手看到这个账户里还剩多少钱 —— 选账户时最需要知道的正是这个。
+///
+/// ⚠️ 余额必须用 `watch` 而不是 `read`：冷启动时 `balancesProvider` 还在算，
+/// 用 read 就是"第一次打开全显示 0，关上再打开才正常"（用户实测反馈）。
+/// 这里包一层 `Consumer`，等 provider 回来自动刷新。
 Future<int?> showPocketPicker(
   BuildContext context,
   WidgetRef ref, {
@@ -3360,29 +3393,48 @@ Future<int?> showPocketPicker(
   required int? selectedId,
   String Function(Pocket)? ownerLabel,
 }) {
-  final balances = ref.read(balancesProvider).valueOrNull ?? const [];
-  final balanceOf = {for (final b in balances) b.pocket.id: b.balanceCents};
   return showAppSheet<int>(
     context: context,
     title: title,
-    builder: (ctx) => Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (final p in items)
-          ListTile(
-            dense: true,
-            leading: AppGlyph(p.glyph, size: 18),
-            title: Text('${p.displayName}${ownerLabel?.call(p) ?? ''}'),
-            subtitle: Text(
-              '${_pocketKindLabel(p.kind)} · ${p.currency} · '
-              '${pocketAmountLabel(p, balanceOf[p.id] ?? 0)}',
-              style: const TextStyle(fontSize: 12),
-            ),
-            trailing:
-                p.id == selectedId ? const Icon(Icons.check, size: 18) : null,
-            onTap: () => Navigator.pop(ctx, p.id),
-          ),
-      ],
+    builder: (ctx) => Consumer(
+      builder: (ctx, ref2, _) {
+        final async = ref2.watch(balancesProvider);
+        final balances = async.valueOrNull;
+        final balanceOf = {
+          for (final b in balances ?? const [])
+            b.pocket.id: b.balanceCents,
+        };
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 没算完就说"正在读"，别先摆一排 0 —— 0 会被当成真实余额。
+            if (balances == null)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 22),
+                child: Text(
+                  async.hasError ? '余额读取失败，可直接选择账户' : '正在读取余额…',
+                  style: TextStyle(
+                      fontSize: 12, color: Palette.inkFaint(ctx)),
+                ),
+              ),
+            for (final p in items)
+              ListTile(
+                dense: true,
+                leading: AppGlyph(p.glyph, size: 18),
+                title: Text('${p.displayName}${ownerLabel?.call(p) ?? ''}'),
+                subtitle: Text(
+                  '${_pocketKindLabel(p.kind)} · ${p.currency}'
+                  '${balances == null ? '' : ' · ${pocketAmountLabel(p, balanceOf[p.id] ?? 0)}'}',
+                  style: const TextStyle(fontSize: 12),
+                ),
+                trailing: p.id == selectedId
+                    ? const Icon(Icons.check, size: 18)
+                    : null,
+                onTap: () => Navigator.pop(ctx, p.id),
+              ),
+          ],
+        );
+      },
     ),
   );
 }
@@ -3397,8 +3449,12 @@ Widget pocketSelectRow(
   required ValueChanged<int> onPick,
   String Function(Pocket)? ownerLabel,
 }) {
-  final balances = ref.watch(balancesProvider).valueOrNull ?? const [];
-  final balanceOf = {for (final b in balances) b.pocket.id: b.balanceCents};
+  // watch（不是 read）：余额还在算的时候先不显示数字，算完自动补上。
+  final asyncBalances = ref.watch(balancesProvider);
+  final balances = asyncBalances.valueOrNull;
+  final balanceOf = {
+    for (final b in balances ?? const []) b.pocket.id: b.balanceCents,
+  };
   Pocket? sel;
   for (final p in items) {
     if (p.id == selectedId) {
@@ -3448,16 +3504,17 @@ Widget pocketSelectRow(
               ),
             ),
           ),
-          if (sel != null)
+          // 余额没算完就先不显示数字：摆一个 0 会被当成真实余额。
+          if (sel != null && balances != null)
             Text(
-              // 转账右侧同理：信用卡显示的是欠款，写「欠」才不会误读成余额。
-              sel.kind.isLiability
-                  ? '欠 ${centsToText((balanceOf[sel.id] ?? 0).abs())}'
-                  : centsToText(balanceOf[sel.id] ?? 0),
+              // 和选择列表同一套说法（信用卡 = 可用额度，其他负债 = 欠款）
+              _compactAmountLabel(sel, balanceOf[sel.id] ?? 0),
               style: TextStyle(
                 fontSize: 12,
                 color: sel.kind.isLiability
-                    ? Palette.expense
+                    ? (sel.kind == PocketKind.credit
+                        ? Palette.inkSoft(context)
+                        : Palette.expense)
                     : Palette.inkSoft(context),
                 fontFeatures: const [FontFeature.tabularFigures()],
               ),

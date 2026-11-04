@@ -35,6 +35,7 @@ void main() {
   /// 建一张信用卡并返回它的余额行（含 pocket）。
   Future<({Pocket pocket, int balanceCents})> creditCard({
     required String title,
+    int limitCents = 0,
   }) async {
     await store.addPocket(
       bookId: bookId,
@@ -43,6 +44,7 @@ void main() {
       kind: PocketKind.credit,
       currency: 'CNY',
       openingCents: 0,
+      creditLimitCents: limitCents,
     );
     final id = (await store.allPockets(includeArchived: true))
         .firstWhere((p) => p.title == title)
@@ -61,6 +63,15 @@ void main() {
       expect(card.pocket.kind.isLiability, isTrue,
           reason: '负债账户的 balanceCents 是「欠多少」，写成余额会让用户以为账错了');
       expect(pocketAmountLabel(card.pocket, 123450), '欠款 1,234.5');
+    });
+
+    test('信用卡有额度时显示「可用额度」，不是欠款', () async {
+      // 额度 3000，已欠 1200 → 可用 1800。用户选账户时关心的是"还能刷多少"。
+      final card = await creditCard(title: '有额度卡', limitCents: 300000);
+      expect(pocketAmountLabel(card.pocket, 120000), '可用 1,800');
+
+      // 超限：可用算出来是负数，要说「超限」而不是「可用 -200」
+      expect(pocketAmountLabel(card.pocket, 320000), '超限 200');
     });
 
     test('信用卡刷一笔后欠款为正数', () async {
