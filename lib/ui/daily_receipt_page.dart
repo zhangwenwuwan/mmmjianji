@@ -129,22 +129,26 @@ class _DailyReceiptPageState extends ConsumerState<DailyReceiptPage> {
           }
         }
       }
-      final fromName = pocketName[e.pocketId] ?? '账户';
+      final fromName = (pocketName[e.pocketId] ?? '').trim();
+      final toName = (pocketName[e.toPocketId] ?? '').trim();
+      final catName = bucketName[e.bucketId] ?? '未分类';
+      final memo = e.memo.trim();
+      // 主标题已经用了分类名时，副标题就不要再写一遍分类 ——
+      // 否则会出现「返利 / ⚡ 返利 · 支付宝」这种同一个词肉眼看两遍。
+      final titleIsCategory = memo.isEmpty;
       lines.add((
         timeMinutes: e.timeMinutes,
         glyph: isTransfer
             ? '🔄'
             : (bucketGlyph[e.bucketId] ?? (e.flow == 'in' ? '💰' : '🧾')),
         title: isTransfer
-            ? '$fromName → ${pocketName[e.toPocketId] ?? '账户'}'
-            : (e.memo.trim().isNotEmpty
-                ? e.memo.trim()
-                : (bucketName[e.bucketId] ?? '未分类')),
+            ? '${fromName.isEmpty ? '账户' : fromName} → ${toName.isEmpty ? '账户' : toName}'
+            : (titleIsCategory ? catName : memo),
         account: isTransfer
             ? '账户间转账'
             : [
-                bucketName[e.bucketId] ?? '未分类',
-                if (fromName.trim().isNotEmpty) fromName.trim(),
+                if (!titleIsCategory) catName,
+                if (fromName.isNotEmpty) fromName,
               ].join(' · '),
         cents: base,
         isIncome: e.flow == 'in',
@@ -474,20 +478,22 @@ class _Paper extends StatelessWidget {
                       ],
                     ],
                   ),
-                  const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      // 分类小图标：跟着副标题走，一眼能看出是餐饮/交通/返利。
-                      AppGlyph(l.glyph, size: 11),
-                      const SizedBox(width: 4),
-                      Flexible(
-                        child: Text(l.account,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontSize: 10.5, color: faint)),
-                      ),
-                    ],
-                  ),
+                  if (l.account.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        // 分类小图标：跟着副标题走，一眼能看出是餐饮/交通/返利。
+                        AppGlyph(l.glyph, size: 11),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(l.account,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: 10.5, color: faint)),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),

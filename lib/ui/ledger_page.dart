@@ -1601,6 +1601,11 @@ class EntryRow extends ConsumerWidget {
   final bool isFirst;
   final bool isLast;
 
+  /// 时间轴行的上下留白。
+  /// 竖线必须延伸到这段留白之外，行与行之间才连得上 —— 所以画线和 padding
+  /// 必须共用同一个值，改一个忘另一个就会出现"一节一节的短线"。
+  static const double _timelinePadV = 10;
+
   /// 'HH:mm'；没记时分的老账显示 '--:--'（不编时间）。
   String get _timeText {
     final m = entry.timeMinutes;
@@ -1626,18 +1631,19 @@ class EntryRow extends ConsumerWidget {
         clipBehavior: Clip.none,
         children: [
           // 单笔（既是首行也是末行）不画线：否则节点上方会多出一小截断头线。
+          // 其余情况让线越过行的上下 padding（-padV），相邻两行的线段才会接上。
           if (!(isFirst && isLast)) ...[
             if (isLast)
               Positioned(
                   left: 13.25,
-                  top: 0,
-                  height: 13,
+                  top: -_timelinePadV,
+                  height: _timelinePadV + 13,
                   child: Container(width: 1.5, color: line))
             else
               Positioned(
                   left: 13.25,
-                  top: isFirst ? 13 : 0,
-                  bottom: 0,
+                  top: isFirst ? 13 : -_timelinePadV,
+                  bottom: -_timelinePadV,
                   child: Container(width: 1.5, color: line)),
           ],
           Positioned(
@@ -1730,7 +1736,7 @@ class EntryRow extends ConsumerWidget {
           },
       child: Padding(
         padding: EdgeInsets.symmetric(
-            horizontal: 14, vertical: timeline ? 10 : 12),
+            horizontal: 14, vertical: timeline ? _timelinePadV : 12),
         child: IntrinsicHeight(
           child: Row(
             crossAxisAlignment: timeline
