@@ -11,6 +11,7 @@ import '../core/currency.dart';
 import '../core/rules.dart';
 import '../state/ledger_state.dart';
 import '../state/settings.dart';
+import 'app_glyph.dart';
 import 'common.dart';
 import 'theme.dart';
 
@@ -19,6 +20,7 @@ typedef _Line = ({
   int? timeMinutes,
   String title,
   String account,
+  String glyph,
   int cents,
   bool isIncome,
   bool isTransfer,
@@ -98,6 +100,9 @@ class _DailyReceiptPageState extends ConsumerState<DailyReceiptPage> {
     final bucketName = {
       for (final b in [...outBuckets, ...inBuckets]) b.id: b.title,
     };
+    final bucketGlyph = {
+      for (final b in [...outBuckets, ...inBuckets]) b.id: b.glyph,
+    };
     final entries = await store.entriesOfDay(book.id, _day);
 
     var expense = 0;
@@ -127,6 +132,9 @@ class _DailyReceiptPageState extends ConsumerState<DailyReceiptPage> {
       final fromName = pocketName[e.pocketId] ?? '账户';
       lines.add((
         timeMinutes: e.timeMinutes,
+        glyph: isTransfer
+            ? '🔄'
+            : (bucketGlyph[e.bucketId] ?? (e.flow == 'in' ? '💰' : '🧾')),
         title: isTransfer
             ? '$fromName → ${pocketName[e.toPocketId] ?? '账户'}'
             : (e.memo.trim().isNotEmpty
@@ -466,11 +474,20 @@ class _Paper extends StatelessWidget {
                       ],
                     ],
                   ),
-                  const SizedBox(height: 1),
-                  Text(l.account,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 10.5, color: faint)),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      // 分类小图标：跟着副标题走，一眼能看出是餐饮/交通/返利。
+                      AppGlyph(l.glyph, size: 11),
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(l.account,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 10.5, color: faint)),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),

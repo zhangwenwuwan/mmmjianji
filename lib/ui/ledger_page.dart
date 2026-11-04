@@ -1648,8 +1648,18 @@ class EntryRow extends ConsumerWidget {
               height: 26,
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: tint,
+                // 必须不透明：节点用半透明底时，竖线会从底下透出来，
+                // 看着像"线插进了图标里"。按卡片底色混合出不透明浅色。
+                color: Color.alphaBlend(tint, Palette.card(context)),
                 borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: (isTransfer
+                          ? Palette.inkFaint(context)
+                          : Palette.categoryColor(
+                              context, categoryTitle ?? '未分类'))
+                      .withValues(alpha: 0.20),
+                  width: 1,
+                ),
               ),
               child: IconService.isImage(glyph)
                   ? AppGlyph(glyph, size: 26, fill: true, radius: 8)
