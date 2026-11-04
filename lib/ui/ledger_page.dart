@@ -541,15 +541,15 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
     for (var gi = 0; gi < keys.length; gi++) {
       final key = keys[gi];
       final list = groups[key]!;
-      // 时间轴按时间正序（早 → 晚），和真实小票一致。
-      // 没记时分的老账排在最后，彼此按 id 倒序（新记的在前）。
+      // 时间轴按时间倒序（晚 → 早），最近的一笔在最上面。
+      // 没记时分的老账排在最后，彼此按 id 倒序。
       list.sort((a, b) {
         final ta = a.timeMinutes;
         final tb = b.timeMinutes;
         if (ta == null && tb == null) return b.id.compareTo(a.id);
         if (ta == null) return 1;
         if (tb == null) return -1;
-        final c = ta.compareTo(tb);
+        final c = tb.compareTo(ta);
         return c != 0 ? c : b.id.compareTo(a.id);
       });
       final day = list.first.day;

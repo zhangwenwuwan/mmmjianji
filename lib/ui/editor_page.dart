@@ -1099,34 +1099,15 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
       }
       return;
     }
-    final picked = await showAppSheet<int>(
-      context: context,
+    final picked = await showPocketPicker(
+      context,
+      ref,
       title: _flow == 'in'
           ? '收入到账${wanted == null ? '' : '（$wanted）'}'
           : '支出账户${wanted == null ? '' : '（$wanted）'}',
-      builder: (ctx) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          for (final p in scoped)
-            ListTile(
-              dense: true,
-              leading: AppGlyph(p.glyph, size: 18),
-              title: Text('${p.displayName}${ownerLabel(p)}'),
-              subtitle: Text(
-                switch (p.kind) {
-                  PocketKind.cash => '现金 · ${p.currency}',
-                  PocketKind.bank => '银行卡 · ${p.currency}',
-                  PocketKind.credit => '信用卡 · ${p.currency}',
-                  PocketKind.debt => '负债 · ${p.currency}',
-                },
-                style: TextStyle(fontSize: 12),
-              ),
-              trailing:
-                  p.id == _pocketId ? const Icon(Icons.check, size: 18) : null,
-              onTap: () => Navigator.pop(ctx, p.id),
-            ),
-        ],
-      ),
+      items: scoped,
+      selectedId: _pocketId,
+      ownerLabel: ownerLabel,
     );
     if (picked == null || !mounted) return;
     setState(() => _pocketId = picked);
@@ -2937,8 +2918,10 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
                   ),
                   _memoHints(),
                   const SizedBox(height: 8),
-                  // 账户（横滑 chips）
-                  _PocketChipRow(
+                  // 账户选择：点一行弹下拉（带余额），不再横滑找账户
+                  pocketSelectRow(
+                    context,
+                    ref,
                     label: _isTransfer ? '从' : '账户',
                     items: scopedPockets,
                     selectedId: _pocketId,
@@ -2960,7 +2943,9 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
                     ),
                   if (_isTransfer) ...[
                     const SizedBox(height: 6),
-                    _PocketChipRow(
+                    pocketSelectRow(
+                      context,
+                      ref,
                       label: '到',
                       items: pockets,
                       selectedId: _toPocketId,
@@ -3345,99 +3330,130 @@ class _FieldChip extends StatelessWidget {
 }
 
 /// 账户横滑 chips（同一排里能一眼分出储蓄卡/信用卡/负债）。
-class _PocketChipRow extends StatelessWidget {
-  const _PocketChipRow(
-      {required this.label,
-      required this.items,
-      required this.selectedId,
-      required this.onPick,
-      this.ownerLabel});
+String _pocketKindLabel(PocketKind k) => switch (k) {
+      PocketKind.cash => '现金',
+      PocketKind.bank => '银行卡',
+      PocketKind.credit => '信用卡',
+      PocketKind.debt => '负债',
+    };
 
-  final String label;
-  final List<Pocket> items;
-  final int? selectedId;
-  final ValueChanged<int> onPick;
-
-  /// 非本账本创建的账户要怎么标注（账户跨账本共享后必须让用户看出归属）
-  final String Function(Pocket)? ownerLabel;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
+/// 账户选择器（收支 / 转账共用）：列表里直接显示**余额**。
+///
+/// 转账以前用横滑标签，账户一多就变成"左右翻着找账户"；下拉一屏能扫完，
+/// 还能顺手看到这个账户里还剩多少钱 —— 选账户时最需要知道的正是这个。
+Future<int?> showPocketPicker(
+  BuildContext context,
+  WidgetRef ref, {
+  required String title,
+  required List<Pocket> items,
+  required int? selectedId,
+  String Function(Pocket)? ownerLabel,
+}) {
+  final balances = ref.read(balancesProvider).valueOrNull ?? const [];
+  final balanceOf = {for (final b in balances) b.pocket.id: b.balanceCents};
+  return showAppSheet<int>(
+    context: context,
+    title: title,
+    builder: (ctx) => Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        SizedBox(
-          width: 30,
-          child: Text(label,
-              style: TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
-        ),
-        Expanded(
-          child: SizedBox(
-            height: 34,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: items.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 6),
-              itemBuilder: (_, i) {
-                final p = items[i];
-                final sel = p.id == selectedId;
-                return PressScale(
-                  scale: 0.94,
-                  onTap: () => onPick(p.id),
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: sel
-                          ? Palette.brand(context).withValues(alpha: 0.12)
-                          : Palette.paper(context),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(
-                        color: sel
-                            ? Palette.brand(context)
-                            : Palette.hairline(context),
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        AppGlyph(p.glyph, size: 12),
-                        const SizedBox(width: 4),
-                        if (p.kind != PocketKind.cash) ...[
-                          Icon(
-                            switch (p.kind) {
-                              PocketKind.bank => Icons.account_balance,
-                              PocketKind.credit => Icons.credit_card,
-                              PocketKind.debt => Icons.trending_down,
-                              PocketKind.cash => Icons.payments_outlined,
-                            },
-                            size: 11,
-                            color: switch (p.kind) {
-                              PocketKind.bank => const Color(0xFF3E7BB6),
-                              PocketKind.credit => const Color(0xFF555A78),
-                              PocketKind.debt => Palette.expense,
-                              PocketKind.cash => Palette.inkFaint(context),
-                            },
-                          ),
-                          const SizedBox(width: 3),
-                        ],
-                        Text('${p.displayName}${ownerLabel?.call(p) ?? ''}',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight:
-                                  sel ? FontWeight.w600 : FontWeight.w400,
-                              color: sel
-                                  ? Palette.brand(context)
-                                  : Palette.ink(context),
-                            )),
-                      ],
-                    ),
-                  ),
-                );
-              },
+        for (final p in items)
+          ListTile(
+            dense: true,
+            leading: AppGlyph(p.glyph, size: 18),
+            title: Text('${p.displayName}${ownerLabel?.call(p) ?? ''}'),
+            subtitle: Text(
+              '${_pocketKindLabel(p.kind)} · ${p.currency} · 余额 '
+              '${centsToText(balanceOf[p.id] ?? 0)}',
+              style: const TextStyle(fontSize: 12),
+            ),
+            trailing:
+                p.id == selectedId ? const Icon(Icons.check, size: 18) : null,
+            onTap: () => Navigator.pop(ctx, p.id),
+          ),
+      ],
+    ),
+  );
+}
+
+/// 转账面板里的「从 / 到」一行：点一下弹上面的选择器，右侧显示当前账户余额。
+Widget pocketSelectRow(
+  BuildContext context,
+  WidgetRef ref, {
+  required String label,
+  required List<Pocket> items,
+  required int? selectedId,
+  required ValueChanged<int> onPick,
+  String Function(Pocket)? ownerLabel,
+}) {
+  final balances = ref.watch(balancesProvider).valueOrNull ?? const [];
+  final balanceOf = {for (final b in balances) b.pocket.id: b.balanceCents};
+  Pocket? sel;
+  for (final p in items) {
+    if (p.id == selectedId) {
+      sel = p;
+      break;
+    }
+  }
+  return PressScale(
+    scale: 0.99,
+    onTap: () async {
+      final id = await showPocketPicker(
+        context,
+        ref,
+        title: label == '到' ? '转到哪个账户' : '从哪个账户转出',
+        items: items,
+        selectedId: selectedId,
+        ownerLabel: ownerLabel,
+      );
+      if (id != null) onPick(id);
+    },
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 30,
+            child: Text(label,
+                style:
+                    TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
+          ),
+          if (sel != null) ...[
+            AppGlyph(sel.glyph, size: 16),
+            const SizedBox(width: 6),
+          ],
+          Expanded(
+            child: Text(
+              sel == null
+                  ? '选择账户'
+                  : '${sel.displayName}${ownerLabel?.call(sel) ?? ''}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: sel == null ? FontWeight.w400 : FontWeight.w600,
+                color:
+                    sel == null ? Palette.inkFaint(context) : Palette.ink(context),
+              ),
             ),
           ),
-        ),
-      ],
-    );
-  }
+          if (sel != null)
+            Text(
+              centsToText(balanceOf[sel.id] ?? 0),
+              style: TextStyle(
+                fontSize: 12,
+                color: Palette.inkSoft(context),
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          const SizedBox(width: 2),
+          Icon(Icons.arrow_drop_down,
+              size: 20, color: Palette.inkFaint(context)),
+        ],
+      ),
+    ),
+  );
 }
+
+// 转账的账户选择已改为 pocketSelectRow（点击弹下拉、带余额）。
+// 原来的横滑 chips（_PocketChipRow）已删除：账户一多就变成"左右翻着找"。

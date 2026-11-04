@@ -533,52 +533,71 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
     Duration delay, {
     bool liability = false,
   }) {
+    // 折叠状态按「分组标题」记（现金 / 银行卡 / 微信…），落盘在 settings。
+    final collapsed = settings.assetCollapsed
+        .split(',')
+        .map((e) => e.trim())
+        .contains(title);
     return Reveal(
       delay: delay,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
-            child: Row(
-              children: [
-                Text(title,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: Palette.inkSoft(context),
-                    )),
-                const SizedBox(width: 6),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                  decoration: BoxDecoration(
-                    color: Palette.hairline(context),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text('${rows.length}',
+          // 整行可点：点标题 / 数量 / 小计都能折叠，不必非得戳中那个小三角。
+          PressScale(
+            scale: 0.99,
+            onTap: () => ref
+                .read(settingsProvider.notifier)
+                .setAssetGroupCollapsed(title, !collapsed),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+              child: Row(
+                children: [
+                  Text(title,
                       style: TextStyle(
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w600,
-                          color: Palette.inkFaint(context))),
-                ),
-                const Spacer(),
-                Text(
-                  settings.hideAmounts
-                      ? '****'
-                      : '${settings.symbol}${centsToText(subtotalCents)}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    // 负债组的数字是「欠款」，标红才不会被当成资产
-                    color: liability ? Palette.expense : Palette.inkSoft(context),
-                    fontFeatures: const [FontFeature.tabularFigures()],
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Palette.inkSoft(context),
+                      )),
+                  const SizedBox(width: 6),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: Palette.hairline(context),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text('${rows.length}',
+                        style: TextStyle(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w600,
+                            color: Palette.inkFaint(context))),
                   ),
-                ),
-              ],
+                  const Spacer(),
+                  Text(
+                    settings.hideAmounts
+                        ? '****'
+                        : '${settings.symbol}${centsToText(subtotalCents)}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      // 负债组的数字是「欠款」，标红才不会被当成资产
+                      color:
+                          liability ? Palette.expense : Palette.inkSoft(context),
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(
+                    collapsed ? Icons.expand_more : Icons.expand_less,
+                    size: 18,
+                    color: Palette.inkFaint(context),
+                  ),
+                ],
+              ),
             ),
           ),
-          _accountPanel(context, rows, base),
+          if (!collapsed) _accountPanel(context, rows, base),
         ],
       ),
     );

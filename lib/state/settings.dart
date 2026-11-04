@@ -54,6 +54,7 @@ class AppSettings {
     this.dueReminderEnabled = false,
     this.dueReminderLeadDays = 3,
     this.hintsDismissed = '',
+    this.assetCollapsed = '',
   });
 
   final ThemeMode themeMode;
@@ -188,6 +189,12 @@ class AppSettings {
   /// 归档卡按"被归档的那个月"记（看过就永远不再提）。
   final String hintsDismissed;
 
+  /// 资产页被折叠的账户分组（逗号分隔的组名，如「银行卡,微信」）。
+  ///
+  /// 必须持久化：用户主动收起过的分组，下次冷启动不该自己弹开 ——
+  /// 否则这个折叠按钮等于没有。
+  final String assetCollapsed;
+
   /// 这条提醒是否已经被点掉了。
   bool isHintDismissed(String token) =>
       token.isNotEmpty && hintsDismissed.split(',').contains(token);
@@ -268,6 +275,7 @@ class AppSettings {
     bool? dueReminderEnabled,
     int? dueReminderLeadDays,
     String? hintsDismissed,
+    String? assetCollapsed,
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -303,6 +311,7 @@ class AppSettings {
         dueReminderEnabled: dueReminderEnabled ?? this.dueReminderEnabled,
         dueReminderLeadDays: dueReminderLeadDays ?? this.dueReminderLeadDays,
         hintsDismissed: hintsDismissed ?? this.hintsDismissed,
+        assetCollapsed: assetCollapsed ?? this.assetCollapsed,
       );
 }
 
@@ -354,6 +363,7 @@ class SettingsNotifier extends Notifier<AppSettings> {
   static const _kDueEnabled = 'due_reminder_enabled';
   static const _kDueLead = 'due_reminder_lead_days';
   static const _kHintsDismissed = 'home_hints_dismissed';
+  static const _kAssetCollapsed = 'asset_collapsed_groups';
 
   SharedPreferences? _prefs;
   bool _started = false;
@@ -433,6 +443,7 @@ class SettingsNotifier extends Notifier<AppSettings> {
       dueReminderEnabled: prefs.getBool(_kDueEnabled) ?? false,
       dueReminderLeadDays: prefs.getInt(_kDueLead) ?? 3,
       hintsDismissed: prefs.getString(_kHintsDismissed) ?? '',
+      assetCollapsed: prefs.getString(_kAssetCollapsed) ?? '',
     );
   }
 
@@ -744,6 +755,19 @@ class SettingsNotifier extends Notifier<AppSettings> {
     _touched = true;
     state = state.copyWith(hintsDismissed: next);
     await _prefs?.setString(_kHintsDismissed, next);
+  }
+
+  /// 资产页：折叠 / 展开某个账户分组。状态落盘，跨重启保持。
+  Future<void> setAssetGroupCollapsed(String group, bool collapsed) async {
+    _touched = true;
+    final set = {
+      for (final g in state.assetCollapsed.split(','))
+        if (g.trim().isNotEmpty) g.trim(),
+    };
+    collapsed ? set.add(group) : set.remove(group);
+    final next = set.join(',');
+    state = state.copyWith(assetCollapsed: next);
+    await _prefs?.setString(_kAssetCollapsed, next);
   }
 
   Future<void> setCoverFollow(bool value) async {
