@@ -1963,20 +1963,16 @@ class _HomeHeroCard extends ConsumerWidget {
     // 原来它和下面的流水卡一样是纯白，整页只有"深绿按钮 + 红色金额"两个重点，
     // 最该有分量的汇总反而最轻。渐变从薄荷到近卡色（深色模式同理），
     // 不抢文字，但一眼能分出"这是汇总、下面是流水"。
-    // 2026-11-03：和资产页头部卡片统一 —— 同一套品牌色渐变 + 白字。
-    // 之前这里是薄荷浅底，资产页是深底，同一个 App 出现两套"头部"观感。
-    final brand = Palette.brand(context);
-    final onHero = Colors.white;
-    final onHeroSoft = Colors.white.withValues(alpha: 0.78);
+    // 2026-11-05：渐变与前景色改成跟着「配色方案」走。
+    // 四套渐变里只有极光油膜是深底，其余三套是浅色治愈渐变——
+    // 写死白字会让浅紫/薄荷/蜜桃上的金额直接消失，所以 onHero 必须取主题。
+    final onHero = Palette.onGradient(context);
+    final onHeroSoft = onHero.withValues(alpha: 0.72);
     return Panel(
       padding: EdgeInsets.zero,
-      gradient: LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [brand, brand.withValues(alpha: 0.78)],
-      ),
+      gradient: Palette.gradient(context),
       child: HillCardBackground(
-        color: Colors.white.withValues(alpha: 0.12),
+        color: onHero.withValues(alpha: 0.12),
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Column(
@@ -1992,7 +1988,7 @@ class _HomeHeroCard extends ConsumerWidget {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.18),
+                        color: onHero.withValues(alpha: 0.18),
                         borderRadius: BorderRadius.circular(999),
                       ),
                       child: Text(
@@ -2038,8 +2034,9 @@ class _HomeHeroCard extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(label,
+              // 跟着前景色走：浅渐变（薄荷/薰衣草/蜜桃）上白字会糊掉
               style: TextStyle(
-                  fontSize: 12, color: Colors.white.withValues(alpha: 0.7))),
+                  fontSize: 12, color: color.withValues(alpha: 0.7))),
           const SizedBox(height: 3),
           // 走 MoneyText：hidden 状态和「结余为负」都由它处理。
           // 原来这里手写 `centsToText(cents.abs())`，-12 会显示成「¥12」——

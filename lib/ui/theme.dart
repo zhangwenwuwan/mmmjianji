@@ -1,35 +1,108 @@
 import 'package:flutter/material.dart';
 
-/// 简记的视觉基调：米纸底 + 松石绿主色 + 朱红支出 / 青绿收入。
+/// 简记的视觉基调：米纸底 + 主题主色 + 朱红支出 / 青绿收入。
 /// 全部自己定义，不依赖任何外部设计资源。
-/// 配色方案（只换主色，其他语义色不变，保证对比度可控）
-const Map<String, ({String name, Color seed, Color expense, Color income})>
-    kPalettes = {
+///
+/// 一套配色 = **渐变**（大卡 / 按钮）+ **单色 seed**（生成整套 M3 配色）。
+///
+/// 为什么不是纯渐变：`ColorScheme.fromSeed` 只吃一个颜色，而文字、选中态、
+/// 图标这些都要能算对比度的**实色**。所以 seed 负责"能被读的部分"，
+/// 渐变只铺在大块面上（首页本月卡、资产页头部、主按钮）。
+///
+/// 前景色（白字 / 深字）不写死，由 [_onGradient] 按渐变平均亮度自动选 ——
+/// 浅紫、薄荷、蜜桃这三套铺白字会糊，极光那套铺深字会脏。
+typedef AppPaletteDef = ({
+  String name,
+  String hint,
+  Color seed,
+  List<Color> gradient,
+});
+
+const Map<String, AppPaletteDef> kPalettes = {
   'teal': (
-    name: '薄荷',
+    name: '草木薄荷',
+    hint: '薄荷到青柠 · 低饱和冷调',
     seed: Color(0xFF0E7C66),
-    expense: Color(0xFFD0524A),
-    income: Color(0xFF178A68)
+    gradient: [Color(0xFF8FD6BE), Color(0xFFCBE79A)],
   ),
   'indigo': (
-    name: '墨蓝',
+    name: '极光油膜',
+    hint: '青到靛紫 · 高饱和低明度',
     seed: Color(0xFF2B5C8A),
-    expense: Color(0xFFC25B54),
-    income: Color(0xFF2E8AA6)
-  ),
-  'ochre': (
-    name: '赭石',
-    seed: Color(0xFFB4652A),
-    expense: Color(0xFFB3402F),
-    income: Color(0xFF7A8C3A)
+    gradient: [Color(0xFF0B3B52), Color(0xFF3B2F6B), Color(0xFF7A2B58)],
   ),
   'rose': (
-    name: '玫红',
-    seed: Color(0xFFB23A64),
-    expense: Color(0xFFC0392B),
-    income: Color(0xFF4E9A7E)
+    name: '薰衣草湖',
+    hint: '浅紫到淡蓝 · 微光',
+    seed: Color(0xFF6F63B8),
+    gradient: [Color(0xFFC9B6F2), Color(0xFFA9D6F2)],
+  ),
+  'ochre': (
+    name: '日落蜜桃',
+    hint: '日落橙到蜜桃粉 · 暖调',
+    seed: Color(0xFFC06A46),
+    gradient: [Color(0xFFF2A25C), Color(0xFFF7BFC2)],
   ),
 };
+
+/// 渐变平均亮度超过这个值就用深色字。
+///
+/// 0.45 是试出来的分界：薄荷 / 薰衣草 / 蜜桃平均在 0.55~0.62，
+/// 极光在 0.05 附近，中间没有配色落在这条线附近，所以不会反复横跳。
+const Color _kOnLight = Color(0xFF14201B);
+
+Color _onGradient(List<Color> stops) {
+  var lum = 0.0;
+  for (final c in stops) {
+    lum += c.computeLuminance();
+  }
+  return (lum / stops.length) > 0.45 ? _kOnLight : Colors.white;
+}
+
+/// 当前配色方案的渐变 / 前景色。
+///
+/// 用 ThemeExtension 而不是全局变量：主题是跟着 `Theme.of(context)` 走的，
+/// 深浅色模式下渐变要自动压暗，靠 context 取才不会出现"切深色后大卡还是亮粉"。
+@immutable
+class AppPaletteTheme extends ThemeExtension<AppPaletteTheme> {
+  const AppPaletteTheme({
+    required this.paletteId,
+    required this.gradient,
+    required this.onGradient,
+  });
+
+  final String paletteId;
+  final LinearGradient gradient;
+
+  /// 铺在渐变上的文字/图标颜色（白或深墨）。
+  final Color onGradient;
+
+  static const fallback = AppPaletteTheme(
+    paletteId: 'teal',
+    gradient: LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [Color(0xFF8FD6BE), Color(0xFFCBE79A)],
+    ),
+    onGradient: _kOnLight,
+  );
+
+  @override
+  AppPaletteTheme copyWith({
+    String? paletteId,
+    LinearGradient? gradient,
+    Color? onGradient,
+  }) =>
+      AppPaletteTheme(
+        paletteId: paletteId ?? this.paletteId,
+        gradient: gradient ?? this.gradient,
+        onGradient: onGradient ?? this.onGradient,
+      );
+
+  /// 主题切换是瞬时的（没有交叉淡入），插值没有意义，直接返回自身。
+  @override
+  AppPaletteTheme lerp(ThemeExtension<AppPaletteTheme>? other, double t) => this;
+}
 
 class Palette {
   const Palette._();
@@ -157,9 +230,17 @@ class Palette {
       ? Colors.white.withValues(alpha: 0.10)
       : Colors.white.withValues(alpha: 0.9);
 
-  /// 薄荷浅底：chip 选中态、图标底、强调块的背景。
-  static Color mint(BuildContext context) =>
-      isDark(context) ? const Color(0xFF14322A) : const Color(0xFFE3F4EE);
+  /// 浅色强调底：底部导航选中块、chip 选中态、图标底。
+  ///
+  /// 2026-11-05：从写死的薄荷绿改成**由主色淡化**。四套配色里两套是紫/橙，
+  /// 固定薄荷会在「薰衣草湖」下出现一块绿药丸，像上错了色。
+  /// 薄荷主题下算出来是 #E7F2F0，和原来的 #E3F4EE 几乎一样。
+  static Color mint(BuildContext context) {
+    final b = brand(context);
+    return isDark(context)
+        ? Color.alphaBlend(b.withValues(alpha: 0.22), const Color(0xFF0E1512))
+        : Color.alphaBlend(b.withValues(alpha: 0.10), Colors.white);
+  }
 
   /// 分隔线
   static Color hairline(BuildContext context) =>
@@ -218,6 +299,18 @@ class Palette {
 
   static Color brand(BuildContext context) =>
       Theme.of(context).colorScheme.primary;
+
+  /// 当前配色方案的大卡渐变（含深浅色压制）。
+  static AppPaletteTheme paletteTheme(BuildContext context) =>
+      Theme.of(context).extension<AppPaletteTheme>() ?? AppPaletteTheme.fallback;
+
+  static LinearGradient gradient(BuildContext context) =>
+      paletteTheme(context).gradient;
+
+  /// 铺在渐变上的文字色：浅渐变是深墨、深渐变是白。
+  /// **大卡里的所有字都要用它**，别再写死 `Colors.white`。
+  static Color onGradient(BuildContext context) =>
+      paletteTheme(context).onGradient;
 }
 
 /// 统一尺寸令牌。页面边距优先 12，组件间距优先 4/8/12。
@@ -345,7 +438,32 @@ ThemeData buildTheme(
     fontFamily: allBrand ? AppFont.display : null,
   );
   final paper = isDark ? const Color(0xFF0E1512) : const Color(0xFFF2F8F5);
+
+  // 大卡 / 按钮用的渐变。
+  // - 封面取色优先（seedOverride）：用封面主色到它的加深版
+  // - 深色模式：整体压暗，否则浅紫/薄荷在大黑底上是一块发光的塑料
+  final def = kPalettes[paletteId] ?? kPalettes['teal']!;
+  var stops = List<Color>.from(def.gradient);
+  if (seedOverride != null) {
+    stops = [seedOverride, Color.lerp(seedOverride, Colors.black, 0.35)!];
+  }
+  if (isDark) {
+    // 0.55 而不是 0.45：薄荷那条青柠端压 45% 时白字只有 4.33:1，
+    // 差一点点不达标（大卡上 28px 金额看着就会发虚）。
+    stops = [for (final c in stops) Color.lerp(c, Colors.black, 0.55)!];
+  }
+  final paletteTheme = AppPaletteTheme(
+    paletteId: def.name,
+    gradient: LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: stops,
+    ),
+    onGradient: _onGradient(stops),
+  );
+
   return baseTheme.copyWith(
+    extensions: [paletteTheme],
     textTheme: _typography(
       baseTheme.textTheme,
       display: brandOnTitles ? AppFont.display : null,
@@ -407,6 +525,34 @@ ThemeData buildTheme(
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadius.control),
         ),
+        // 底色交给 backgroundBuilder 画渐变，这里必须是透明的。
+        // 前景色跟渐变走：浅渐变用深墨字，深渐变用白字，否则按钮上的字读不出来。
+        backgroundColor: Colors.transparent,
+        foregroundColor: paletteTheme.onGradient,
+        disabledBackgroundColor: Colors.transparent,
+        disabledForegroundColor: scheme.onSurface.withValues(alpha: 0.38),
+      ).copyWith(
+        // 全 App 40 个 FilledButton 一次性拿到渐变，不用逐个改调用点。
+        backgroundBuilder: (context, states, child) {
+          final disabled = states.contains(WidgetState.disabled);
+          final fill = disabled
+              ? [
+                  scheme.onSurface.withValues(alpha: 0.10),
+                  scheme.onSurface.withValues(alpha: 0.10),
+                ]
+              : stops;
+          return DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: fill,
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+              ),
+              borderRadius: BorderRadius.circular(AppRadius.control),
+            ),
+            child: child,
+          );
+        },
       ),
     ),
     textButtonTheme: TextButtonThemeData(

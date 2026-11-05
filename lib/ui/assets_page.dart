@@ -137,14 +137,8 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
             Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    Palette.brand(context),
-                    Palette.brand(context).withValues(alpha: 0.78),
-                  ],
-                ),
+                // 跟着配色方案走：四套渐变里三套是浅色，写死白字会看不见。
+                gradient: Palette.gradient(context),
                 borderRadius: BorderRadius.circular(AppRadius.card),
               ),
               child: Stack(
@@ -154,7 +148,8 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                       borderRadius: BorderRadius.circular(AppRadius.card),
                       child: CustomPaint(
                         painter: MountainPainter(
-                            color: Colors.white.withValues(alpha: 0.12)),
+                            color: Palette.onGradient(context)
+                                .withValues(alpha: 0.12)),
                         size: Size.infinite,
                       ),
                     ),
@@ -167,7 +162,8 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                           Text('普通资产',
                               style: TextStyle(
                                   fontSize: 12,
-                                  color: Colors.white.withValues(alpha: 0.8))),
+                                  color: Palette.onGradient(context)
+                                      .withValues(alpha: 0.8))),
                           const Spacer(),
                           PressScale(
                             scale: 0.92,
@@ -180,11 +176,12 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                                     '${bookAsync.valueOrNull?.title ?? ''}',
                                     style: TextStyle(
                                         fontSize: 12,
-                                        color:
-                                            Colors.white.withValues(alpha: 0.9))),
+                                        color: Palette.onGradient(context)
+                                            .withValues(alpha: 0.9))),
                                 Icon(Icons.chevron_right,
                                     size: 14,
-                                    color: Colors.white.withValues(alpha: 0.7)),
+                                    color: Palette.onGradient(context)
+                                        .withValues(alpha: 0.7)),
                               ],
                             ),
                           ),
@@ -201,20 +198,20 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                                   .replaceFirst('$base ', settings.symbol),
                           maxLines: 1,
                           softWrap: false,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 28,
                             fontWeight: FontWeight.w700,
-                            color: Colors.white,
-                            fontFeatures: [FontFeature.tabularFigures()],
+                            color: Palette.onGradient(context),
+                            fontFeatures: const [FontFeature.tabularFigures()],
                           ),
                         ),
                       ),
                       const SizedBox(height: 8),
                       Row(
                         children: [
-                          _mini('净资产', net, settings, base),
+                          _mini('净资产', net, settings, base, ctx: context),
                           const SizedBox(width: 20),
-                          _mini('债务', liabilities, settings, base),
+                          _mini('债务', liabilities, settings, base, ctx: context),
                         ],
                       ),
                     ],
@@ -1007,23 +1004,26 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
     );
   }
 
-  Widget _mini(String label, int cents, AppSettings settings, String base) {
+  Widget _mini(
+      String label, int cents, AppSettings settings, String base,
+      {required BuildContext ctx}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label,
             style: TextStyle(
-                fontSize: 10.5, color: Colors.white.withValues(alpha: 0.65))),
+                fontSize: 10.5,
+                color: Palette.onGradient(ctx).withValues(alpha: 0.65))),
         const SizedBox(height: 2),
         Text(
           settings.hideAmounts
               ? '****'
               : '${settings.symbol}${centsToText(cents)}',
-          style: const TextStyle(
+          style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: Colors.white,
-              fontFeatures: [FontFeature.tabularFigures()]),
+              color: Palette.onGradient(ctx),
+              fontFeatures: const [FontFeature.tabularFigures()]),
         ),
       ],
     );

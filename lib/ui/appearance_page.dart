@@ -346,7 +346,7 @@ class AppearancePage extends ConsumerWidget {
       BuildContext context,
       WidgetRef ref,
       String id,
-      ({String name, Color seed, Color expense, Color income}) palette,
+      ({String name, String hint, Color seed, List<Color> gradient}) palette,
       String current) {
     final selected = id == current;
     return PressScale(
@@ -356,13 +356,22 @@ class AppearancePage extends ConsumerWidget {
         if (context.mounted) _toast(context, '已切换到「${palette.name}」');
       },
       child: ListTile(
+        // 缩略图直接给渐变本身：四个圆点看不出"草木薄荷"和"薰衣草湖"的差别，
+        // 而这一页唯一要传达到的就是渐变观感。
         leading: Container(
-          width: 22,
+          width: 34,
           height: 22,
-          decoration:
-              BoxDecoration(color: palette.seed, shape: BoxShape.circle),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: palette.gradient,
+            ),
+            borderRadius: BorderRadius.circular(6),
+          ),
         ),
         title: Text(palette.name),
+        subtitle: Text(palette.hint, style: const TextStyle(fontSize: 11.5)),
         trailing: selected ? const Icon(Icons.check) : null,
       ),
     );

@@ -291,18 +291,13 @@ class _Poster extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final net = report.incomeCents - report.expenseCents;
+    // 和首页大卡、资产页头部同一套渐变；前景色跟着渐变亮度走
+    // （浅渐变铺白字会整块看不见）。
+    final on = Palette.onGradient(context);
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        // 跟随「配色方案」，不再写死松石绿（换了配色报告头还是绿的）
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Palette.brand(context),
-            Color.lerp(Palette.brand(context), Colors.black, 0.28)!,
-          ],
-        ),
+        gradient: Palette.gradient(context),
         borderRadius: BorderRadius.circular(22),
       ),
       child: Column(
@@ -314,24 +309,22 @@ class _Poster extends StatelessWidget {
                 width: 30,
                 height: 30,
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.18),
+                  color: on.withValues(alpha: 0.18),
                   borderRadius: BorderRadius.circular(9),
                 ),
-                child: const Icon(Icons.check_rounded,
-                    color: Colors.white, size: 18),
+                child: Icon(Icons.check_rounded, color: on, size: 18),
               ),
               const SizedBox(width: 8),
-              const Text('简记',
+              Text('简记',
                   style: TextStyle(
-                      color: Colors.white,
+                      color: on,
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
                       letterSpacing: 2)),
               const Spacer(),
               Text('${report.year} 年度',
                   style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.8),
-                      fontSize: 12)),
+                      color: on.withValues(alpha: 0.8), fontSize: 12)),
             ],
           ),
           const SizedBox(height: 18),
@@ -339,32 +332,31 @@ class _Poster extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(_m(net.abs()),
-                  style: const TextStyle(
-                      color: Colors.white,
+                  style: TextStyle(
+                      color: on,
                       fontSize: 28,
                       fontWeight: FontWeight.w700,
-                      fontFeatures: [FontFeature.tabularFigures()])),
+                      fontFeatures: const [FontFeature.tabularFigures()])),
               Padding(
                 padding: const EdgeInsets.only(bottom: 5, left: 6),
                 child: Text(net >= 0 ? '净结余' : '净超支',
                     style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.75),
-                        fontSize: 12)),
+                        color: on.withValues(alpha: 0.75), fontSize: 12)),
               ),
             ],
           ),
           const SizedBox(height: 14),
           Row(
             children: [
-              _mini('收入', _m(report.incomeCents)),
+              _mini('收入', _m(report.incomeCents), on),
               const SizedBox(width: 18),
-              _mini('支出', _m(report.expenseCents)),
+              _mini('支出', _m(report.expenseCents), on),
               const SizedBox(width: 18),
-              _mini('记账', '${report.activeDays} 天'),
+              _mini('记账', '${report.activeDays} 天', on),
             ],
           ),
           const SizedBox(height: 16),
-          Container(height: 1, color: Colors.white.withValues(alpha: 0.18)),
+          Container(height: 1, color: on.withValues(alpha: 0.18)),
           const SizedBox(height: 12),
           Wrap(
             spacing: 12,
@@ -373,8 +365,7 @@ class _Poster extends StatelessWidget {
               for (final t in report.topBuckets.take(3))
                 Text('${t.label} ${_m(t.cents)}',
                     style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.9),
-                        fontSize: 12)),
+                        color: on.withValues(alpha: 0.9), fontSize: 12)),
             ],
           ),
         ],
@@ -382,20 +373,20 @@ class _Poster extends StatelessWidget {
     );
   }
 
-  Widget _mini(String label, String value) {
+  Widget _mini(String label, String value, Color on) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label,
             style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.65), fontSize: 10.5)),
+                color: on.withValues(alpha: 0.65), fontSize: 10.5)),
         const SizedBox(height: 2),
         Text(value,
-            style: const TextStyle(
-                color: Colors.white,
+            style: TextStyle(
+                color: on,
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
-                fontFeatures: [FontFeature.tabularFigures()])),
+                fontFeatures: const [FontFeature.tabularFigures()])),
       ],
     );
   }

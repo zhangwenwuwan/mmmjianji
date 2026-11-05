@@ -710,7 +710,9 @@ class _BottomBar extends StatelessWidget {
             height: 30,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: brand,
+              // 全 App 最显眼的一个"按钮"，跟着主题渐变走；
+              // 图标颜色必须取 onGradient —— 浅渐变上白加号会看不见。
+              gradient: Palette.gradient(context),
               borderRadius: BorderRadius.circular(11),
               boxShadow: [
                 BoxShadow(
@@ -720,7 +722,8 @@ class _BottomBar extends StatelessWidget {
                 ),
               ],
             ),
-            child: const Icon(Icons.add, size: 18, color: Colors.white),
+            child: Icon(Icons.add,
+                size: 18, color: Palette.onGradient(context)),
           ),
         ),
       ),
