@@ -52,7 +52,13 @@ echo "    ok: $VER+$CODE"
 
 # ---------------------------------------------------------------- 2. 构建（含全量测试）
 echo "[2/5] 构建（跑全量测试，失败会中断）"
-./build_jianji.sh --incr
+# ⚠️ 两个不能省：
+#  1) UPDATE_URL 必须注入，否则打出来的包「检查更新」永远是「未接入更新服务」，
+#     而清单地址在本文件上面第 34 行已经算好了（releases/latest/download/version.json）。
+#  2) 用 --full-clean 而不是 --incr：release 复用陈旧 AOT 时包能装能跑、
+#     UI 完全看不出异常，只有 libapp.so 的 md5 能验出来（见项目构建铁律）。
+#     它自带 analyze + 全量 flutter test，不用再单独跑一次 --check。
+UPDATE_URL="$MANIFEST_URL" ./build_jianji.sh --full-clean
 [ -f "$APK" ] || { echo "✗ 没找到产物 $APK"; exit 1; }
 
 # ---------------------------------------------------------------- 3. 生成更新清单
@@ -94,5 +100,7 @@ EOS
 fi
 
 echo
-echo "App 侧（检查更新地址，只需配一次，之后每个版本都指这个 latest 链接）："
-echo "  --dart-define=UPDATE_URL=$MANIFEST_URL"
+echo "本包已注入 UPDATE_URL=$MANIFEST_URL（第 2 步自动传入，无需手动加 dart-define）。"
+echo "没装 gh CLI 时，也可以走 GitHub API 发版：凭据用"
+echo "  printf 'protocol=https\\nhost=github.com\\n\\n' | git credential fill"
+echo "取 token，再 POST /repos/$GH_USER/$GH_REPO/releases 并上传资产。"
