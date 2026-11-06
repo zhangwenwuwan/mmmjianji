@@ -90,24 +90,48 @@ enum UpdateStatus {
 }
 
 class UpdateCheck {
-  const UpdateCheck(this.status, {this.info, this.message});
+  const UpdateCheck(
+    this.status, {
+    this.info,
+    this.message,
+    this.transient = false,
+  });
 
   final UpdateStatus status;
   final UpdateInfo? info;
 
   /// 失败原因，直接给用户看的一句话（不抛原始异常堆栈）
   final String? message;
+
+  /// 网络层抖动（连不上 / 超时 / 半路被掐断）→ 值得再试一次。
+  ///
+  /// 2026-11-07 真机实测：这台手机首连 github.com 30s 超时，紧接着的第二次
+  /// 0.5s 就通了。只试一次 = 把「其实能更新」直接报成「上次检查失败」。
+  final bool transient;
 }
 
 class UpdateService {
   const UpdateService._();
 
+  /// 一共试几次。第二次几乎总能通（见 [UpdateCheck.transient] 的实测记录），
+  /// 所以 2 次足够，再多只是让用户多等。
+  static const int maxTries = 2;
+
+  /// 两次之间稍等一下再打，紧接着重连反而容易继续被掐。
+  static const Duration retryGap = Duration(milliseconds: 600);
+
   /// 查一次。**永远不抛异常**，失败都折成 [UpdateStatus.failed]，
   /// 让设置页那行不至于因为断网变成红色报错。
   ///
+  /// 网络层抖动会自动重试（[maxTries] 次）；格式错、HTTP 4xx/5xx 这类
+  /// 重试也没用的失败立刻返回。
+  ///
   /// [url] 只在测试里传（起一个本地 HttpServer 走真实网络路径），
   /// 正式调用不传，走 [kUpdateManifestUrl]。
-  static Future<UpdateCheck> check({String? url}) async {
+  static Future<UpdateCheck> check({
+    String? url,
+    int tries = maxTries,
+  }) async {
     final target = (url ?? kUpdateManifestUrl).trim();
     if (target.isEmpty) return const UpdateCheck(UpdateStatus.notConfigured);
 
@@ -118,15 +142,25 @@ class UpdateService {
       return const UpdateCheck(UpdateStatus.failed, message: '更新地址写得不对');
     }
 
+    UpdateCheck last = const UpdateCheck(UpdateStatus.failed, message: '检查失败');
+    for (var i = 0; i < tries; i++) {
+      last = await _attempt(uri);
+      if (!last.transient) return last;
+      if (i + 1 < tries) await Future<void>.delayed(retryGap);
+    }
+    return last;
+  }
+
+  static Future<UpdateCheck> _attempt(Uri uri) async {
     final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 6)
+      ..connectionTimeout = const Duration(seconds: 8)
       // 公共 CDN 挂了会一直挂着；超时必须自己兜住
-      ..idleTimeout = const Duration(seconds: 6);
+      ..idleTimeout = const Duration(seconds: 8);
     try {
       final req = await client.getUrl(uri);
       // 带上版本号：服务端可以据此做灰度（老版本返回新版，最新版返回自己）
       req.headers.set('User-Agent', 'jianji/$appVersion+$appBuild');
-      final res = await req.close().timeout(const Duration(seconds: 10));
+      final res = await req.close().timeout(const Duration(seconds: 15));
       if (res.statusCode != HttpStatus.ok) {
         return UpdateCheck(UpdateStatus.failed,
             message: '服务器返回 ${res.statusCode}');
@@ -134,7 +168,7 @@ class UpdateService {
       final body = await res
           .transform(utf8.decoder)
           .join()
-          .timeout(const Duration(seconds: 10));
+          .timeout(const Duration(seconds: 15));
       final info = parseUpdateManifest(body);
       if (info == null) {
         return const UpdateCheck(UpdateStatus.failed, message: '更新清单格式不对');
@@ -143,11 +177,18 @@ class UpdateService {
           ? UpdateCheck(UpdateStatus.available, info: info)
           : UpdateCheck(UpdateStatus.latest, info: info);
     } on SocketException {
-      return const UpdateCheck(UpdateStatus.failed, message: '网络连不上');
+      return const UpdateCheck(UpdateStatus.failed,
+          message: '网络连不上', transient: true);
     } on TimeoutException {
-      return const UpdateCheck(UpdateStatus.failed, message: '请求超时');
+      return const UpdateCheck(UpdateStatus.failed,
+          message: '请求超时', transient: true);
     } on HandshakeException {
-      return const UpdateCheck(UpdateStatus.failed, message: 'HTTPS 证书有问题');
+      return const UpdateCheck(UpdateStatus.failed,
+          message: 'HTTPS 证书有问题', transient: true);
+    } on HttpException {
+      // 连接被中途掐断（移动网络下很常见）
+      return const UpdateCheck(UpdateStatus.failed,
+          message: '连接中断', transient: true);
     } catch (e) {
       return UpdateCheck(UpdateStatus.failed, message: '检查失败：$e');
     } finally {

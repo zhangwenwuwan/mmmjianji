@@ -522,7 +522,8 @@ class _CheckUpdateTileState extends State<_CheckUpdateTile> {
         UpdateStatus.available => '发现新版本 ${r.info!.versionName}',
         UpdateStatus.latest => '已是最新版本',
         UpdateStatus.notConfigured => null,
-        UpdateStatus.failed => '上次检查失败',
+        UpdateStatus.failed =>
+          '上次检查失败${r.message == null ? '' : ' · ${r.message}'}',
       };
     });
     if (!mounted) return;
