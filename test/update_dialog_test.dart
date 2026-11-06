@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:jianji/core/version.dart';
 import 'package:jianji/services/update_service.dart';
 import 'package:jianji/ui/update_dialog.dart';
 
@@ -53,10 +54,12 @@ void main() {
   });
 
   testWidgets('强制更新仍不锁死弹窗，主按钮依旧是浏览器下载', (tester) async {
-    const forced = UpdateInfo(
+    // minSupportedCode 必须比本地 build 大才算强制；写死具体数字会在
+    // 每次升版本号时失效（1.4.54+98 就踩过：98 < 98 不成立，弹窗不再强制）。
+    final forced = UpdateInfo(
       versionName: '1.4.54',
-      versionCode: 98,
-      minSupportedCode: 98,
+      versionCode: appBuild + 1,
+      minSupportedCode: appBuild + 1,
       apkUrl: 'https://example.com/jianji1.4.54-arm64.apk',
     );
     await tester.pumpWidget(MaterialApp(
