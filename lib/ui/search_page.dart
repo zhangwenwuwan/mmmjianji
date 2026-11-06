@@ -785,18 +785,15 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       _batch = false;
       _selected.clear();
     });
-    final messenger = ScaffoldMessenger.of(context);
-    messenger
-      ..clearSnackBars()
-      ..showSnackBar(SnackBar(
-        content: Text('已移入回收站 $count 条'),
-        duration: const Duration(seconds: 5),
-        action: SnackBarAction(
-          label: '查看',
-          onPressed: () => Navigator.of(context)
-              .push(AppPageRoute(page: const RecycleBinPage())),
-        ),
-      ));
+    // 带按钮的 SnackBar 默认永久挂着（persist 默认 = 有 action），
+    // 统一走 showActionSnack 才会 5 秒后自己收掉。
+    showActionSnack(
+      context,
+      message: '已移入回收站 $count 条',
+      actionLabel: '查看',
+      onAction: () => Navigator.of(context)
+          .push(AppPageRoute(page: const RecycleBinPage())),
+    );
     await _run();
   }
 

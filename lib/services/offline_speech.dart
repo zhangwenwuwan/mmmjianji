@@ -42,6 +42,25 @@ class OfflineSpeechService {
   final AudioRecorderService _recorder = AudioRecorderService();
   bool _busy = false;
 
+  /// 当前这次收音的「立刻收尾」钩子。收音真正开始后才非空。
+  void Function()? _finishHook;
+
+  /// 用户手动结束（再点一次按钮）。
+  bool _forced = false;
+
+  /// 让正在进行的收音**立刻结束**，进入识别。
+  ///
+  /// 只在 [listen] 已经进入收音阶段后有效（权限弹窗 / 82MB 模型加载期间
+  /// 还没有钩子，返回 false —— 调用方据此决定要不要提示"还在准备"）。
+  /// 说完话自己停顿也会结束，这里只是把"什么时候算说完"的决定权交给用户。
+  bool stopListening() {
+    final hook = _finishHook;
+    if (hook == null) return false;
+    _forced = true;
+    hook();
+    return true;
+  }
+
   /// 录一句并返回识别出的文字。识别不到内容时返回空串。
   ///
   /// [onStage] 驱动按钮动效；[onLevel] 是归一化后的实时音量，用于波纹幅度。
@@ -82,7 +101,6 @@ class OfflineSpeechService {
       // 所以改成：开头 350ms 先量环境底噪，之后按「底噪 × 2.0」自适应判定人声；
       // 全程没检测到人声就直接返回空串，不进识别、不弹窗。
       asr.startListening();
-      onStage(SpeechStage.listening);
       final done = Completer<void>();
       final started = DateTime.now();
       var lastLoud = started;
@@ -94,6 +112,12 @@ class OfflineSpeechService {
       void finish() {
         if (!done.isCompleted) done.complete();
       }
+
+      // 交给人手：再点一次按钮就立刻进识别（见 stopListening）。
+      // ⚠️ 必须在 `onStage(listening)` **之前**挂上：UI 收到 listening 时
+      // 可能立刻要求收尾（用户在模型加载期间就点过一下），钩子晚一步就吞掉这次请求。
+      _finishHook = finish;
+      onStage(SpeechStage.listening);
 
       final began = await _recorder.startRecording(
         onAudioData: (data) {
@@ -164,7 +188,9 @@ class OfflineSpeechService {
       await _recorder.stopRecording();
 
       // 全程没检测到人声：别把空调/底噪幻听成一句乱码再弹确认窗。
-      if (!heardVoice) {
+      // 例外：用户自己按停的 —— 他明确说了话，只是声音低于阈值（离得远、
+      // 手机挡在口袋里），这时候拦下来只会让他觉得"按了没反应"。
+      if (!heardVoice && !_forced) {
         asr.cancelListening();
         return '';
       }
@@ -179,6 +205,8 @@ class OfflineSpeechService {
       throw SpeechException('语音识别失败：$e');
     } finally {
       watchdog?.cancel();
+      _finishHook = null;
+      _forced = false;
       _busy = false;
     }
   }

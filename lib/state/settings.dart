@@ -55,6 +55,8 @@ class AppSettings {
     this.dueReminderLeadDays = 3,
     this.hintsDismissed = '',
     this.assetCollapsed = '',
+    this.voiceFabDx = -1,
+    this.voiceFabDy = -1,
   });
 
   final ThemeMode themeMode;
@@ -195,6 +197,15 @@ class AppSettings {
   /// 否则这个折叠按钮等于没有。
   final String assetCollapsed;
 
+  /// 语音悬浮按钮的位置，**按可用区域归一化**（0~1），-1 = 还没挪过、用默认右下角。
+  ///
+  /// 存比例而不是像素：换分辨率、转屏、改字号后按钮不会跑到屏幕外面去。
+  final double voiceFabDx;
+  final double voiceFabDy;
+
+  /// 用户是否挪过语音按钮。
+  bool get voiceFabMoved => voiceFabDx >= 0 && voiceFabDy >= 0;
+
   /// 这条提醒是否已经被点掉了。
   bool isHintDismissed(String token) =>
       token.isNotEmpty && hintsDismissed.split(',').contains(token);
@@ -276,6 +287,8 @@ class AppSettings {
     int? dueReminderLeadDays,
     String? hintsDismissed,
     String? assetCollapsed,
+    double? voiceFabDx,
+    double? voiceFabDy,
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -312,6 +325,8 @@ class AppSettings {
         dueReminderLeadDays: dueReminderLeadDays ?? this.dueReminderLeadDays,
         hintsDismissed: hintsDismissed ?? this.hintsDismissed,
         assetCollapsed: assetCollapsed ?? this.assetCollapsed,
+        voiceFabDx: voiceFabDx ?? this.voiceFabDx,
+        voiceFabDy: voiceFabDy ?? this.voiceFabDy,
       );
 }
 
@@ -364,6 +379,8 @@ class SettingsNotifier extends Notifier<AppSettings> {
   static const _kDueLead = 'due_reminder_lead_days';
   static const _kHintsDismissed = 'home_hints_dismissed';
   static const _kAssetCollapsed = 'asset_collapsed_groups';
+  static const _kVoiceFabDx = 'voice_fab_dx';
+  static const _kVoiceFabDy = 'voice_fab_dy';
 
   SharedPreferences? _prefs;
   bool _started = false;
@@ -444,6 +461,8 @@ class SettingsNotifier extends Notifier<AppSettings> {
       dueReminderLeadDays: prefs.getInt(_kDueLead) ?? 3,
       hintsDismissed: prefs.getString(_kHintsDismissed) ?? '',
       assetCollapsed: prefs.getString(_kAssetCollapsed) ?? '',
+      voiceFabDx: prefs.getDouble(_kVoiceFabDx) ?? -1,
+      voiceFabDy: prefs.getDouble(_kVoiceFabDy) ?? -1,
     );
   }
 
@@ -774,6 +793,14 @@ class SettingsNotifier extends Notifier<AppSettings> {
     _touched = true;
     state = state.copyWith(coverFollow: value);
     await _prefs?.setBool(_kCoverFollow, value);
+  }
+
+  /// 记下语音悬浮按钮的位置（归一化 0~1）。拖动松手时调用一次。
+  Future<void> setVoiceFabPos(double dx, double dy) async {
+    _touched = true;
+    state = state.copyWith(voiceFabDx: dx, voiceFabDy: dy);
+    await _prefs?.setDouble(_kVoiceFabDx, dx);
+    await _prefs?.setDouble(_kVoiceFabDy, dy);
   }
 
   bool verifyPin(String pin) {

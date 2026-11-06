@@ -296,18 +296,9 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
             ),
           ),
         // 右下角独立的语音记账悬浮按钮。批量操作时收起，避免和批量条抢位置。
-        // 用带约束的 Positioned（而非 fill + Align），按钮以外的地方不吃手势。
-        if (!_batch)
-          Positioned(
-            right: 14,
-            bottom: voiceFabBottom(context),
-            // 和底栏同为第 0 块：冷启动时一起从下方浮上来。
-            child: const BootRevealItem(
-              index: 0,
-              y: 22,
-              child: VoiceFab(),
-            ),
-          ),
+        // 铺满一层的定位器：按钮可以长按拖到任意位置（位置存在偏好里），
+        // 层本身不透明度为 0、只有按钮的体积吃手势，所以不会挡住流水行的点击。
+        if (!_batch) const Positioned.fill(child: VoiceFabLayer()),
       ],
     );
   }
@@ -452,18 +443,13 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
   /// 之前只有一句 2 秒 toast —— 删错了得走 我的 → 数据管理 → 回收站 三层才找得回。
   void _showRecycledHint(int count) {
     if (!mounted) return;
-    final messenger = ScaffoldMessenger.of(context);
-    messenger
-      ..clearSnackBars()
-      ..showSnackBar(SnackBar(
-        content: Text('已移入回收站 $count 条'),
-        duration: const Duration(seconds: 5),
-        action: SnackBarAction(
-          label: '查看',
-          onPressed: () => Navigator.of(context)
-              .push(AppPageRoute(page: const RecycleBinPage())),
-        ),
-      ));
+    showActionSnack(
+      context,
+      message: '已移入回收站 $count 条',
+      actionLabel: '查看',
+      onAction: () => Navigator.of(context)
+          .push(AppPageRoute(page: const RecycleBinPage())),
+    );
   }
 
   void _toast(String msg) {
@@ -2250,29 +2236,9 @@ class _CoverBackdrop extends StatelessWidget {
 }
 
 // ------------------------------------------------------- 语音记账悬浮按钮
-
-/// 底栏是悬浮胶囊：高 54、底部最小内边距 8（见 shell.dart 的 _BottomBar）。
-/// 首页 `extendBody: true`，所以这颗按钮必须坐在底栏**上方**，并且要按系统
-/// 手势条 / 三键导航的高度一起抬升，否则在部分机型上会被底栏压住。
-const double _kBottomBarHeight = 54;
-const double _kBottomBarInset = 8;
-const double _kVoiceFabGap = 14;
-
-/// 底栏上沿距屏幕底部的距离。
-double _bottomBarTopInset(BuildContext context) {
-  final sys = MediaQuery.of(context).padding.bottom;
-  return _kBottomBarHeight +
-      (sys > _kBottomBarInset ? sys : _kBottomBarInset);
-}
-
-/// 语音按钮下边缘距屏幕底部：底栏上沿再留一点呼吸空间。
-double voiceFabBottom(BuildContext context) =>
-    _bottomBarTopInset(context) + _kVoiceFabGap;
-
-/// 列表尾部留白：滚到底时最后一笔流水要能完整露在按钮上方，
-/// 不能出现「被悬浮层压住、又滚不出去」的内容。
-double voiceFabClearance(BuildContext context) =>
-    voiceFabBottom(context) + VoiceFab.size + 12;
+//
+// 按钮本体、可拖动定位层、以及「给按钮让位」的间距计算都在 voice_fab.dart：
+// 三者必须用同一份尺寸口径，分开放会各自漂移。
 
 /// 打开记账页并处理「删除 → 撤销」结果（软删除恢复）。
 Future<void> openEntryEditor(
@@ -2290,19 +2256,18 @@ Future<void> openEntryEditor(
 }
 
 /// 显示「已移入回收站 [撤销]」，5 秒内可恢复。
+///
+/// ⚠️ 5 秒后要**自己走掉**：带按钮的 SnackBar 在当前 Flutter 里默认 permanent
+/// （`persist` 默认 = `action != null`），必须显式关掉。见 common.dart。
 void _offerUndoDelete(BuildContext context, WidgetRef ref, int entryId) {
-  final messenger = ScaffoldMessenger.of(context);
-  messenger.hideCurrentSnackBar();
-  messenger.showSnackBar(SnackBar(
-    content: const Text('已移入回收站'),
-    duration: const Duration(seconds: 5),
-    action: SnackBarAction(
-      label: '撤销',
-      onPressed: () async {
-        final store = await ref.read(storeProvider.future);
-        await store.restoreEntry(entryId);
-        bumpRevision(ref);
-      },
-    ),
-  ));
+  showActionSnack(
+    context,
+    message: '已移入回收站',
+    actionLabel: '撤销',
+    onAction: () async {
+      final store = await ref.read(storeProvider.future);
+      await store.restoreEntry(entryId);
+      bumpRevision(ref);
+    },
+  );
 }

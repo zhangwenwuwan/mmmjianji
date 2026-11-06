@@ -11,6 +11,7 @@ import '../state/ledger_state.dart';
 import '../state/settings.dart';
 import 'app_glyph.dart';
 import 'common.dart';
+import 'editor_page.dart' show showPocketPicker;
 import 'motion.dart';
 import 'theme.dart';
 
@@ -844,6 +845,11 @@ class _VoiceEntryPageState extends ConsumerState<VoiceEntryPage> {
     );
   }
 
+  /// 选账户：**和记账页共用同一个选择器**，列表里直接带余额。
+  ///
+  /// 以前这里是一个只有名字的裸列表 —— 语音记完账常要确认"这笔该记哪张卡"，
+  /// 看不到余额就得退出去查一遍。共用 showPocketPicker 还能保证两处口径一致
+  /// （信用卡显示可用额度、其他负债显示欠款），别各写一份。
   Future<void> _pickPocket(List<Pocket> pockets) => _pickOnePocket(
         pockets,
         title: '选账户',
@@ -874,24 +880,12 @@ class _VoiceEntryPageState extends ConsumerState<VoiceEntryPage> {
       _toast('还没有账户：先到「资产」页新建一个');
       return;
     }
-    final v = await showAppSheet<int>(
-      context: context,
+    final v = await showPocketPicker(
+      context,
+      ref,
       title: title,
-      builder: (ctx) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          for (final p in pockets)
-            ListTile(
-              dense: true,
-              leading: AppGlyph(p.glyph, size: 18),
-              title: Text(p.displayName),
-              trailing: p.id == selectedId
-                  ? Icon(Icons.check, size: 18, color: Palette.brand(ctx))
-                  : null,
-              onTap: () => Navigator.pop(ctx, p.id),
-            ),
-        ],
-      ),
+      items: pockets,
+      selectedId: selectedId,
     );
     if (v == null || !mounted) return;
     setState(() => apply(v));

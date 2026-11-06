@@ -52,8 +52,8 @@ String moneyLabel(
 /// receiver 不用动（`ScaffoldMessenger.of(context).toast(...)`、
 /// `messenger.toast(...)`、级联 `..toast(...)` 都成立）。
 ///
-/// 需要「撤销」这类按钮的提示**不要**用它 —— 那条要留 4 秒给人点，
-/// 见 ledger_page 的删除提示。
+/// 需要「撤销」这类按钮的提示**不要**用它 —— 那条要留 5 秒给人点，
+/// 用 [showActionSnack]。
 extension ToastMessenger on ScaffoldMessengerState {
   void toast(String message) {
     // clearSnackBars 而不是 hideCurrentSnackBar：后者只是开始退场动画，
@@ -64,6 +64,32 @@ extension ToastMessenger on ScaffoldMessengerState {
       duration: const Duration(seconds: 2),
     ));
   }
+}
+
+/// 带一个动作按钮的提示（「撤销」「查看」）。
+///
+/// ⚠️ **必须显式写 `persist: false`。**
+/// 当前 Flutter 版本把 `SnackBar.persist` 的默认值定成了 `action != null`
+/// —— 也就是说**只要带了按钮，就永不自动消失**（Material 3 觉得"有操作可做
+/// 的提示不该自己跑掉"）。我们的「已移入回收站 [撤销]」只是顺手给个后悔入口，
+/// 挂在那儿会一直占着屏幕下方，用户实测反馈"消息一直不消失"。
+///
+/// 时长给 5 秒：这类提示要留够时间给人点按钮，比 [ToastMessenger.toast] 的 2 秒长。
+void showActionSnack(
+  BuildContext context, {
+  required String message,
+  required String actionLabel,
+  required VoidCallback onAction,
+  Duration duration = const Duration(seconds: 5),
+}) {
+  ScaffoldMessenger.of(context)
+    ..clearSnackBars()
+    ..showSnackBar(SnackBar(
+      content: Text(message),
+      duration: duration,
+      persist: false,
+      action: SnackBarAction(label: actionLabel, onPressed: onAction),
+    ));
 }
 
 /// 金额文字。统一处理：整数分 → 文本、隐藏金额打码、收支配色、等宽数字。

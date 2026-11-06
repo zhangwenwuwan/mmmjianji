@@ -128,4 +128,28 @@ void main() {
     await tester.pump(const Duration(seconds: 4));
     await tester.pump();
   });
+
+  testWidgets('选账户的列表里带余额（和记账页同一个选择器）', (tester) async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    await tester.pumpWidget(host(container));
+    await settle(tester);
+
+    await tester.tap(find.text('打开确认框'));
+    await settle(tester);
+
+    // 点账户 chip → 选择器
+    await tester.tap(find.text('现金'));
+    await settle(tester);
+
+    // 名字之外必须有余额那一行：语音记完账常要确认"这笔该记哪张卡"，
+    // 看不到余额就得退出去查一遍（用户反馈的就是这个）。
+    expect(find.textContaining('余额'), findsWidgets,
+        reason: '选账户时必须能直接看到余额');
+    expect(find.textContaining('CNY'), findsWidgets);
+
+    // 收尾：把面板关掉，别让它的动画定时器挂到测试结束。
+    await tester.tapAt(const Offset(200, 60));
+    await settle(tester);
+  });
 }
