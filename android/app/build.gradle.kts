@@ -54,6 +54,34 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        // 只交付 arm64-v8a。
+        //
+        // ⚠️ 别只依赖 `flutter build apk --target-platform android-arm64`：
+        // 那个参数只决定编译哪个 ABI 的 libapp.so / libflutter.so，
+        // 插件 AAR 里的 .so 仍由 AGP 按 abiFilters 全量合并。
+        // Flutter Gradle 插件在 apply() 阶段会先执行 configureAbis()：
+        //   abiFilters.clear(); abiFilters.addAll(PLATFORM_ABI_LIST)  // 3 个 ABI
+        // 所以这里必须再 clear() 一次（本块在插件 apply 之后求值，能覆盖它）。
+        // 2026-11-06 实测：offline ASR 的 libonnxruntime.so 被打了 arm64/v7a/x86_64
+        // 三份且 Stored 不压缩，APK 从 ~28MB 直接涨到 173MB。
+        ndk {
+            abiFilters.clear()
+            abiFilters += "arm64-v8a"
+        }
+    }
+
+    // ABI 过滤之外的第二道保险：就算将来有人换了构建方式（或 Flutter 插件改了
+    // configureAbis 的时机），也不要把非 arm64 的原生库塞进 APK。
+    // 同时写 lib/<abi>/** 与 **/<abi>/** 两种形态，兼容不同 AGP 版本的匹配基准。
+    packaging {
+        jniLibs {
+            excludes += setOf(
+                "lib/armeabi-v7a/**", "**/armeabi-v7a/**",
+                "lib/x86/**", "**/x86/**",
+                "lib/x86_64/**", "**/x86_64/**",
+            )
+        }
     }
 
     buildTypes {

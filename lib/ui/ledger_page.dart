@@ -28,6 +28,7 @@ import 'month_summary_page.dart';
 import 'motion.dart';
 import 'pull_to_add.dart';
 import 'recycle_bin_page.dart';
+import 'voice_fab.dart';
 import 'search_page.dart';
 import 'theme.dart';
 
@@ -264,34 +265,49 @@ class _LedgerPageState extends ConsumerState<LedgerPage> {
               // 流水（分组自带日期吸顶头，所以是独立的 sliver，不再塞进上面的列表）
               if (visibleNow.isNotEmpty)
                 ..._buildGroups(context, visibleNow, toBaseOf),
-              // 底部 88 给悬浮胶囊让位：最后一条流水不能被压住且滚不出来
-              const SliverToBoxAdapter(child: SizedBox(height: 88)),
+              // 底部留白给悬浮胶囊 + 右下角语音按钮让位：滚到底时最后一笔
+              // 流水要能完整露出来，不能被这两层压住还滚不出去。
+              SliverToBoxAdapter(
+                  child: SizedBox(height: voiceFabClearance(context))),
             ],
           ),
         ],
       ),
     );
-    if (!_batch) return body;
-    // 批量操作条压在底部：首页是 tab body，拿不到 Scaffold 的 bottomNavigationBar，
-    // 用 Stack 叠一层最省事，也不会让列表被挤压重排。
+    // 首页是 tab body，拿不到 Scaffold 的 bottomNavigationBar / FAB 插槽，
+    // 所以批量条和语音悬浮按钮都用 Stack 叠一层，也不会让列表被挤压重排。
     return Stack(
       children: [
         Positioned.fill(child: body),
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: 0,
-          child: _BatchBar(
-            count: _selected.length,
-            allSelected: visibleNow.isNotEmpty &&
-                _selected.length == visibleNow.length,
-            onSelectAll: () => _selectAll(visibleNow),
-            onBucket: _batchChangeBucket,
-            onDay: _batchChangeDay,
-            onDelete: _batchDelete,
-            onCancel: _exitBatch,
+        if (_batch)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: _BatchBar(
+              count: _selected.length,
+              allSelected: visibleNow.isNotEmpty &&
+                  _selected.length == visibleNow.length,
+              onSelectAll: () => _selectAll(visibleNow),
+              onBucket: _batchChangeBucket,
+              onDay: _batchChangeDay,
+              onDelete: _batchDelete,
+              onCancel: _exitBatch,
+            ),
           ),
-        ),
+        // 右下角独立的语音记账悬浮按钮。批量操作时收起，避免和批量条抢位置。
+        // 用带约束的 Positioned（而非 fill + Align），按钮以外的地方不吃手势。
+        if (!_batch)
+          Positioned(
+            right: 14,
+            bottom: voiceFabBottom(context),
+            // 和底栏同为第 0 块：冷启动时一起从下方浮上来。
+            child: const BootRevealItem(
+              index: 0,
+              y: 22,
+              child: VoiceFab(),
+            ),
+          ),
       ],
     );
   }
@@ -949,7 +965,7 @@ class _LedgerHeader extends SliverPersistentHeaderDelegate {
   /// 封面平均亮度（0~1），决定遮罩压多重。
   final double coverLuminance;
 
-  /// 2026-10-26：顶栏瘦成**一行不折叠**的「账本 + 三个图标」。
+  /// 2026-10-26：顶栏瘦成**一行不折叠**的「账本 + 日历/搜索」。
   ///
   /// 用户要求「去掉顶部的月份条和收支条，本月概览固定显示」。
   /// 原来那两条是重复信息：月份条（‹ 2026年10月 ›）已无处可去（首页只看本月，
@@ -1026,6 +1042,9 @@ class _LedgerHeader extends SliverPersistentHeaderDelegate {
                     const SizedBox(width: 12),
                     _BookChip(bookAsync: bookAsync, onCover: hasCover),
                     const Spacer(),
+                    // 语音记账不占顶栏：它是首页右下角那颗独立的悬浮按钮，
+                    // 单手可达、也不会被封面/浅色顶栏吃掉对比度。
+                    // 顶栏只留「账本 + 日历 + 搜索」。
                     // 日历：搜索左边。查历史某天是高频动作，
                     // 之前占着一个底部 tab，现在收进这里。
                     if (onCalendar != null)
@@ -2229,6 +2248,31 @@ class _CoverBackdrop extends StatelessWidget {
     );
   }
 }
+
+// ------------------------------------------------------- 语音记账悬浮按钮
+
+/// 底栏是悬浮胶囊：高 54、底部最小内边距 8（见 shell.dart 的 _BottomBar）。
+/// 首页 `extendBody: true`，所以这颗按钮必须坐在底栏**上方**，并且要按系统
+/// 手势条 / 三键导航的高度一起抬升，否则在部分机型上会被底栏压住。
+const double _kBottomBarHeight = 54;
+const double _kBottomBarInset = 8;
+const double _kVoiceFabGap = 14;
+
+/// 底栏上沿距屏幕底部的距离。
+double _bottomBarTopInset(BuildContext context) {
+  final sys = MediaQuery.of(context).padding.bottom;
+  return _kBottomBarHeight +
+      (sys > _kBottomBarInset ? sys : _kBottomBarInset);
+}
+
+/// 语音按钮下边缘距屏幕底部：底栏上沿再留一点呼吸空间。
+double voiceFabBottom(BuildContext context) =>
+    _bottomBarTopInset(context) + _kVoiceFabGap;
+
+/// 列表尾部留白：滚到底时最后一笔流水要能完整露在按钮上方，
+/// 不能出现「被悬浮层压住、又滚不出去」的内容。
+double voiceFabClearance(BuildContext context) =>
+    voiceFabBottom(context) + VoiceFab.size + 12;
 
 /// 打开记账页并处理「删除 → 撤销」结果（软删除恢复）。
 Future<void> openEntryEditor(

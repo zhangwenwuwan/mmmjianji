@@ -274,6 +274,20 @@ echo "[6/6] 已产出 $OUT"
 # 唯一的表现是「将来想覆盖升级时装不上」（INSTALL_FAILED_UPDATE_INCOMPATIBLE）。
 # 2026-10-26 之前所有 release 都是 debug 签名，就是这么被发现得太晚的。
 if [[ "$BUILD_TYPE" == "release" ]]; then
+  # 6.55) ABI 硬校验：脚本只编 arm64，多打一个 ABI 就是几十 MB 白胖。
+  # 2026-11-06 踩：voice_recognizer 的 onnxruntime/sherpa .so 被 AGP 合并了
+  # v7a + x86_64 两份，且 Stored 不压缩 → APK 173MB。签名/体积都验不出来，
+  # 装到手机上还一切正常，只有分发时才发现，所以在出包这一步直接拦死。
+  EXTRA_ABI="$(unzip -Z1 "$OUT" 2>/dev/null \
+    | grep -E '^lib/(armeabi-v7a|x86|x86_64)/' | head -3 || true)"
+  if [[ -n "$EXTRA_ABI" ]]; then
+    echo "❌ APK 里混进了非 arm64 的原生库（abiFilters 没生效？）："
+    echo "$EXTRA_ABI"
+    echo "   检查 android/app/build.gradle.kts 的 defaultConfig.ndk.abiFilters"
+    exit 1
+  fi
+  echo "✅ ABI 校验通过：仅 arm64-v8a"
+
   APKSIGNER="$(ls -d "${ANDROID_HOME:-/c/src/android-sdk}"/build-tools/*/apksigner.bat 2>/dev/null | sort -V | tail -1)"
   # jianji-release.jks（DN=CN=JianJi）的 SHA-1，小写无冒号
   WANT="95f4c153483dfa1618a2ec993e8a0fbab7580d5d"

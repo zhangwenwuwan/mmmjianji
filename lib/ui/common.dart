@@ -438,6 +438,7 @@ class AppTextField extends StatelessWidget {
     super.key,
     required this.label,
     this.controller,
+    this.focusNode,
     this.hint,
     this.helper,
     this.keyboardType,
@@ -454,6 +455,10 @@ class AppTextField extends StatelessWidget {
 
   final String label;
   final TextEditingController? controller;
+
+  /// 外部要主动抢焦点时用（例如「再记一笔」后把键盘重新叫起来）。
+  /// 不传则 TextField 自己管，行为与原来完全一致。
+  final FocusNode? focusNode;
   final String? hint;
   final String? helper;
   final TextInputType? keyboardType;
@@ -477,6 +482,7 @@ class AppTextField extends StatelessWidget {
       helper: helper,
       child: TextField(
         controller: controller,
+        focusNode: focusNode,
         keyboardType: keyboardType,
         inputFormatters: inputFormatters,
         maxLines: maxLines,

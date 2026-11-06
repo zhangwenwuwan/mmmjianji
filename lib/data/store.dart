@@ -1674,7 +1674,9 @@ class LedgerStore {
         .toList();
   }
 
-  Future<void> addBucket({
+  /// 返回新分类 id。语音确认弹窗里「自定义分类」建完要立刻选中它，
+  /// 靠 id 比再查一遍列表稳；既有调用点忽略返回值，语义不变。
+  Future<int> addBucket({
     required int bookId,
     required String title,
     required String glyph,
@@ -1685,7 +1687,7 @@ class LedgerStore {
             'SELECT COUNT(*) FROM buckets WHERE book_id = ? AND flow = ?',
             [bookId, flow])) ??
         0;
-    await _db.insert('buckets', {
+    return _db.insert('buckets', {
       'book_id': bookId,
       'title': title,
       'glyph': glyph,

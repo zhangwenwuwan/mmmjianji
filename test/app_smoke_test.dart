@@ -46,6 +46,40 @@ void main() {
     }
   }
 
+  /// 只推进**真实时间**、不推假时钟：让 sqflite 还在排队的查询真正跑完。
+  ///
+  /// `txnSynchronized` 给每个查询挂一个 10s 的 timeoutCompleter，只有查询
+  /// 真正开始执行（拿到锁）时那个 Timer 才会被取消；pump 推的是假时钟，
+  /// 推再多也替代不了真实 IO。和 large_text_test.dart 的 drainReal 同一套。
+  /// 2026-11-06 踩：全量/单跑都稳定报 "A Timer is still pending"，
+  /// 首页首帧垫在启动幕底下之后 provider 会一次性拉起 5 条查询排队。
+  Future<void> drainReal(WidgetTester tester, {int rounds = 12}) async {
+    for (var i = 0; i < rounds; i++) {
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 30)));
+    }
+    await tester.pump();
+  }
+
+  /// 启动后完整排空：真实 IO 与假时钟**交替**推进。
+  ///
+  /// 只推假时钟 → sqflite 排队查询的 10s timer 永远等不到完成回调；
+  /// 只推真实时间 → provider 加载完新挂的 Reveal(40ms) timer 没人触发。
+  /// 两者会互相产生对方要处理的新工作，所以必须来回推，收尾再补一帧
+  /// 把最后一轮新建的 Reveal 也跑掉。全量串行时机器更慢，轮数给足。
+  /// 全量串行时开库要跑完 v1→v22 共 22 段迁移，后面所有 provider 查询
+  /// 都排在这条锁后面；40 × 60ms ≈ 2.4s 真实时间才够把它们放出来。
+  /// 假时钟总共推 40 × 100ms = 4s，仍低于 sqflite 的 10s 告警阈值，
+  /// 不会把「还没跑完」伪装成「超时告警已触发」。
+  Future<void> drainAll(WidgetTester tester, {int rounds = 40}) async {
+    for (var i = 0; i < rounds; i++) {
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 60)));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.pump(const Duration(milliseconds: 200));
+  }
+
   /// 走完真实启动链路：读偏好 → 启动幕（呼吸 180ms + 张开 420ms）。
   ///
   /// 这段路径上有两类等待，混着处理会卡住：
@@ -83,7 +117,10 @@ void main() {
     // 再 settle 一轮：首页从「幕张开」那一刻起才真正开始建数据，
     // Reveal 的 Future.delayed（每块最多 360ms）和 sqflite 的事务定时器
     // 都还挂着，不收尾就会报 "A Timer is still pending"。
-    await settle(tester);
+    // 这个用例是全文件第一个，冷库 + 首帧一次性拉起的 provider 查询最多。
+    // 单独跑能过、全量串行就炸，是因为机器慢时查询排队更久，而查询完成后
+    // 又会新建 Reveal 定时器 —— 必须用 drainAll 交替排空，不能只 settle。
+    await drainAll(tester);
     expect(tester.takeException(), isNull, reason: '进主界面不应抛异常');
     expect(find.text('首页'), findsWidgets);
     // 幕只演一次，演完必须摘掉。
@@ -118,6 +155,7 @@ void main() {
     await tester.pump();
     await settle(tester, rounds: 4);
     expect(tester.takeException(), isNull);
+    await drainReal(tester);
   });
 
   testWidgets('导航改版：日历从首页右上角进，底栏中间 + 直接记账',
@@ -160,5 +198,35 @@ void main() {
     await settle(tester, rounds: 14);
     expect(tester.takeException(), isNull);
     expect(find.text('保存'), findsWidgets, reason: '点 + 应该打开记账页');
+    await drainReal(tester);
+  });
+
+  testWidgets('语音记账入口是首页右下角的独立悬浮按钮', (tester) async {
+    await tester.pumpWidget(const ProviderScope(child: JianjiApp()));
+    await tester.pump();
+    await boot(tester);
+    await settle(tester, rounds: 14);
+
+    final fab = find.byKey(const ValueKey('voice-entry-fab'));
+    expect(fab, findsOneWidget, reason: '首页要有语音记账悬浮按钮');
+    // 顶栏不再重复放一个麦克风：整个首页只该有一颗。
+    expect(find.byIcon(Icons.mic_none_outlined), findsOneWidget,
+        reason: '麦克风图标只属于右下角悬浮按钮');
+
+    // 右下角：中心落在右下半区，且底边在悬浮底栏胶囊（高 54）之上。
+    final rect = tester.getRect(fab);
+    final screen = MediaQuery.of(tester.element(fab)).size;
+    expect(rect.center.dx, greaterThan(screen.width / 2),
+        reason: '按钮要靠右');
+    expect(rect.center.dy, greaterThan(screen.height / 2),
+        reason: '按钮要靠下');
+    expect(rect.bottom, lessThan(screen.height - 54),
+        reason: '按钮不能被底栏胶囊盖住');
+
+    // 这里不点：点击会走平台麦克风权限 + 82MB 离线模型加载，属于真机验证
+    // 范畴（widget 测试没有录音通道，硬点只会留下一个 3 秒 SnackBar 定时器）。
+    // 弹窗与落库链路另由 voice_entry_test 覆盖。
+    expect(find.byIcon(Icons.mic_none_outlined), findsOneWidget);
+    await drainReal(tester);
   });
 }

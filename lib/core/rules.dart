@@ -116,3 +116,19 @@ int clampDayOfMonth(int day, int year, int month) {
   if (day > max) return max;
   return day;
 }
+
+/// 保存流水时该写什么时分：**只有记今天的账**才取当前时刻。
+///
+/// 补记历史日期时具体几点无从得知，留空（首页显示 `--:--`）比编一个时间诚实。
+/// 编辑已有流水不走这里 —— `copyWith` 不传该字段，保留库里原值。
+///
+/// 2026-11-07：原来这份逻辑是 `editor_page.dart` 的库私有函数，语音记账页
+/// 没接上，于是「手动记的有 00:04、语音记的显示 --:--」。放到公共规则里，
+/// 手动 / 语音 / 以后的模板、导入等入口共用同一口径，别再分叉。
+int? saveTimeMinutes(DateTime day) {
+  final now = DateTime.now();
+  if (day.year != now.year || day.month != now.month || day.day != now.day) {
+    return null;
+  }
+  return now.hour * 60 + now.minute;
+}
