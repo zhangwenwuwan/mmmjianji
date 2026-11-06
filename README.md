@@ -33,6 +33,8 @@
 App 内的「检查更新」会读取 GitHub Releases 的 `version.json` 清单并跳转到最新 APK 下载。
 发版流程见仓库内的 `release_github.sh` 与 `GitHub部署与发版.md`。
 
+版本历史见 [CHANGELOG.md](CHANGELOG.md)。
+
 ## 数据与隐私
 
 所有账目数据仅存储于本机 SQLite 数据库，应用不收集、不上传任何个人信息。
