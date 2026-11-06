@@ -170,23 +170,38 @@ class _LockGateState extends ConsumerState<LockGate>
         // 保持挂载但不绘制：解锁后回到原页面，草稿/滚动位置都还在。
         // Offstage 同时让它不可点击，默认 Finder 与读屏也会跳过
         // —— 锁着的时候不该有任何内容"漏"出去。
-        Offstage(offstage: true, child: widget.child),
+        //
+        // ExcludeFocus 是必须的：底下那棵树的焦点域虽然看不见，但仍然是"活的"，
+        // 抢着 primary focus，锁屏里的 PIN 框就永远拿不到焦点 ——
+        // 键盘不弹、输入法无法输入，用户等于被自己的锁锁死。
+        ExcludeFocus(
+          child: Offstage(offstage: true, child: widget.child),
+        ),
         Positioned.fill(
-          // 锁屏自带一层 Overlay。
+          // 锁屏自带一个 Navigator。
           //
-          // `TextField` 要求祖先里有 Overlay（它要用 Overlay 放选择手柄/放大镜），
-          // 而 `LockGate` 在 Navigator **之上**——Navigator 的 Overlay 在下面，
-          // 层级上不算祖先，真机上会直接断言 "No Overlay widget found"。
-          child: Overlay(
-            key: ValueKey(settings.biometricEnabled),
-            initialEntries: [
-              OverlayEntry(
-                builder: (_) => _LockScreen(
+          // 两个原因：
+          // ① `TextField` 需要 Overlay 祖先（放选择手柄/放大镜），而 `LockGate`
+          //    在 Navigator **之上**，下面的 Overlay 层级上不算祖先，真机直接断言
+          //    "No Overlay widget found"；
+          // ② 更要命的是**焦点域**：没有 Navigator/Overlay 时 `autofocus` 不生效，
+          //    键盘根本不弹 —— 用户面对一个输不进字的 PIN 框等于被锁死。
+          //    内置 Navigator 自带 FocusScope，autofocus 才正常工作。
+          //
+          // 外面必须包 HeroControllerScope.none：MaterialApp 的 HeroController
+          // 不能同时被两个 Navigator 共用，否则每帧断言一次。
+          child: HeroControllerScope.none(
+            child: Navigator(
+              key: const ValueKey('lock-layer'),
+              onGenerateRoute: (_) => PageRouteBuilder(
+                transitionDuration: Duration.zero,
+                reverseTransitionDuration: Duration.zero,
+                pageBuilder: (_, __, ___) => _LockScreen(
                   biometricEnabled: settings.biometricEnabled,
                   onUnlocked: _onUnlocked,
                 ),
               ),
-            ],
+            ),
           ),
         ),
       ],
@@ -213,6 +228,7 @@ class _LockScreen extends StatefulWidget {
 
 class _LockScreenState extends State<_LockScreen> with WidgetsBindingObserver {
   final _pinCtrl = TextEditingController();
+  final _pinFocus = FocusNode();
   String? _error;
 
   /// 已经自动弹过一次指纹：避免每次 rebuild 都弹。
@@ -232,13 +248,19 @@ class _LockScreenState extends State<_LockScreen> with WidgetsBindingObserver {
     // 锁可能是「切走那一刻」挂上的，此时 App 还在后台：别在那儿弹指纹。
     final state = WidgetsBinding.instance.lifecycleState;
     _foreground = state == null || state == AppLifecycleState.resumed;
-    WidgetsBinding.instance.addPostFrameCallback((_) => _autoBiometric());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // autofocus 在这个层级（Navigator 之上、被 ExcludeFocus 隔开的兄弟节点里）
+      // 不一定抢得到焦点，所以再显式要一次。
+      if (mounted) _pinFocus.requestFocus();
+      _autoBiometric();
+    });
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _pinCtrl.dispose();
+    _pinFocus.dispose();
     super.dispose();
   }
 
@@ -308,14 +330,11 @@ class _LockScreenState extends State<_LockScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      // 吃掉锁屏空白处的点击：底下那棵树虽然被 Offstage 摘了，
-      // 按钮/输入框之外的触摸也不该穿透过去。
-      behavior: HitTestBehavior.opaque,
-      onTap: () {},
-      child: Scaffold(
-        backgroundColor: Palette.paper(context),
-        body: SafeArea(
+    // 不再包 GestureDetector「吞点击」：底下那棵树被 Offstage 摘掉后本就
+    // 收不到触摸，而外层 tap 会和里面的「解锁」按钮抢手势，导致点了没反应。
+    return Scaffold(
+      backgroundColor: Palette.paper(context),
+      body: SafeArea(
           child: Center(
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(28),
@@ -345,6 +364,7 @@ class _LockScreenState extends State<_LockScreen> with WidgetsBindingObserver {
                   const SizedBox(height: 20),
                   TextField(
                     controller: _pinCtrl,
+                    focusNode: _pinFocus,
                     autofocus: true,
                     obscureText: true,
                     keyboardType: TextInputType.number,
@@ -400,7 +420,6 @@ class _LockScreenState extends State<_LockScreen> with WidgetsBindingObserver {
             ),
           ),
         ),
-      ),
     );
   }
 }
