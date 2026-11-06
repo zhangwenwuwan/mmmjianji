@@ -199,6 +199,69 @@ void main() {
           reason: '宽限期内的短暂切换不该回锁');
     });
   });
+
+  testWidgets('锁屏要盖住 push 出来的页面，不能只盖首页', (tester) async {
+    // 2026-11-06 真机 bug：LockGate 原来挂在首页路由里，
+    // 设置/记账页这些 push 出来的页面永远在它上面 ——
+    // 切后台回来时锁是"锁上了"，但用户看到的还是原来那页。
+    SharedPreferences.setMockInitialValues({
+      'lock_enabled': true,
+      'pin_hash': _hash('salt', '1234'),
+      'pin_salt': 'salt',
+      'lock_grace_seconds': 0,
+    });
+
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          // 和 main.dart 一样挂在 builder（Navigator 之上）
+          builder: (context, child) =>
+              LockGate(child: child ?? const SizedBox.shrink()),
+          home: Material(
+            child: Builder(
+              builder: (ctx) => Center(
+                child: ElevatedButton(
+                  onPressed: () => Navigator.of(ctx).push(MaterialPageRoute(
+                    builder: (_) => const Material(child: Text('PUSHED')),
+                  )),
+                  child: const Text('GO'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _unlockWith(tester, '1234');
+    expect(find.text('GO'), findsOneWidget);
+
+    await tester.tap(find.text('GO'));
+    await tester.pumpAndSettle();
+    expect(find.text('PUSHED'), findsOneWidget);
+
+    // 切后台：页面还在栈顶，锁必须出现在它上面
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+
+    expect(find.text('简记已锁定'), findsOneWidget,
+        reason: '锁屏必须盖住 push 出来的页面');
+    expect(find.text('PUSHED'), findsNothing,
+        reason: '锁定时底下那页不该被看到');
+
+    // 回来仍然是锁屏；解锁后回到原来那一页（页面栈没被清掉）
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    expect(find.text('简记已锁定'), findsOneWidget);
+
+    await _unlockWith(tester, '1234');
+    expect(find.text('PUSHED'), findsOneWidget,
+        reason: '解锁要回到原来那一页，不能重置到首页');
+  });
 }
 
 /// 输 PIN 解锁（4 位会自动提交，这里仍点一次"解锁"兜住老数据）。

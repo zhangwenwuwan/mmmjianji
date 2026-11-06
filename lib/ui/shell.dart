@@ -16,7 +16,6 @@ import 'glass.dart';
 import 'insight_hub_page.dart';
 import 'insights_page.dart';
 import 'ledger_page.dart';
-import 'lock_gate.dart';
 import 'motion.dart';
 import 'pocket_manage_page.dart';
 import 'profile_page.dart';
@@ -408,14 +407,15 @@ class _ShellState extends ConsumerState<Shell> {
       ),
     );
 
-    // 返回键两段式（见 _onBack）：包在 LockGate 的 child 里，
-    // 锁屏时不接管返回，行为和以前一致。
-    return LockGate(
-      child: PopScope(
-        canPop: false,
-        onPopInvokedWithResult: _onBack,
-        child: home,
-      ),
+    // 返回键两段式（见 _onBack）。
+    //
+    // 应用锁已移到 MaterialApp.builder（Navigator 之上），不在这里了：
+    // 挂在这棵子树里会被 push 出来的页面盖住，锁屏根本不出现。
+    // 锁屏期间系统返回由 LockGate.didPopRoute 吞掉。
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: _onBack,
+      child: home,
     );
   }
 }

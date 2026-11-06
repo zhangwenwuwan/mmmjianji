@@ -7,6 +7,7 @@ import 'services/app_log.dart';
 import 'services/reminder_service.dart';
 import 'state/settings.dart';
 import 'ui/boot_reveal.dart';
+import 'ui/lock_gate.dart';
 import 'ui/shell.dart';
 import 'ui/splash_page.dart';
 import 'ui/theme.dart';
@@ -49,10 +50,13 @@ class JianjiApp extends ConsumerWidget {
           fontStyle: settings.fontStyle),
       themeMode: settings.themeMode,
       // 字体缩放走 MediaQuery，比改 textTheme 更可靠（所有文字一起缩）
+      // 应用锁必须包在 builder 里（= Navigator 之上）。
+      // 挂在首页路由内部的话，push 出来的页面永远盖在锁屏上面，
+      // 切后台回来看到的是原来那页而不是锁屏（真机复现过）。
       builder: (context, child) => MediaQuery.withClampedTextScaling(
         minScaleFactor: settings.fontScale,
         maxScaleFactor: settings.fontScale,
-        child: child ?? const SizedBox.shrink(),
+        child: LockGate(child: child ?? const SizedBox.shrink()),
       ),
       locale: const Locale('zh', 'CN'),
       localizationsDelegates: const [
