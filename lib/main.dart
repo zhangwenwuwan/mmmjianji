@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'services/app_log.dart';
+import 'services/offline_speech.dart';
 import 'services/reminder_service.dart';
 import 'state/settings.dart';
 import 'ui/boot_reveal.dart';
@@ -24,6 +25,10 @@ void main() {
   // 偏好由 SettingsNotifier 异步补水，日志回填和提醒重排也放后台。
   AppLog.restore();
   ReminderService.resync();
+
+  // 后台预热离线语音识别引擎：冷启动先把 82MB 模型加载好，
+  // 用户点麦克风时不再转几秒的圈（见 OfflineSpeechService.warmUp）。
+  OfflineSpeechService.warmUp();
 
   runApp(const ProviderScope(child: JianjiApp()));
 }

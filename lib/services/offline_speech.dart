@@ -1,8 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:voice_recognizer/voice_recognizer.dart';
+
+import '../core/version.dart';
 
 /// 语音按钮当前处在哪一步。UI 只认这个枚举，不碰识别引擎内部状态。
 enum SpeechStage {
@@ -39,8 +43,61 @@ class OfflineSpeechService {
   OfflineSpeechService._();
   static final OfflineSpeechService instance = OfflineSpeechService._();
 
-  final AudioRecorderService _recorder = AudioRecorderService();
+  // 延迟到首次使用时才创建：AudioRecorderService 的构造会走平台通道
+  // （AudioRecorder().create），必须在 WidgetsFlutterBinding 起来之后。
+  // 否则进程内单例一被访问（哪怕只是测试）就会在绑定初始化前碰平台通道而炸。
+  // 录音只发生在 listen() 里，那时绑定必然已就绪；warmUp() 不碰它。
+  late final AudioRecorderService _recorder = AudioRecorderService();
   bool _busy = false;
+
+  /// 冷启动预热：后台把离线识别引擎先加载好，用户点麦克风时不再转几秒的圈。
+  ///
+  /// 模型文件（约 82MB）首次运行后缓存在应用私有目录。本方法只在 App 版本号
+  /// 变化时清一次旧缓存，其余冷启动直接复用，避免每次都重拷 82MB。
+  ///
+  /// ⚠️ 依赖 voice_recognizer 包已打补丁：`SimpleParaformerRecognizer
+  /// ._prepareModelFiles` 在模型文件已存在时跳过复制（否则每次冷启动仍会重拷）。
+  /// 补丁路径见 `.workbuddy/memory`。
+  static Future<void> warmUp() async {
+    try {
+      final dir = Directory(
+          '${(await getTemporaryDirectory()).path}/paraformer_offline_model');
+      final marker = File('${dir.path}/.warmbuild');
+
+      // ⚠️ 关键：不能直接在这里创建空目录 + 写标记。
+      // 否则引擎 `_prepareModelFiles` 检查「模型文件是否存在」时会发现目录是空的，
+      // 于是走「删目录 + 重拷 82MB」分支 —— 顺手把刚写的标记也删了，
+      // 结果每次冷启动标记都不在，warmUp 又清目录，陷入「永远重拷」的死循环。
+      //
+      // 正确做法：warmUp 只负责「版本升级时清旧缓存」，模型的复制由引擎完成。
+      // 标记必须在引擎把模型文件真正就位之后才写（见下方 preInitialize 回调）。
+      if (await dir.exists()) {
+        final old =
+            await marker.exists() ? await marker.readAsString() : '';
+        // 仅当「旧标记存在且与当前版本不同」才清缓存（换了模型）。
+        // 标记缺失但模型文件还在（如标记被异常清除）不要删，避免白白重拷 82MB。
+        final willDelete = old.isNotEmpty && old != '$appBuild';
+        if (willDelete) {
+          await dir.delete(recursive: true);
+        }
+      }
+
+      // 后台加载引擎，不阻塞首帧。初始化成功（模型已就位）后再写版本标记，
+      // 供下次冷启动判断。
+      unawaited(
+        VoiceRecognizerRegistry.instance.preInitialize().then((ok) async {
+          if (!ok) return;
+          try {
+            await marker.writeAsString('$appBuild');
+          } catch (_) {
+            // 写标记失败无所谓：下次冷启动会重新评估，顶多重拷一次。
+          }
+        }),
+      );
+    } catch (e) {
+      debugPrint('语音模型缓存校验失败（忽略，下次重试）: $e');
+    }
+  }
 
   /// 当前这次收音的「立刻收尾」钩子。收音真正开始后才非空。
   void Function()? _finishHook;
@@ -83,9 +140,9 @@ class OfflineSpeechService {
         throw SpeechException(why.isEmpty ? '需要麦克风权限才能语音记账' : why);
       }
 
-      // ② 模型初始化（首次点击才做，之后常驻内存）
-      onStage(SpeechStage.preparing);
+      // ② 模型初始化（已预热则瞬间完成；否则首次会复制 82MB，约几秒）
       final registry = VoiceRecognizerRegistry.instance;
+      if (!registry.isInitialized) onStage(SpeechStage.preparing);
       final ready = await registry.ensureInitialized();
       if (!ready) {
         throw SpeechException(registry.errorMessage ?? '离线识别引擎加载失败');
