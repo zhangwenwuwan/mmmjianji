@@ -101,9 +101,11 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
   int _acc = 0;
   String? _op;
 
-  /// 优惠 / 折扣（分）。一木的支出表单也有这一项：
-  /// 金额记的是**实付**，优惠只作附加记录（详情页能看到「省了多少」），
-  /// 不动 amountCents，所以统计口径不会变。
+  /// 优惠 / 折扣（分）。2026-11-07 语义升级：
+  /// 界面输入的是**原价**，这里是**减了多少**，保存时落库
+  /// amountCents = 原价 − 优惠（实付）。数据层含义不变——
+  /// amount 仍是实付、discount 仍是「省了多少」，统计口径零改动；
+  /// 变的只是录入方式：以前用户自己心算实付，现在 App 替他减。
   int _discountCents = 0;
 
   /// AA 分摊「他人承担」金额（分）。仅支出有效。落库金额仍是全额垫付，
@@ -142,22 +144,26 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
     }
   }
 
-  /// 优惠 / 折扣：走 App 自己的金额键盘（和转账那份共用 editFeeOrDiscount）
+  /// 优惠 / 折扣：走 App 自己的金额键盘（和转账那份共用 editFeeOrDiscount）。
+  /// 优惠模式下把当前输入的原价传进去，键盘上方出「折数滑条」。
   Future<void> _editFeeOrDiscount({required bool isFee}) async {
     final v = await editFeeOrDiscount(
       context,
       isFee: isFee,
       currentCents: isFee ? 0 : _discountCents,
+      discountBaseCents: isFee ? null : _resultCents,
     );
     if (v == null || !mounted) return;
     setState(() => _discountCents = v);
   }
 
   /// AA 分摊：他承担的金额不能超过本笔金额（否则统计会算成负数）。
+  /// 优惠后实付变少，上限也要跟着用实付。
   Future<void> _editSplit() async {
     final v = await editSplitCents(context, currentCents: _splitCents);
     if (v == null || !mounted) return;
-    final max = _resultCents > 0 ? _resultCents : v;
+    final net = (_resultCents - _discountCents).clamp(0, _resultCents);
+    final max = net > 0 ? net : v;
     setState(() => _splitCents = v.clamp(0, max));
   }
 
@@ -328,11 +334,25 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || _pocketId != null) return;
         var pick = pockets.first;
-        // ① 优先用「设置 → 默认账户」。必须校验它还在：账户可能已被归档删除，
-        //    直接用会选中一个不存在的 id，保存时报「请选择账户」还找不到原因。
+        // ① 上次记账用的账户（2026-11-07 用户要求）：用别的账户记完一笔，
+        //    下一笔还停在那个账户上，不要被默认账户拽回去。
+        //    必须校验存在性：账户可能已被归档/删除。
+        final last = ref.read(settingsProvider).lastPocketId;
+        Pocket? byLast;
+        if (last > 0) {
+          for (final p in pockets) {
+            if (p.id == last) {
+              byLast = p;
+              break;
+            }
+          }
+        }
+        // ② 没记过 → 「设置 → 默认账户」。同样校验它还在：账户可能已被
+        //    归档删除，直接用会选中一个不存在的 id，保存时报「请选择账户」
+        //    还找不到原因。
         final preferred = ref.read(settingsProvider).defaultPocketId;
         Pocket? byDefault;
-        if (preferred > 0) {
+        if (byLast == null && preferred > 0) {
           for (final p in pockets) {
             if (p.id == preferred) {
               byDefault = p;
@@ -340,9 +360,11 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
             }
           }
         }
-        // ② 没设默认账户：显式选了币种就按币种匹配 ③ 再不行取第一个
+        // ③ 显式选了币种就按币种匹配 ④ 再不行取第一个
         final cur = _currency;
-        if (byDefault != null) {
+        if (byLast != null) {
+          pick = byLast;
+        } else if (byDefault != null) {
           pick = byDefault;
         } else if (cur != null) {
           for (final p in pockets) {
@@ -457,6 +479,29 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
             ],
           ),
           const SizedBox(height: 8),
+          // 优惠后实付提示（2026-11-07 实付=原价−优惠）：不提示的话，
+          // 用户输 100 优惠 10，保存后流水变 90，会以为少记了 10 块。
+          if (_discountCents > 0)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: Text(
+                  _resultCents - _discountCents >= 0
+                      ? '原价 ${centsToText(_resultCents)} − 优惠 '
+                          '${centsToText(_discountCents)} = 实付 '
+                          '${centsToText(_resultCents - _discountCents)}'
+                      : '优惠已超过本笔金额，保存前请调整',
+                  key: const Key('discount-net-hint'),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: _resultCents - _discountCents >= 0
+                        ? Palette.inkSoft(context)
+                        : Palette.expense,
+                  ),
+                ),
+              ),
+            ),
           // 备注：常驻一行。放到 chip 里点开对话框会多一次交互，
           // 而备注是记账时第二常填的字段。
           TextField(
@@ -711,6 +756,15 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
       _toast('请输入金额');
       return;
     }
+    // 2026-11-07 优惠语义改为「实付 = 原价 − 优惠」：界面输的是**原价**，
+    // 落库 amount 存**实付**（统计 / 余额 / 预算口径全部不用动），
+    // discountCents 仍记「省了多少」，原价 = amount + discount 可随时还原。
+    final grossCents = _resultCents;
+    if (_discountCents >= grossCents) {
+      HapticFeedback.mediumImpact();
+      _toast('优惠不能等于或超过本笔金额');
+      return;
+    }
     final pocketId = _pocketId;
     if (pocketId == null) {
       // 一个账户都没有（新装、或全归档了）时只说「请选择账户」是死路：
@@ -756,7 +810,7 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
         toPocketId: null,
         bucketId: _bucketId,
         flow: _flow,
-        amountCents: _resultCents,
+        amountCents: grossCents - _discountCents,
         memo: _memoCtrl.text.trim(),
         day: _day,
         timeMinutes: saveTimeMinutes(_day),
@@ -784,6 +838,8 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
       if (_bucketId != null) {
         await ref.read(settingsProvider.notifier).setLastBucket(_flow, _bucketId!);
       }
+      // 也记住这次用的账户（2026-11-07：预选账户跟手上一次，不弹回默认账户）
+      await ref.read(settingsProvider.notifier).setLastPocket(pocketId);
       if (!mounted) return;
       HapticFeedback.lightImpact();
       SystemSound.play(SystemSoundType.click);
@@ -1196,9 +1252,15 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
   /// 只取当前流水类型的账户/分类/金额/备注/标签 —— 余额校准、报销、凭证这类
   /// 临时状态不进模板（模板是"下次照原样记一笔"，不该带报销标记）。
   Future<void> _saveAsTemplate() async {
-    final amount = _resultCents;
-    if (amount <= 0) {
+    // 模板不记优惠（“下次照原样记一笔”），所以存**实付**——
+    // 和以前模板金额=落库金额的口径保持一致。
+    final amount = _resultCents - _discountCents;
+    if (_resultCents <= 0) {
       _toast('请先输入金额，再存为模板');
+      return;
+    }
+    if (amount <= 0) {
+      _toast('优惠后金额为 0，请先调整优惠再存模板');
       return;
     }
     final pocketId = _pocketId;
@@ -1864,12 +1926,17 @@ Future<int?> editFeeOrDiscount(
   BuildContext context, {
   required bool isFee,
   required int currentCents,
+
+  /// 优惠模式下传当前输入的原价（分）：键盘上方出折数滑条。
+  /// 手续费模式传 null。
+  int? discountBaseCents,
 }) =>
     showAmountKeypad(
       context,
       initialCents: currentCents,
       title: isFee ? '手续费' : '优惠 / 折扣',
       allowZero: true,
+      discountBaseCents: discountBaseCents,
     );
 
 /// AA 分摊「他人承担」金额编辑器：两个 State 共用（和 fee/discount 同理）。
@@ -2238,6 +2305,11 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
       }
       _newAttachments.clear();
       bumpRevision(ref);
+      // 新建转账也记「上次用的账户」；编辑已有流水不记——
+      // 改一笔三个月前的账不代表你现在在用那个账户。
+      if (!_isEdit) {
+        await ref.read(settingsProvider.notifier).setLastPocket(pocketId);
+      }
       if (!mounted) return;
       HapticFeedback.lightImpact();
       SystemSound.play(SystemSoundType.click);
@@ -2489,12 +2561,14 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
     }
   }
 
-  /// 转账的手续费 / 折扣（对齐原版转账表单）
+  /// 转账的手续费 / 折扣（对齐原版转账表单）。折扣也带折数滑条，
+  /// 基数 = 当前输入的转出金额（转账折扣本就是「少流出多少」语义）。
   Future<void> _editFeeOrDiscount({required bool isFee}) async {
     final v = await editFeeOrDiscount(
       context,
       isFee: isFee,
       currentCents: isFee ? _feeCents : _discountCents,
+      discountBaseCents: isFee ? null : _resultCents,
     );
     if (v == null) return;
     setState(() {

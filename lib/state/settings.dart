@@ -49,6 +49,7 @@ class AppSettings {
     this.defaultPocketId = 0,
     this.lastBucketOutId = 0,
     this.lastBucketInId = 0,
+    this.lastPocketId = 0,
     this.avatarPath = '',
     this.nickname = '',
     this.dueReminderEnabled = false,
@@ -164,6 +165,15 @@ class AppSettings {
   /// 和 defaultPocketId 一样，这个 id 可能是已删除分类的残留，用前必须校验存在。
   final int lastBucketOutId;
   final int lastBucketInId;
+
+  /// **上次记账用的账户** id。0 = 还没记过。
+  ///
+  /// 2026-11-07 用户要求：预选账户优先跟「上一次用的」，而不是死盯着
+  /// [defaultPocketId]——设置了默认账户后，每次用别的账户记完，下一笔
+  /// 又被自动拽回默认账户，还得重新选一遍。优先级：lastPocketId >
+  /// defaultPocketId > 币种匹配 > 第一个。和其它 id 一样，可能是已删除
+  /// 账户的残留，用前必须校验存在。
+  final int lastPocketId;
 
   /// 「我的」页头像：相册选的图落盘后的**绝对路径**。空 = 用默认钱包图标。
   ///
@@ -281,6 +291,7 @@ class AppSettings {
     int? defaultPocketId,
     int? lastBucketOutId,
     int? lastBucketInId,
+    int? lastPocketId,
     String? avatarPath,
     String? nickname,
     bool? dueReminderEnabled,
@@ -319,6 +330,7 @@ class AppSettings {
         defaultPocketId: defaultPocketId ?? this.defaultPocketId,
         lastBucketOutId: lastBucketOutId ?? this.lastBucketOutId,
         lastBucketInId: lastBucketInId ?? this.lastBucketInId,
+        lastPocketId: lastPocketId ?? this.lastPocketId,
         avatarPath: avatarPath ?? this.avatarPath,
         nickname: nickname ?? this.nickname,
         dueReminderEnabled: dueReminderEnabled ?? this.dueReminderEnabled,
@@ -373,6 +385,7 @@ class SettingsNotifier extends Notifier<AppSettings> {
   static const _kDefaultPocket = 'default_pocket_id';
   static const _kLastBucketOut = 'last_bucket_out_id';
   static const _kLastBucketIn = 'last_bucket_in_id';
+  static const _kLastPocket = 'last_pocket_id';
   static const _kAvatar = 'avatar_path';
   static const _kNickname = 'nickname';
   static const _kDueEnabled = 'due_reminder_enabled';
@@ -455,6 +468,7 @@ class SettingsNotifier extends Notifier<AppSettings> {
       defaultPocketId: prefs.getInt(_kDefaultPocket) ?? 0,
       lastBucketOutId: prefs.getInt(_kLastBucketOut) ?? 0,
       lastBucketInId: prefs.getInt(_kLastBucketIn) ?? 0,
+      lastPocketId: prefs.getInt(_kLastPocket) ?? 0,
       avatarPath: prefs.getString(_kAvatar) ?? '',
       nickname: prefs.getString(_kNickname) ?? '',
       dueReminderEnabled: prefs.getBool(_kDueEnabled) ?? false,
@@ -683,6 +697,16 @@ class SettingsNotifier extends Notifier<AppSettings> {
       state = state.copyWith(lastBucketOutId: id);
       await _prefs?.setInt(_kLastBucketOut, id);
     }
+  }
+
+  /// 记住「上次记账用的账户」。保存成功后调用（支出 / 收入 / 新建转账）。
+  ///
+  /// 2026-11-07 用户要求：预选账户跟手上一次，而不是每次弹回默认账户。
+  /// 编辑已有流水**不记**——改一笔三个月前的账不代表你现在在用那个账户。
+  Future<void> setLastPocket(int id) async {
+    _touched = true;
+    state = state.copyWith(lastPocketId: id);
+    await _prefs?.setInt(_kLastPocket, id);
   }
 
   /// 保存首页模块顺序（传完整顺序，内部落盘成 id 串）

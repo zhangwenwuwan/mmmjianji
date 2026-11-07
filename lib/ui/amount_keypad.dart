@@ -81,6 +81,20 @@ class AmountKeypadController extends ChangeNotifier {
 
   void clear() => press('clear');
 
+  /// 直接把金额区替换成 [cents]（折数滑条用）：清掉表达式、写入等值数字。
+  /// 和 [AmountKeypadController.new] 的 initialCents 用同一套「元 → 文本」格式：
+  /// 整数元不带小数点，带角分才补两位。
+  void overrideCents(int cents) {
+    _acc = 0;
+    _op = null;
+    _amount = cents <= 0
+        ? ''
+        : (cents % 100 == 0
+            ? '${cents ~/ 100}'
+            : (cents / 100).toStringAsFixed(2));
+    notifyListeners();
+  }
+
   static String _labelOf(String op) => switch (op) {
         '-' => '−', // 显示用排版减号（U+2212），但**判定一律用 ASCII '-'**
         _ => op,
@@ -178,6 +192,10 @@ class AmountKeypad extends StatelessWidget {
 ///
 /// 返回用户确认的**分**；取消/清空后点确定返回 null（0 不作为有效金额，
 /// 记账类业务里 0 元是没有意义的）。
+///
+/// [discountBaseCents] 非 null 时进入「优惠 / 折扣」模式：键盘上方多一条
+/// 0–10 折的横滑条，滑动按 `减免 = 基数 × (10 − 折) / 10` 直接把减免额
+/// 写进金额区；键盘本身不变，仍可手动输减免额（2026-11-07 用户要求）。
 Future<int?> showAmountKeypad(
   BuildContext context, {
   int initialCents = 0,
@@ -186,6 +204,9 @@ Future<int?> showAmountKeypad(
 
   /// 允许返回 0。预算类场景需要「0 = 不设预算」，记账类场景 0 没有意义。
   bool allowZero = false,
+
+  /// 折数滑条的基数（当前输入的原价，分）。null = 不显示滑条。
+  int? discountBaseCents,
 }) async {
   final ctl = AmountKeypadController(initialCents: initialCents);
   final result = await showModalBottomSheet<int>(
@@ -248,6 +269,11 @@ Future<int?> showAmountKeypad(
                 ),
               ),
               const SizedBox(height: 8),
+              // 折数滑条：只在优惠模式下出现，横在键盘正上方
+              if (discountBaseCents != null) ...[
+                _ZheSliderRow(baseCents: discountBaseCents, ctl: ctl),
+                const SizedBox(height: 6),
+              ],
               AmountKeypad(onKey: ctl.press),
               const SizedBox(height: 8),
               Row(
@@ -286,6 +312,99 @@ Future<int?> showAmountKeypad(
     ),
   );
   return result;
+}
+
+/// 折数滑条行：0–10 折，0.5 步进（9.5 折也常见）。
+///
+/// 只有「滑条 → 金额」一条写路径：金额区是唯一真源，滑条位置永远从
+/// 当前减免额反推——手动敲键盘改了减免，滑条会跟着跳到对应折数。
+class _ZheSliderRow extends StatelessWidget {
+  const _ZheSliderRow({required this.baseCents, required this.ctl});
+
+  final int baseCents;
+  final AmountKeypadController ctl;
+
+  @override
+  Widget build(BuildContext context) {
+    final base = baseCents;
+    final discount = ctl.cents;
+    final canSlide = base > 0;
+    // 从当前减免反推折数：减掉原价的 10% = 9 折。基数还没输时按「不打折」。
+    final zhe = canSlide ? (10 * (1 - discount / base)).clamp(0.0, 10.0) : 10.0;
+    final label = canSlide
+        ? (zhe == zhe.roundToDouble()
+            ? '${zhe.toStringAsFixed(0)} 折'
+            : '${zhe.toStringAsFixed(1)} 折')
+        : '—';
+
+    final String hint;
+    if (!canSlide) {
+      hint = '先输入原价，再选折数';
+    } else if (discount > base) {
+      hint = '减免已超过原价';
+    } else if (discount <= 0) {
+      hint = '原价 ${centsToText(base)} · 未优惠';
+    } else {
+      hint = '原价 ${centsToText(base)} · 省 ${centsToText(discount)}'
+          ' · 实付 ${centsToText(base - discount)}';
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Text('折数',
+                style: TextStyle(
+                    fontSize: 12, color: Palette.inkSoft(context))),
+            Expanded(
+              child: Slider(
+                value: zhe,
+                min: 0,
+                max: 10,
+                // 0.5 步进：整数折之外，9.5 折这类也能滑到
+                divisions: 20,
+                label: label,
+                activeColor: Palette.brand(context),
+                onChanged: canSlide
+                    ? (v) {
+                        // 减免 = 原价 × (10 − 折) / 10；滑到 10 折 = 不减免
+                        ctl.overrideCents((base * (10 - v) / 10).round());
+                      }
+                    : null,
+              ),
+            ),
+            SizedBox(
+              width: 52,
+              child: Text(
+                label,
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: canSlide
+                      ? Palette.brand(context)
+                      : Palette.inkFaint(context),
+                ),
+              ),
+            ),
+          ],
+        ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: Text(
+            hint,
+            key: const Key('zhe-slider-hint'),
+            style: TextStyle(
+              fontSize: 11,
+              color:
+                  discount > base ? Palette.expense : Palette.inkFaint(context),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 /// 表单里的金额字段：点一下弹出自有键盘，**不弹系统键盘**。
