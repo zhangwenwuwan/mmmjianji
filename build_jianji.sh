@@ -59,9 +59,22 @@ fi
 #    ⚠️ 用「原地覆盖」而不是 rm -rf + cp -r：
 #    rm -rf 整个 lib 会触发工具的 safe-delete 保护（文件数超阈值需确认），
 #    一旦 rm 被拦而 cp 照跑，就会变成「嵌套复制」或「根本没覆盖」，而命令还不报错。
-cp -rf "$SRC/lib/." "$BC/lib/"
-mkdir -p "$BC/assets"
-cp -rf "$SRC/assets/." "$BC/assets/"
+#
+#    lib / assets / android/app/src 和下面的 test 一样必须「先删后拷」：
+#    cp -rf 只增不减——源里删掉的文件会永远留在构建副本里被打进 APK。
+#    （2026-11-07 踩：assets/licenses 两个上游 LICENSE 源码已删，
+#     构建副本不清导致 1.4.57~59 的 APK 一直带着它们。）
+sync_mirrored() { # $1=源目录 $2=副本目录
+  mkdir -p "$2"
+  while IFS= read -r f; do
+    rel="${f#"$2/"}"
+    [[ -e "$1/$rel" ]] || rm -f "$f"
+  done < <(find "$2" -type f 2>/dev/null)
+  cp -rf "$1/." "$2/"
+}
+sync_mirrored "$SRC/lib" "$BC/lib"
+sync_mirrored "$SRC/assets" "$BC/assets"
+sync_mirrored "$SRC/android/app/src" "$BC/android/app/src"
 cp "$SRC/pubspec.yaml" "$BC/pubspec.yaml"
 cp "$SRC/android/gradle.properties" "$BC/android/gradle.properties"
 cp "$SRC/android/build.gradle.kts" "$BC/android/build.gradle.kts"
@@ -71,7 +84,7 @@ cp "$SRC/android/app/build.gradle.kts" "$BC/android/app/build.gradle.kts"
 # Manifest 加了 USE_BIOMETRIC，但这里没同步 android/app/src，
 # 结果打出来的包仍是 FlutterActivity → local_auth 抛 no_fragment_activity，
 # 指纹/面容"按了没反应"，且 UI 上完全看不出来。
-cp -rf "$SRC/android/app/src/." "$BC/android/app/src/"
+# （同步已由上面的 sync_mirrored 覆盖，含「先删后拷」。）
 
 # 签名文件也要同步（release 用 jianji-release.jks + key.properties）。
 # ⚠️ 漏同步 = 构建副本里读不到 key.properties → gradle 直接失败（这是好事，
