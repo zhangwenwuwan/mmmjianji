@@ -1,6 +1,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 
 import '../core/rules.dart';
 import 'common.dart' show AppField;
@@ -314,23 +315,39 @@ Future<int?> showAmountKeypad(
   return result;
 }
 
-/// 折数滑条行：0–10 折，0.5 步进（9.5 折也常见）。
+/// 折数滑条行：0–10 折，0.1 折一档（9.9 折这类也够用）。
+/// 滑条本身连续（丝滑跟手），提交的值按 0.1 折量化，跨档轻震一记。
 ///
 /// 只有「滑条 → 金额」一条写路径：金额区是唯一真源，滑条位置永远从
 /// 当前减免额反推——手动敲键盘改了减免，滑条会跟着跳到对应折数。
-class _ZheSliderRow extends StatelessWidget {
+class _ZheSliderRow extends StatefulWidget {
   const _ZheSliderRow({required this.baseCents, required this.ctl});
 
   final int baseCents;
   final AmountKeypadController ctl;
 
   @override
+  State<_ZheSliderRow> createState() => _ZheSliderRowState();
+}
+
+class _ZheSliderRowState extends State<_ZheSliderRow> {
+  /// 拖动中的拇指位置（连续值，未量化）；null = 没在拖。
+  ///
+  /// 为什么本地存一份：拖动时只 setState 本组件让拇指逐帧跟手；
+  /// 量化后的提交（0.1 折一档）才走父级刷新。两套节奏分开，
+  /// 视觉是连续丝滑的，数值是有档的，高频拖动也不会让整个键盘面板跟着抖。
+  double? _dragV;
+
+  @override
   Widget build(BuildContext context) {
-    final base = baseCents;
+    final base = widget.baseCents;
+    final ctl = widget.ctl;
     final discount = ctl.cents;
     final canSlide = base > 0;
     // 从当前减免反推折数：减掉原价的 10% = 9 折。基数还没输时按「不打折」。
     final zhe = canSlide ? (10 * (1 - discount / base)).clamp(0.0, 10.0) : 10.0;
+    // 当前已提交值对应的 0.1 折档位（0..100），拖动时跨档才提交，避免重复刷新。
+    final committedStep = canSlide ? (zhe * 10).round() : -1;
     final label = canSlide
         ? (zhe == zhe.roundToDouble()
             ? '${zhe.toStringAsFixed(0)} 折'
@@ -358,20 +375,42 @@ class _ZheSliderRow extends StatelessWidget {
                 style: TextStyle(
                     fontSize: 12, color: Palette.inkSoft(context))),
             Expanded(
-              child: Slider(
-                value: zhe,
-                min: 0,
-                max: 10,
-                // 0.5 步进：整数折之外，9.5 折这类也能滑到
-                divisions: 20,
-                label: label,
-                activeColor: Palette.brand(context),
-                onChanged: canSlide
-                    ? (v) {
-                        // 减免 = 原价 × (10 − 折) / 10；滑到 10 折 = 不减免
-                        ctl.overrideCents((base * (10 - v) / 10).round());
-                      }
-                    : null,
+              child: SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  trackHeight: 4,
+                  thumbShape: const RoundSliderThumbShape(
+                      enabledThumbRadius: 10),
+                  overlayShape:
+                      const RoundSliderOverlayShape(overlayRadius: 20),
+                ),
+                child: Slider(
+                  // 连续滑条（不设 divisions）：拇指逐帧跟手不顿挫；
+                  // 值在回调里按 0.1 折量化，视觉连续、数值有档。
+                  value: _dragV ?? zhe,
+                  min: 0,
+                  max: 10,
+                  label: label,
+                  activeColor: Palette.brand(context),
+                  onChanged: canSlide
+                      ? (v) {
+                          setState(() => _dragV = v);
+                          // 量化到 0.1 折：减免 = 原价 × (10 − 折) / 10；
+                          // 滑到 10 折 = 不减免，0 折 = 全免。
+                          final step = (v * 10).round().clamp(0, 100);
+                          if (step != committedStep) {
+                            HapticFeedback
+                                .selectionClick(); // 每跨 0.1 折轻震一记
+                            final zz = step / 10;
+                            ctl.overrideCents(
+                                (base * (10 - zz) / 10).round());
+                          }
+                        }
+                      : null,
+                  onChangeEnd: (_) {
+                    // 松手后回到「由减免额反推」的受控位置，和键盘输入保持同源。
+                    setState(() => _dragV = null);
+                  },
+                ),
               ),
             ),
             SizedBox(
