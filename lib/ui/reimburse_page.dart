@@ -140,6 +140,12 @@ class _ReimbursePageState extends ConsumerState<ReimbursePage>
     final pockets =
         ref.watch(allPocketsProvider).valueOrNull ?? const <Pocket>[];
     final currencyOf = {for (final p in pockets) p.id: p.currency};
+    // 报销列表里的都是支出，分类名从支出分类取：没写备注的账显示
+    // 分类名，而不是一句没信息量的「未注明」（语音记账常不带备注，
+    // 用户会误以为数据丢了 —— 2026-11-07 反馈）。
+    final outBuckets =
+        ref.watch(bucketsProvider('out')).valueOrNull ?? const <Bucket>[];
+    final bucketTitleOf = {for (final b in outBuckets) b.id: b.title};
 
     int totalOf(List<Entry> list) => list.fold(
         0,
@@ -165,12 +171,27 @@ class _ReimbursePageState extends ConsumerState<ReimbursePage>
               controller: _tab,
               children: [
                 _list(context, _pending, totalOf(_pending), base,
+                    bucketTitleOf: bucketTitleOf,
                     actionLabel: '标记已报销', onAction: _markDone),
                 _list(context, _done, totalOf(_done), base,
+                    bucketTitleOf: bucketTitleOf,
                     actionLabel: '撤回', onAction: _unmark),
               ],
             ),
     );
+  }
+
+  /// 列表标题分级：备注 > 分类名 > 未注明。
+  ///
+  /// 之前只看备注，语音记账这类不带备注的账在待报销/已报销列表里
+  /// 全是「未注明」，用户以为报销把数据弄丢了；其实数据一直都在，
+  /// 把分类名亮出来就够了。
+  String _titleOf(Entry e, Map<int, String> bucketTitleOf) {
+    final memo = e.memo.trim();
+    if (memo.isNotEmpty) return memo;
+    final bucketTitle = e.bucketId == null ? null : bucketTitleOf[e.bucketId];
+    if (bucketTitle != null && bucketTitle.isNotEmpty) return bucketTitle;
+    return '未注明';
   }
 
   Widget _list(
@@ -178,6 +199,7 @@ class _ReimbursePageState extends ConsumerState<ReimbursePage>
     List<Entry> list,
     int total,
     String base, {
+    required Map<int, String> bucketTitleOf,
     required String actionLabel,
     required ValueChanged<Entry> onAction,
   }) {
@@ -212,7 +234,7 @@ class _ReimbursePageState extends ConsumerState<ReimbursePage>
               for (var i = 0; i < list.length; i++) ...[
                 if (i > 0) const Divider(height: 1),
                 ListTile(
-                  title: Text(list[i].memo.isEmpty ? '未注明' : list[i].memo),
+                  title: Text(_titleOf(list[i], bucketTitleOf)),
                   subtitle: Text(dayLabel(list[i].day),
                       style: const TextStyle(fontSize: 12)),
                   trailing: Row(

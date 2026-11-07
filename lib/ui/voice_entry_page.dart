@@ -164,12 +164,25 @@ class _VoiceEntryPageState extends ConsumerState<VoiceEntryPage> {
     );
   }
 
+  /// 兜底优先级与记账页一致（2026-11-07）：上次用的账户 > 默认账户 >
+  /// 第一个未归档账户。语音弹窗之前只认默认账户，用户明明上一笔在
+  /// 语音里选了支付宝，下一笔弹开又跳回微信，体感就是「没记住」。
   int? _fallbackPocket(List<Pocket> pockets) {
     if (pockets.isEmpty) return null;
-    final def = ref.read(settingsProvider).defaultPocketId;
+    final settings = ref.read(settingsProvider);
+    // ① 上次记账用的账户。必须校验存在性：账户可能已被归档/删除。
+    final last = settings.lastPocketId;
+    if (last > 0) {
+      for (final p in pockets) {
+        if (p.id == last && !p.archived) return last;
+      }
+    }
+    // ② 用户设置的默认账户。
+    final def = settings.defaultPocketId;
     if (def != 0 && pockets.any((p) => p.id == def && !p.archived)) {
       return def;
     }
+    // ③ 第一个未归档账户。
     for (final p in pockets) {
       if (!p.archived) return p.id;
     }
@@ -282,6 +295,9 @@ class _VoiceEntryPageState extends ConsumerState<VoiceEntryPage> {
         }
       }
       bumpRevision(ref);
+      // 记住这次用的账户，和记账页同口径：下一笔（手动或语音）预选它。
+      // 之前只有手动记账页会记，语音通道记完一笔下次弹窗又跳回默认账户。
+      await ref.read(settingsProvider.notifier).setLastPocket(pocketId);
       HapticFeedback.lightImpact();
       if (!mounted) return;
       _toast(again ? '已记一笔，继续说下一句' : '已记一笔');
