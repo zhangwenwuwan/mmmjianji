@@ -593,15 +593,16 @@ ThemeData buildTheme(
       ),
     ),
     // 2026-11-08 全 App 材质统一：25 处系统 AlertDialog 与 6 处弹出菜单
-    // 不再各自是实心白板。用主题一处收编成「磨砂玻璃」——半透明 + 亮边 +
-    // 大圆角，和底部弹窗/顶栏/底栏同一套材质语言。
-    // ⚠️ 故意不加 BackdropFilter：对话框出现时顶栏+底栏的两次模糊还在，
-    // 再加一层离屏渲染会在骁龙 710 上掉帧；0.94 的 tint 保证可读性。
+    // 不再各自是实心白板。用主题一处收编成「亮边 + 大圆角 + 大圆角内高光」，
+    // 和底部弹窗/顶栏/底栏同一套材质语言。
+    //
+    // ⚠️ 底色必须**不透明**（11-08 深色快照实测）：原来是 0.94 的半透明，
+    // 而对话框/菜单不吃 BackdropFilter（怕骁龙 710 掉帧），于是那 6% 透出的
+    // 是**锐利的**背后按钮——不是磨砂，是一层洗不掉的残影，比纯实心脏得多。
+    // 半透明只有在配上模糊时才有意义；不给模糊就老老实实实心。
+    // 玻璃感改由亮边 + 圆角承担，和 L1 卡片同一条规则。
     dialogTheme: DialogThemeData(
-      backgroundColor: (isDark
-              ? const Color(0xFF171D1A)
-              : Colors.white)
-          .withValues(alpha: 0.94),
+      backgroundColor: isDark ? const Color(0xFF171D1A) : Colors.white,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
       shape: RoundedRectangleBorder(
@@ -615,8 +616,7 @@ ThemeData buildTheme(
       ),
     ),
     popupMenuTheme: PopupMenuThemeData(
-      color: (isDark ? const Color(0xFF171D1A) : Colors.white)
-          .withValues(alpha: 0.94),
+      color: isDark ? const Color(0xFF171D1A) : Colors.white,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
       shape: RoundedRectangleBorder(

@@ -7,6 +7,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jianji/main.dart';
 import 'package:jianji/ui/liquid_surface.dart';
+import 'package:jianji/ui/motion.dart';
+import 'package:jianji/ui/theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -29,6 +31,10 @@ void main() {
   });
 
   setUp(() async {
+    // 放在 tool/ 而不是 test/ 之后，analyzer 不再把它当测试文件，
+    // 这条「仅测试可见」的 API 会报 invalid_use_of_visible_for_testing_member。
+    // 本文件确实只在 flutter test 下跑，直接压掉。
+    // ignore: invalid_use_of_visible_for_testing_member
     SharedPreferences.setMockInitialValues({'onboarded_v1': true});
     final dir = await databaseFactory.getDatabasesPath();
     try {
@@ -124,6 +130,23 @@ void main() {
     await drainAll(tester, rounds: 12);
     await snap(tester, '04_me_dark');
 
+    // 资产页：卡片 + 账户列表 + AA 待收，深色下最容易出现「卡片和背景同色」。
+    await tester.tapAt(const Offset(269, 816));
+    await settle(tester);
+    await drainAll(tester, rounds: 12);
+    await snap(tester, '11_assets_dark');
+
+    // 记账面板：底栏中间「+」是动作键，点一下弹出 editor 面板（不是切 tab）。
+    // 逻辑坐标第 3 格中心 = 14 + 72.9 × 2.5 ≈ 196。
+    await tester.tapAt(const Offset(196, 816));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+    await snap(tester, '12_editor_dark');
+    // 点面板上方空白关掉，否则后面的 dump 会卡在遮罩上
+    await tester.tapAt(const Offset(196, 120));
+    await settle(tester);
+    await drainAll(tester, rounds: 14);
+
     expect(tester.takeException(), isNull);
   });
 
@@ -213,6 +236,113 @@ void main() {
     await snap(tester, '05_surface_dark_press');
     await g.up();
     await tester.pump(const Duration(milliseconds: 300));
+
+    expect(tester.takeException(), isNull);
+  });
+
+  // 1.4.64 的 P1/P2 把 25 处 AlertDialog 与 6 处弹出菜单收编成了
+  // 「半透明 + 亮边 + 大圆角」，**深色下一次都没看过**。深色 tint 是
+  // #171D1A 叠在墨绿页面上，很容易变成一块死黑塑料板 —— 这一屏专门验它。
+  testWidgets('深色：对话框 / 弹出菜单 / 底部面板', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2340);
+    tester.view.devicePixelRatio = 2.75;
+    addTearDown(tester.view.reset);
+    tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
+
+    await tester.pumpWidget(
+      RepaintBoundary(
+        key: _rootKey,
+        child: MaterialApp(
+          theme: buildTheme(Brightness.dark),
+          home: Builder(
+            builder: (ctx) => Scaffold(
+              backgroundColor: const Color(0xFF0E1512),
+              body: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    FilledButton(
+                      onPressed: () => showDialog<void>(
+                        context: ctx,
+                        builder: (_) => AlertDialog(
+                          title: const Text('删除这笔记录？'),
+                          content: const Text('删除后一周内可从回收站恢复。'),
+                          actions: [
+                            TextButton(
+                                onPressed: () => Navigator.pop(ctx),
+                                child: const Text('取消')),
+                            FilledButton(
+                                onPressed: () {}, child: const Text('删除')),
+                          ],
+                        ),
+                      ),
+                      child: const Text('打开对话框'),
+                    ),
+                    const SizedBox(height: 16),
+                    PopupMenuButton<int>(
+                      itemBuilder: (_) => const [
+                        PopupMenuItem(value: 1, child: Text('编辑')),
+                        PopupMenuItem(value: 2, child: Text('复制')),
+                        PopupMenuItem(value: 3, child: Text('删除')),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    FilledButton(
+                      onPressed: () => showAppSheet<void>(
+                        context: ctx,
+                        title: '记一笔',
+                        builder: (_) => const Padding(
+                          padding: EdgeInsets.all(20),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              TextField(
+                                  decoration:
+                                      InputDecoration(hintText: '备注')),
+                              SizedBox(height: 16),
+                              Text('面板内容：分类 / 账户 / 金额'),
+                            ],
+                          ),
+                        ),
+                      ),
+                      child: const Text('打开面板'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+
+    await tester.tap(find.widgetWithText(FilledButton, '打开对话框'));
+    // ⚠️ 必须两段 pump：第一次只把 route 入栈，第二次才布局+跑完入场动画。
+    // 只写 pump(400ms) 时截图里根本没有对话框（2026-11-08 第一次跑就踩到）。
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await snap(tester, '08_dialog_dark');
+    await tester.tap(find.widgetWithText(TextButton, '取消'));
+    await settle(tester);
+    await drainAll(tester, rounds: 10);
+
+    await tester.tap(find.byType(PopupMenuButton<int>));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await snap(tester, '09_menu_dark');
+    // 点空白关菜单（菜单本体在右上，左边点一下不会命中任何项）
+    await tester.tapAt(const Offset(30, 300));
+    await settle(tester);
+    await drainAll(tester, rounds: 10);
+
+    await tester.tap(find.widgetWithText(FilledButton, '打开面板'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    await snap(tester, '10_sheet_dark');
+    await tester.tapAt(const Offset(196, 120));
+    await settle(tester);
+    await drainAll(tester, rounds: 12);
 
     expect(tester.takeException(), isNull);
   });
