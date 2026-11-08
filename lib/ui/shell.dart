@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -364,7 +365,7 @@ class _ShellState extends ConsumerState<Shell> {
       bottomNavigationBar: BootRevealItem(
         index: 0,
         y: 22,
-        child: _BottomBar(
+        child: LiquidBottomBar(
           selectedSlot: _pageToSlot[_index]!,
           onSelect: (slot) {
             // 中间那格是动作不是页面：直接开记账页，选中态不变
@@ -529,12 +530,171 @@ class _TabPageState extends State<_TabPage>
   ///
   /// ui-motion：选中项背后有圆角块像水滴一样"流"过去（弹簧，前沿快后沿慢半拍）；
   /// 选中图标放大一点点；所有格子都有按下缩放手感。
-class _BottomBar extends StatelessWidget {
-  const _BottomBar({required this.selectedSlot, required this.onSelect});
+  ///
+  /// 2026-11-08 液态玻璃交互升级（参考 Kyant0/Backdrop 的 LiquidBottomTabs，
+  /// 但**零新依赖、不动渲染后端**）：
+  /// - 背景录制在 Compose 里是 layerBackdrop，这里等价物是 Scaffold 的
+  ///   `extendBody: true` + Glass 的 BackdropFilter —— 已经做了，不重写。
+  /// - 真折射（lens）需要 Impeller 的 ImageFilter.shader；本项目为老 GPU
+  ///   关了 Impeller，所以用「按压缩放 + 跟手高光 + 边缘色散近似」做观感，
+  ///   全机型可跑。缩放只作用于 Glass 的 child，**玻璃层本身不缩放**，
+  ///   等价于官方的 layerBlock（教程里专门演示了连背景一起缩会错位）。
+  /// - 选中水滴改成可拖拽：拖动跟手、松手弹簧吸附，拖动速度会让水滴
+  ///   横向拉长/纵向压扁，模拟液体形变。
+class LiquidBottomBar extends StatefulWidget {
+  const LiquidBottomBar(
+      {super.key, required this.selectedSlot, required this.onSelect});
 
   /// 当前页面所在的槽位（0/1/3/4）；2 是记账键，永远不会是选中态
   final int selectedSlot;
   final ValueChanged<int> onSelect;
+
+  @override
+  State<LiquidBottomBar> createState() => LiquidBottomBarState();
+}
+
+class LiquidBottomBarState extends State<LiquidBottomBar>
+    with TickerProviderStateMixin {
+  static const double _slotCount = 4; // 连续坐标 0..4
+  static const List<int> _validSlots = [0, 1, 3, 4];
+
+  /// 选中块的连续槽位坐标（0..4）。拖动时直接改 value，松手用弹簧吸附。
+  late final AnimationController _pill = AnimationController.unbounded(
+    vsync: this,
+    value: widget.selectedSlot.toDouble(),
+  );
+
+  /// 按压进度 0..1：驱动内容缩放、跟手高光、边缘色散与内阴影。
+  late final AnimationController _press = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 170),
+  );
+
+  static final SpringDescription _spring =
+      SpringDescription.withDampingRatio(
+    mass: 1,
+    stiffness: 420,
+    ratio: 0.78, // <1 才有微微的超调，像液体撞一下再收住
+  );
+
+  double _slotWidth = 1;
+  double _velocity = 0; // 归一化 -1..1，拖拽速度
+  Offset? _touch;
+  bool _dragging = false;
+
+  bool get _reduce =>
+      MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+
+  /// 拖动过程中图标高亮跟着水滴走；扫过中间的 + 槽时保持当前页高亮，
+  /// 免得图标在一瞬间乱闪。
+  int get _activeSlot {
+    final p = _pill.value.round().clamp(0, _slotCount.toInt()).toInt();
+    return _validSlots.contains(p) ? p : widget.selectedSlot;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _pill.addListener(_tick);
+    _press.addListener(_tick);
+    _pill.addStatusListener((status) {
+      if (status == AnimationStatus.completed && _velocity != 0) {
+        _velocity = 0;
+        _tick();
+      }
+    });
+  }
+
+  void _tick() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void didUpdateWidget(covariant LiquidBottomBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 父级（返回键 / 再点当前 tab）改了页面下标时水滴才需要补一次动画；
+    // 自己拖拽触发的 onSelect 会连带这次回调，但此时弹簧正在跑，别打断它。
+    if (oldWidget.selectedSlot != widget.selectedSlot &&
+        !_dragging &&
+        !_pill.isAnimating) {
+      _snap(widget.selectedSlot.toDouble());
+    }
+  }
+
+  @override
+  void dispose() {
+    _pill.dispose();
+    _press.dispose();
+    super.dispose();
+  }
+
+  void _snap(double target, {double velocity = 0}) {
+    if (_reduce) {
+      _pill.value = target;
+      return;
+    }
+    _pill.animateWith(SpringSimulation(
+      _spring,
+      _pill.value,
+      target,
+      velocity,
+      tolerance: Tolerance(distance: 0.004, velocity: 0.02),
+    ));
+  }
+
+  void _onTap(int slot) {
+    if (slot != 2) _snap(slot.toDouble());
+    widget.onSelect(slot);
+  }
+
+  void _pointerDown(Offset at) {
+    _touch = at;
+    if (!_reduce) _press.forward();
+    _tick();
+  }
+
+  void _pointerUp() {
+    _touch = null;
+    _press.reverse();
+  }
+
+  void _dragStart(DragStartDetails d) {
+    _dragging = true;
+    _pill.stop();
+    _touch = d.localPosition;
+    if (!_reduce) _press.forward();
+    _tick();
+  }
+
+  void _dragUpdate(DragUpdateDetails d) {
+    final next = (_pill.value + d.delta.dx / _slotWidth)
+        .clamp(0.0, _slotCount)
+        .toDouble();
+    _pill.value = next;
+    // 16ms 一帧的近似：把每帧位移换算成「槽/帧」再夹到 ±1。
+    _velocity = ((d.primaryDelta ?? 0) / _slotWidth * 6)
+        .clamp(-1.0, 1.0)
+        .toDouble();
+    _touch = d.localPosition;
+    _tick();
+  }
+
+  void _dragEnd(DragEndDetails _) {
+    _dragging = false;
+    final raw = _pill.value.round().clamp(0, _slotCount.toInt()).toInt();
+    // 中间的 + 是动作键，绝不让它成为选中态 —— 按拖动方向就近落到 1 或 3。
+    final target =
+        _validSlots.contains(raw) ? raw : (_velocity >= 0 ? 3 : 1);
+    _snap(target.toDouble(), velocity: _velocity * 4);
+    _press.reverse();
+    if (target != widget.selectedSlot) widget.onSelect(target);
+  }
+
+  void _dragCancel() {
+    _dragging = false;
+    _snap(widget.selectedSlot.toDouble());
+    _press.reverse();
+  }
 
   /// 胶囊高度 / 圆角 / 外边距。圆角取 24（略小于半高 27），
   /// 半高会在端头显得"尖"，24 更接近一木那种圆角方块。
@@ -618,43 +778,83 @@ class _BottomBar extends StatelessWidget {
           // RenderObject 上（它只认 BoxParentData），运行时直接断言
           // "Incorrect use of ParentDataWidget"。
           child: LayoutBuilder(
-            builder: (c, constraints) {
+            builder: (_, constraints) {
               final slotW = constraints.maxWidth / 5;
-              return Stack(
-                children: [
-                  // 水滴指示：在选中槽位后面"流"过去。
-                  // 用 AnimatedPositioned 而不是 AnimatedContainer + margin：
-                  // 弹簧曲线会超调（曲线值冲到 1.1 以上），margin 算出来会变成负数，
-                  // AnimatedContainer 直接断言 "margin.isNonNegative"。
-                  AnimatedPositioned(
-                    duration: Motion.d(c, const Duration(milliseconds: 340)),
-                    curve: XCurve.spring,
-                    left: slotW * selectedSlot + slotW * 0.12,
-                    right: constraints.maxWidth - slotW * (selectedSlot + 0.88),
-                    top: 7,
-                    height: 40,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Palette.mint(context),
-                        // 同心圆角（2026-10-28）：外层胶囊 24，选中块距上边缘 7，
-                        // 所以内层要 24-7 = 17 才"同圆心"。写 15 时内层看起来
-                        // 比外层更方一点，说不清哪里别扭但就是不对。
-                        borderRadius:
-                            BorderRadius.circular(AppRadius.inside(_radius, 7)),
-                      ),
+              _slotWidth = slotW;
+              final pill = _pill.value.clamp(0.0, _slotCount).toDouble();
+              final press = _press.value;
+              final v = _velocity.abs();
+              // ⚠️ 缩放只包在 Glass 的 child 上。玻璃层（BackdropFilter +
+              // ClipRRect）留在原位，缩放它等于把背景采样一起放大，
+              // 官方教程里专门演示了这个错位（要用 layerBlock 修）。
+              return Listener(
+                // translucent：玻璃边缘/圆角空白处也能收到按压，高光不漏。
+                // Listener 不进手势竞技场，不会抢 tab 的点击。
+                behavior: HitTestBehavior.translucent,
+                onPointerDown: (e) => _pointerDown(e.localPosition),
+                onPointerUp: (_) => _pointerUp(),
+                onPointerCancel: (_) => _pointerUp(),
+                child: GestureDetector(
+                  onHorizontalDragStart: _dragStart,
+                  onHorizontalDragUpdate: _dragUpdate,
+                  onHorizontalDragEnd: _dragEnd,
+                  onHorizontalDragCancel: _dragCancel,
+                  child: Transform.scale(
+                    scale: 1.0 + 0.035 * press,
+                    child: Stack(
+                      children: [
+                        // 水滴指示：连续槽位坐标，拖动跟手、松手弹簧吸附。
+                        // 不再用 AnimatedPositioned —— 弹簧超调会让 right 变负
+                        // （margin.isNonNegative 断言），改成 left + width。
+                        Positioned(
+                          left: slotW * pill + slotW * 0.12,
+                          width: slotW * 0.76,
+                          top: 7,
+                          height: 40,
+                          child: Transform.scale(
+                            // 拖得越快越"拉丝"：横向拉长、纵向压扁。
+                            scaleX: 1.0 + v * 0.10,
+                            scaleY: 1.0 - v * 0.05,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Palette.mint(context),
+                                // 同心圆角（2026-10-28）：外层胶囊 24，选中块距上边缘 7，
+                                // 所以内层要 24-7 = 17 才"同圆心"。
+                                borderRadius: BorderRadius.circular(
+                                    AppRadius.inside(_radius, 7)),
+                              ),
+                            ),
+                          ),
+                        ),
+                        // 跟手高光 + 按压期边缘色散/内阴影（折射的廉价近似）。
+                        // IgnorePointer：纯装饰层绝不抢 tab 的点击。
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: CustomPaint(
+                              painter: _LiquidOverlayPainter(
+                                progress: press,
+                                touch: _touch,
+                                radius: _radius,
+                                accent: Palette.brand(context),
+                                dark: dark,
+                              ),
+                            ),
+                          ),
+                        ),
+                        Row(
+                          children: [
+                            _tab(context, 0, Icons.home_outlined, '首页'),
+                            _tab(context, 1, Icons.pie_chart_outline, '统计'),
+                            _addButton(context),
+                            _tab(context, 3,
+                                Icons.account_balance_wallet_outlined, '资产'),
+                            _tab(context, 4, Icons.person_outline, '我的'),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
-                  Row(
-                    children: [
-                      _tab(context, 0, Icons.home_outlined, '首页'),
-                      _tab(context, 1, Icons.pie_chart_outline, '统计'),
-                      _addButton(context),
-                      _tab(
-                          context, 3, Icons.account_balance_wallet_outlined, '资产'),
-                      _tab(context, 4, Icons.person_outline, '我的'),
-                    ],
-                  ),
-                ],
+                ),
               );
             },
           ),
@@ -665,12 +865,13 @@ class _BottomBar extends StatelessWidget {
 
   Widget _tab(
       BuildContext context, int slot, IconData icon, String label) {
-    final selected = selectedSlot == slot;
+    // 高亮跟着水滴走（拖拽过程中也是），而不是等父级 setState 才变。
+    final selected = _activeSlot == slot;
     final color = selected ? Palette.brand(context) : Palette.inkFaint(context);
     return Expanded(
       child: PressScale(
         scale: 0.9,
-        onTap: () => onSelect(slot),
+        onTap: () => _onTap(slot),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -703,7 +904,7 @@ class _BottomBar extends StatelessWidget {
     return Expanded(
       child: PressScale(
         scale: 0.9,
-        onTap: () => onSelect(2),
+        onTap: () => _onTap(2),
         child: Center(
           child: Container(
             width: 44,
@@ -729,4 +930,91 @@ class _BottomBar extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 液态玻璃的表面层：跟手高光 + 按压期边缘色散 + 内阴影。
+///
+/// 真折射（lens / chromaticAberration）要 Impeller 的 ImageFilter.shader，
+/// 本项目走 Skia，这里用「一团会跟着手指走的光 + 一圈彩边 + 一道内暗边」
+/// 近似玻璃被按下去时的光学变化。全部随 progress 淡入淡出，
+/// 静止时 progress=0 直接 return，不产生任何额外绘制开销。
+class _LiquidOverlayPainter extends CustomPainter {
+  const _LiquidOverlayPainter({
+    required this.progress,
+    required this.touch,
+    required this.radius,
+    required this.accent,
+    required this.dark,
+  });
+
+  final double progress;
+  final Offset? touch;
+  final double radius;
+  final Color accent;
+  final bool dark;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (progress <= 0.001) return;
+    final rect = Offset.zero & size;
+    final rrect = RRect.fromRectAndRadius(rect, Radius.circular(radius));
+    canvas.save();
+    canvas.clipRRect(rrect);
+
+    // ① 跟手高光：从触点散开的软光。浅色偏白、深色偏冷蓝。
+    final at = touch;
+    if (at != null) {
+      final light = dark ? const Color(0xFF9FD8FF) : Colors.white;
+      final cx = ((at.dx / size.width) * 2 - 1).clamp(-1.0, 1.0).toDouble();
+      final cy = ((at.dy / size.height) * 2 - 1).clamp(-1.0, 1.0).toDouble();
+      final shader = RadialGradient(
+        center: Alignment(cx, cy),
+        radius: 1.3,
+        colors: [
+          light.withValues(alpha: 0.22 * progress),
+          light.withValues(alpha: 0.0),
+        ],
+        stops: const [0.0, 1.0],
+      ).createShader(rect);
+      canvas.drawRect(rect, Paint()..shader = shader);
+    }
+
+    // ② 边缘色散：青 → 品牌 → 品红的一圈细描边。
+    //    官方是 RGB 分通道按入射角错位采样，这里只借「彩边」观感。
+    final rim = LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [
+        const Color(0xFF64D8FF).withValues(alpha: 0.34 * progress),
+        accent.withValues(alpha: 0.16 * progress),
+        const Color(0xFFFF8AD8).withValues(alpha: 0.30 * progress),
+      ],
+    ).createShader(rect);
+    canvas.drawRRect(
+      rrect.deflate(0.8),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.4
+        ..shader = rim,
+    );
+
+    // ③ 内阴影：给玻璃一点厚度，只在按着或拖着时出现。
+    final inner = dark ? Colors.white : Colors.black;
+    canvas.drawRRect(
+      rrect.deflate(2.4),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.4
+        ..color = inner.withValues(alpha: 0.10 * progress),
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _LiquidOverlayPainter old) =>
+      old.progress != progress ||
+      old.touch != touch ||
+      old.radius != radius ||
+      old.accent != accent ||
+      old.dark != dark;
 }
