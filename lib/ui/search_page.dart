@@ -673,8 +673,13 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                                     ),
                                     const SizedBox(width: 12),
                                     Text(
-                                      '支出 ${settings.symbol}${centsToText(_totalOut)}'
-                                      ' · 收入 ${settings.symbol}${centsToText(_totalIn)}',
+                                      // 「隐藏金额」要盖住搜索汇总：结果行里的
+                                      // MoneyText 会变 ****，但这行是自己拼的字符串，
+                                      // 漏掉它等于把总数原样漏出来（审计 P2-8）。
+                                      settings.hideAmounts
+                                          ? '支出 **** · 收入 ****'
+                                          : '支出 ${settings.symbol}${centsToText(_totalOut)}'
+                                              ' · 收入 ${settings.symbol}${centsToText(_totalIn)}',
                                       style: TextStyle(
                                           fontSize: 12,
                                           color: Palette.inkFaint(context)),

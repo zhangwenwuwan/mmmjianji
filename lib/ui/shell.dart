@@ -277,6 +277,9 @@ class _ShellState extends ConsumerState<Shell> {
     ref.listen<AppSettings>(settingsProvider, (_, __) {
       _syncDueReminders();
       _checkBudget();
+      // 「隐藏金额 / 应用锁」一改，桌面小组件要立刻跟着挡（或恢复）金额。
+      // 不等下一次记账：中间这段时间小组件还在裸奔。
+      WidgetBridge.sync(ref, force: true);
     });
     ref.listen(dueRemindersProvider, (_, __) => _syncDueReminders());
 

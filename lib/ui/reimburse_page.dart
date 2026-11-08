@@ -77,7 +77,10 @@ class _ReimbursePageState extends ConsumerState<ReimbursePage>
     }
 
     final symbol = ref.read(settingsProvider).symbol;
-    final amount = '$symbol${centsToText(e.amountCents)}';
+    // 「隐藏金额」也要挡住确认文案（审计 P2-8）：这是**当面**把手机给
+    // 财务/同事看报销单的场景，金额写在提示里就白隐藏了。
+    final hideAmounts = ref.read(settingsProvider).hideAmounts;
+    final amount = hideAmounts ? '****' : '$symbol${centsToText(e.amountCents)}';
     final picked = await showAppSheet<int>(
       context: context,
       title: '报销到哪个账户',

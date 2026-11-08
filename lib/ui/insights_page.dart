@@ -2123,6 +2123,8 @@ class _MonthNoteCard extends ConsumerWidget {
         ],
       ),
     );
+    // 先放掉临时控制器再走后面的 await（审计 P3-10）
+    ctrl.dispose();
     if (saved == null) return;
     final store = await ref.read(storeProvider.future);
     final book = await ref.read(activeBookProvider.future);

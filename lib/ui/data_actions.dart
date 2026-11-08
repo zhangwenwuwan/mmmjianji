@@ -49,9 +49,14 @@ Future<void> copyBackup(BuildContext context, WidgetRef ref) async {
   final json = await runWithProgress(
       context, '正在生成备份…', () => store.exportJson());
   await Clipboard.setData(ClipboardData(text: json));
-  await ref.read(settingsProvider.notifier).markBackedUp();
+  // ⚠️ 复制到剪贴板**不算备份完成**（2026-11-08 审计 P2-7）：
+  // 剪贴板是易失的（重启就没了、能被输入法/其他 App 读到），
+  // 以前在这里调 markBackedUp()，首页的「该备份了」提醒永久消失，
+  // 用户以为有备份，实际上什么都没留下。
+  // 现在提醒照旧，并在提示里说清楚"这只是临时中转"。
   if (!context.mounted) return;
-  _toast(context, '已复制到剪贴板（${(json.length / 1024).toStringAsFixed(1)} KB）');
+  _toast(context,
+      '已复制到剪贴板（${(json.length / 1024).toStringAsFixed(1)} KB）· 临时中转，建议用「导出备份」存成文件');
 }
 
 Future<void> exportCsv(BuildContext context, WidgetRef ref) async {

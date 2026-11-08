@@ -76,6 +76,17 @@ final activeBookProvider = FutureProvider<Book>((ref) async {
   return books.first;
 });
 
+/// 当前账本的 id，**已兜底成真实 id**（null 只可能出现在「一个账本都没有」）。
+///
+/// ⚠️ 拿账本 id 去 watch 任何 family provider 时，必须用这个而不是
+/// [activeBookIdProvider]。后者的默认值是 null，只有点过账本胶囊
+/// （ledger_page.dart）或进过账本管理才会被写入；覆盖导入还会把它置回 null
+/// （data_actions.dart）。直接拿它当 key，首次进入就落在一个不存在的 key 上，
+/// 界面会**永久转圈**（2026-11-08 审计 P1-1，真机复现）。
+/// [activeBookIdProvider] 的正确定位是「用户显式选择过哪个账本」。
+final currentBookIdProvider =
+    Provider<int?>((ref) => ref.watch(activeBookProvider).valueOrNull?.id);
+
 /// 当前浏览月份（当月 1 号）
 final monthProvider = StateProvider<DateTime>((ref) {
   final now = DateTime.now();
@@ -901,6 +912,18 @@ final templatesProvider =
   return store.templates(bookId);
 });
 
+/// 当前账本的模板（不依赖调用方自己解析账本 id）。
+///
+/// 模板管理页和记账页顶部的模板条都读这个：账本还没加载完时它自己保持
+/// loading，加载失败时透出错误，**不会**因为 `activeBookIdProvider == null`
+/// 就永远停在转圈（见 [currentBookIdProvider] 的注释）。
+final activeTemplatesProvider = FutureProvider<List<Template>>((ref) async {
+  final book = await ref.watch(activeBookProvider.future);
+  final store = await ref.watch(storeProvider.future);
+  ref.watch(revisionProvider);
+  return store.templates(book.id);
+});
+
 final recurringsProvider = FutureProvider<List<Recurring>>((ref) async {
   final store = await ref.watch(storeProvider.future);
   final book = await ref.watch(activeBookProvider.future);
@@ -1310,13 +1333,19 @@ final insightSlicesProvider = FutureProvider<List<Slice>>((ref) async {
     from: r.from,
     to: r.to,
   );
-  final merged = <String, int>{};
+  // 按 **bucket_id** 合并（不是按标题）：分类允许重名，按标题合并会让
+  // 占比图把两个「餐饮」算成一条，和排行榜（按 id）的总额对不上
+  // （2026-11-08 审计 P2-2）。真正同名的两条会各占一片，数字才是对的。
+  final merged = <int?, int>{};
+  final labels = <int?, String>{};
   for (final s in raw) {
-    merged[s.label] = (merged[s.label] ?? 0) +
+    merged[s.bucketId] = (merged[s.bucketId] ?? 0) +
         toBaseCents(s.cents, s.currency, book.baseCurrency, rates);
+    labels[s.bucketId] = s.label;
   }
   return rankSlices([
-    for (final e in merged.entries) Slice(label: e.key, cents: e.value),
+    for (final e in merged.entries)
+      Slice(label: labels[e.key] ?? '未分类', cents: e.value),
   ]);
 });
 

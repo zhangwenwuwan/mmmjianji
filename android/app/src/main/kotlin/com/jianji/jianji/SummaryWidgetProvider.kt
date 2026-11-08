@@ -23,6 +23,15 @@ class SummaryWidgetProvider : AppWidgetProvider() {
         private const val KEY_INCOME = "flutter.widget_month_income"
         private const val KEY_LABEL = "flutter.widget_month_label"
 
+        /**
+         * 「不要显示金额」标记。开了「隐藏金额」或应用锁时 Flutter 侧会置 true
+         * （见 lib/services/widget_bridge.dart）。
+         *
+         * 为什么小组件也要挡：它贴在桌面上，是**绕过应用锁**的一块屏。
+         * 应用锁只拦得住 App 内部，拦不住 RemoteViews。
+         */
+        private const val KEY_MASKED = "flutter.widget_masked"
+
         /** Flutter 同步完数据后调这里刷新所有实例 */
         fun refresh(context: Context) {
             val manager = AppWidgetManager.getInstance(context)
@@ -40,6 +49,7 @@ class SummaryWidgetProvider : AppWidgetProvider() {
             val expense = prefs.getLong(KEY_EXPENSE, -1L)
             val income = prefs.getLong(KEY_INCOME, 0L)
             val label = prefs.getString(KEY_LABEL, null)
+            val masked = prefs.getBoolean(KEY_MASKED, false)
 
             val symbol = "¥"
             if (expense < 0) {
@@ -47,6 +57,14 @@ class SummaryWidgetProvider : AppWidgetProvider() {
                 views.setTextViewText(R.id.widget_title, "简记")
                 views.setTextViewText(R.id.widget_amount, "打开记一笔")
                 views.setTextViewText(R.id.widget_sub, "点这里开始记账")
+            } else if (masked) {
+                // 隐藏金额 / 应用锁：连标题里的月份都保留，只挡数字。
+                views.setTextViewText(
+                    R.id.widget_title,
+                    if (label.isNullOrEmpty()) "本月支出" else "$label 支出"
+                )
+                views.setTextViewText(R.id.widget_amount, "••••")
+                views.setTextViewText(R.id.widget_sub, "金额已隐藏 · 点按查看")
             } else {
                 val net = income - expense
                 views.setTextViewText(

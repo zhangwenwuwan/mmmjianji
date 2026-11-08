@@ -12,6 +12,7 @@ import '../core/bill_csv.dart';
 import '../data/store.dart';
 import '../services/app_log.dart';
 import '../state/ledger_state.dart';
+import '../state/settings.dart';
 import 'common.dart';
 import 'motion.dart';
 import 'pocket_manage_page.dart' show showPocketEditor;
@@ -340,8 +341,13 @@ class _BillImportPageState extends ConsumerState<BillImportPage> {
                           fontSize: 20, fontWeight: FontWeight.w700)),
                   const SizedBox(height: 6),
                   Text(
-                    '收入 ${_yuan(result.totalIn)} · 支出 ${_yuan(result.totalOut)}'
-                    '${result.skipped > 0 ? ' · 跳过 ${result.skipped} 行' : ''}',
+                    // 预览里也一样要挡（审计 P2-8）：导入账单时多半正对着
+                    // 别人家的账单/电脑屏幕，汇总金额不该直接铺在界面上。
+                    ref.watch(settingsProvider).hideAmounts
+                        ? '收入 **** · 支出 ****'
+                            '${result.skipped > 0 ? ' · 跳过 ${result.skipped} 行' : ''}'
+                        : '收入 ${_yuan(result.totalIn)} · 支出 ${_yuan(result.totalOut)}'
+                            '${result.skipped > 0 ? ' · 跳过 ${result.skipped} 行' : ''}',
                     style: TextStyle(
                         fontSize: 12, color: Palette.inkSoft(context)),
                   ),

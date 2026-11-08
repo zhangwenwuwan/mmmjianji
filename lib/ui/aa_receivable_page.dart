@@ -37,7 +37,9 @@ class AaReceivablePage extends ConsumerWidget {
     final subject = e.currency ?? currencyOfPocket[e.pocketId] ?? book.baseCurrency;
     final candidates = pockets.where((p) => p.currency == subject).toList();
     final symbol = ref.read(settingsProvider).symbol;
-    final amount = '$symbol${centsToText(amountCents)}';
+    final amount = ref.read(settingsProvider).hideAmounts
+        ? '****'
+        : '$symbol${centsToText(amountCents)}';
     if (candidates.isEmpty) {
       ScaffoldMessenger.of(context)
           .toast('还没有 $subject 账户，先到资产页建一个再收回');

@@ -29,7 +29,14 @@
         android:label="简记"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:networkSecurityConfig="@xml/network_security_config">
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:allowBackup="false"
+        android:fullBackupContent="false">
+        <!-- ⚠️ allowBackup=false（2026-11-08 审计 P2-5）：默认是 true，意味着
+             SQLite 全库（所有账目、备注、账户）、PIN 哈希与盐都会被
+             「系统云备份 / 换机直传」带走 —— 和本 App「数据只在本机」的定位
+             直接冲突，而且用户在界面上完全看不到这件事。
+             自己的备份走「数据管理 → 导出 / 复制备份」，由用户主动触发。 -->
         <activity
             android:name=".MainActivity"
             android:exported="true"

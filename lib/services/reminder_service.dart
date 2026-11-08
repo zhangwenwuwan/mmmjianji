@@ -388,7 +388,11 @@ class ReminderService {
         notificationDetails: details,
       );
       await prefs.setString(_kBucketWarned, warned.join(','));
-      AppLog.info('reminder', '已发分类预算提醒：$body');
+      // ⚠️ 不要把 body 原样打进日志（2026-11-08 审计 P2-6）：body 里带**具体金额**，
+      // 而「日志中心」支持一键复制全部，等于把用户不想给人看的数字抄了一份。
+      // 只记「发了几条、有没有超支」这类不含金额的元信息。
+      AppLog.info('reminder',
+          '已发分类预算提醒：${phrases.length} 个分类，${anyOver ? '含超支' : '仅预警'}');
     } catch (e) {
       AppLog.warn('reminder', '分类预算提醒失败: $e');
     }

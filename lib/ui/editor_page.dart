@@ -220,7 +220,14 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
       ),
     );
     if (!mounted) return;
-    if (result == null || !result.saved) return; // 用户取消
+    if (result == null || !result.saved) {
+      // 用户关掉了面板。编辑模式下这页已经没有活路了：底部草稿区在编辑模式
+      // 返回空，屏幕上只剩分类网格、既没有保存按钮也没有退出提示 —— 一个
+      // 点哪都不响应的死页（审计 P2-11）。所以「关掉面板」就等于「不改这笔」，
+      // 直接把编辑页一起收掉，回流水列表。
+      if (editing != null) Navigator.of(context).pop(false);
+      return;
+    }
     // 保存成功：先给对勾，再退出编辑器
     await showSaveSuccessCheck(context);
     if (!mounted) return;
@@ -958,6 +965,10 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
         _memoCtrl.text = memoCtrl.text;
       });
     }
+    // 临时控制器必须释放：不 dispose 的话每次打开备注弹窗都漏一个
+    // 带监听器的对象，还会被 Flutter 的 debug 断言报出来（审计 P3-10）。
+    memoCtrl.dispose();
+    tagCtrl.dispose();
   }
 
   /// 备注联想条：按已输入内容过滤历史备注，点一下直接填。
@@ -1417,10 +1428,9 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
   /// 没模板时不占高度（返回 SizedBox）。编辑模式（改已有流水）也照样显示 ——
   /// 它是一条独立的快捷记录通道，不影响正在编辑的草稿。
   Widget _templateBar() {
-    final bookId = ref.watch(activeBookIdProvider);
-    final book = ref.watch(activeBookProvider).valueOrNull;
-    if (bookId == null || book == null) return const SizedBox.shrink();
-    final async = ref.watch(templatesProvider(bookId));
+    // 账本 id 必须走已兜底的 provider：activeBookIdProvider 默认 null，
+    // 没点过账本胶囊时模板条会整条静默消失（审计 P1-1）。
+    final async = ref.watch(activeTemplatesProvider);
     final templates = async.valueOrNull;
     if (templates == null || templates.isEmpty) return const SizedBox.shrink();
     return Container(
@@ -1504,7 +1514,12 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
   /// 这是一条**独立**的记录通道，不依赖当前草稿（也不会清空草稿）——
   /// 用户在模板条上点「午餐」就是想快速记一笔，不该和正在编的那笔混在一起。
   Future<void> _quickSaveTemplate(Template t) async {
+    // ⚠️ 防重入（审计 P2-12）：模板胶囊用的是 PressScale，双击就是两次 onTap。
+    // 以前只有「保存」按钮有 _saving 锁，模板这条独立通道没有 ——
+    // 手快就是两笔一模一样的账，而且两条都"成功"了，用户只能自己去删。
+    if (_saving) return;
     final messenger = ScaffoldMessenger.of(context);
+    setState(() => _saving = true);
     final store = await ref.read(storeProvider.future);
     final book = await ref.read(activeBookProvider.future);
     try {
@@ -1520,6 +1535,8 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
       if (!mounted) return;
       AppLog.error('editor', '模板落库失败', e);
       messenger.toast(e is StateError ? e.message : '模板落库失败，详情见日志中心');
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -1619,13 +1636,23 @@ class EditorSheetResult {
 /// （对齐原版 CategorySelector 的折叠/展开），底部有分类管理入口。
 class _CategoryGrid extends ConsumerStatefulWidget {
   const _CategoryGrid(
-      {required this.kind, required this.onPick, this.selectedId});
+      {required this.kind,
+      required this.onPick,
+      this.selectedId,
+      this.extra});
 
   final String kind;
   final ValueChanged<Bucket> onPick;
 
   /// 当前草签选中的分类 id（高亮用）
   final int? selectedId;
+
+  /// 网格里没有、但必须能看见/能选中的一个分类（通常是**已归档**的那个）。
+  ///
+  /// `bucketsProvider` 默认不含归档分类：改一笔旧账时，它的分类可能早就归档了，
+  /// 网格里根本没有这一格 —— 用户看不到自己这笔属于哪类，也没法再选回它
+  /// （2026-11-08 审计 P2-9）。这里把它单独列在网格上方并标注「已归档」。
+  final Bucket? extra;
 
   @override
   ConsumerState<_CategoryGrid> createState() => _CategoryGridState();
@@ -1672,6 +1699,39 @@ class _CategoryGridState extends ConsumerState<_CategoryGrid> {
         return ListView(
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
           children: [
+            // 已归档 / 不在列表里的当前分类：先给一格，别让用户以为自己这笔没分类
+            if (widget.extra != null &&
+                !all.any((b) => b.id == widget.extra!.id))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Panel(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  child: Row(
+                    children: [
+                      AppGlyph(widget.extra!.glyph, size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '${widget.extra!.title} · 已归档',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                      ),
+                      if (widget.extra!.id == widget.selectedId)
+                        Icon(Icons.check, size: 16, color: Palette.brand(context)),
+                      TextButton(
+                        onPressed: () => widget.onPick(widget.extra!),
+                        child: Text(
+                          widget.extra!.id == widget.selectedId ? '当前' : '选它',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             GridView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
@@ -2007,6 +2067,11 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
   /// 退款关联的原始支出 id
   int? _refundOfId;
 
+  /// 当前分类。编辑已有流水时从 [widget.bucket] 带进来 —— 分类原本只能在
+  /// 「打开金额面板之前」的网格里选，改一笔旧账时根本没有改分类的入口；
+  /// 若那个分类已被归档，面板里连名字都看不到（审计 P2-9）。
+  late Bucket? _bucket;
+
   /// 「更多」展开态：币种 / 不计入收支 / 不计入预算 / 凭证 / 退款关联。
   ///
   /// 这些属于「偶尔才用一次」，默认收起来——都摊开会让面板高到小屏放不下，
@@ -2057,6 +2122,7 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
     _currency = e?.currency;
     _toAmountCents = e?.toAmountCents;
     _refundOfId = e?.refundOfId;
+    _bucket = widget.bucket;
     _memoCtrl = TextEditingController(text: e?.memo ?? '');
     if (e != null) _loadAttachments(e.id);
   }
@@ -2250,7 +2316,7 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
         await store.updateEntry(widget.existing!.copyWith(
           pocketId: pocketId,
           toPocketId: _isTransfer ? _toPocketId : null,
-          bucketId: _isTransfer ? null : widget.bucket?.id,
+          bucketId: _isTransfer ? null : _bucket?.id,
           flow: widget.flow,
           amountCents: _resultCents,
           memo: _memoCtrl.text.trim(),
@@ -2272,6 +2338,14 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
           clearCurrency: _currency == null,
           clearToAmount: !_isTransfer,
           clearRefund: _refundOfId == null,
+          // 改了日期就重算时分（审计 P3-3）：从今天挪到历史日期要清空
+          // （和「补记历史留空」同一口径），从历史挪回今天要补当前时间。
+          // 只改备注/金额时日期没变 → 传 null，原时分原样保留。
+          timeMinutes: dayKey(_day) == dayKey(widget.existing!.day)
+              ? null
+              : saveTimeMinutes(_day),
+          clearTime: dayKey(_day) != dayKey(widget.existing!.day) &&
+              saveTimeMinutes(_day) == null,
         ));
         entryId = widget.existing!.id;
       } else {
@@ -2279,7 +2353,7 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
           bookId: book.id,
           pocketId: pocketId,
           toPocketId: _isTransfer ? _toPocketId : null,
-          bucketId: _isTransfer ? null : widget.bucket?.id,
+          bucketId: _isTransfer ? null : _bucket?.id,
           flow: widget.flow,
           amountCents: _resultCents,
           memo: _memoCtrl.text.trim(),
@@ -2390,7 +2464,33 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
 
   Future<void> _pickDay() async {
     final day = await pickDayQuick(context, _day, title: '选择日期');
-    if (day != null) setState(() => _day = day);
+    // 面板可能已经被关掉（用户下滑/按返回），这时 setState 会抛
+    // "setState() called after dispose()"。同文件其它 State 都判了 mounted，
+    // 只有这一片没判（审计 P2-13）。
+    if (day != null && mounted) setState(() => _day = day);
+  }
+
+  /// 改分类（编辑旧账用）。分类网格在页面主体上，被金额面板盖住，
+  /// 所以在面板里给一个入口 —— 把同一套网格装进底部面板里。
+  Future<void> _pickBucket() async {
+    if (_isTransfer) return;
+    final picked = await showAppSheet<Bucket>(
+      context: context,
+      title: '这笔记到哪个分类',
+      builder: (ctx) => SizedBox(
+        height: MediaQuery.of(ctx).size.height * 0.55,
+        // extra：把当前分类（可能已归档）也列出来，否则用户进来看不到
+        // 自己这笔原本属于哪类，一选就把原分类改掉了。
+        child: _CategoryGrid(
+          kind: widget.flow,
+          selectedId: _bucket?.id,
+          extra: _bucket,
+          onPick: (b) => Navigator.of(ctx).pop(b),
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _bucket = picked);
   }
 
   Future<void> _pickMood() async {
@@ -2414,7 +2514,7 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
         ],
       ),
     );
-    if (picked != null) setState(() => _mood = picked);
+    if (picked != null && mounted) setState(() => _mood = picked);
   }
 
   Future<void> _editNote() async {
@@ -2453,13 +2553,17 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
         ],
       ),
     );
-    if (ok == true) {
+    if (ok == true && mounted) {
       setState(() {
         _tags = tagCtrl.text;
         // 弹窗里的文本回写到常驻控制器（唯一真源）
         _memoCtrl.text = memoCtrl.text;
       });
     }
+    // 临时控制器必须释放：不 dispose 的话每次打开备注弹窗都漏一个
+    // 带监听器的对象，还会被 Flutter 的 debug 断言报出来（审计 P3-10）。
+    memoCtrl.dispose();
+    tagCtrl.dispose();
   }
 
   /// 备注联想条（和新建面板那套是同一份实现，改的时候两边都要改）
@@ -2552,7 +2656,7 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
         ],
       ),
     );
-    if (picked != null) {
+    if (picked != null && mounted) {
       setState(() {
         _memoCtrl.text = picked;
         _memoCtrl.selection =
@@ -2563,27 +2667,46 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
 
   /// 转账的手续费 / 折扣（对齐原版转账表单）。折扣也带折数滑条，
   /// 基数 = 当前输入的转出金额（转账折扣本就是「少流出多少」语义）。
+  ///
+  /// ⚠️ 本面板（改已有流水 / 转账）的金额栏是**实付**，而一屏面板（新建）
+  /// 的金额栏是**原价**。以前这里改优惠只动 `_discountCents`、不动金额，
+  /// 用户改完发现「这个月支出没变」，以为没生效（2026-11-08 审计 P2-10）。
+  /// 现在按同一套账算：原价 = 实付 + 优惠，改优惠就把实付一起挪过去，
+  /// 数字立刻可见；不碰优惠时实付原样不动（不会误伤历史数据）。
   Future<void> _editFeeOrDiscount({required bool isFee}) async {
+    final originalCents = _resultCents + _discountCents; // 原价（改前）
     final v = await editFeeOrDiscount(
       context,
       isFee: isFee,
       currentCents: isFee ? _feeCents : _discountCents,
-      discountBaseCents: isFee ? null : _resultCents,
+      discountBaseCents: isFee ? null : originalCents,
     );
-    if (v == null) return;
+    if (v == null || !mounted) return;
     setState(() {
       if (isFee) {
         _feeCents = v;
-      } else {
-        _discountCents = v;
+        return;
       }
+      _discountCents = v;
+      // 转账不适用：转账金额是本金，折扣只是「这次少流出多少」，
+      // 减掉它等于把本金也改了。只有支出/收入才走「原价 − 优惠 = 实付」。
+      if (_isTransfer) return;
+      final discount = v.clamp(0, originalCents);
+      _discountCents = discount;
+      // 实付 = 原价 − 优惠，直接回写到金额栏（它就是实付）。
+      final paid = (originalCents - discount).clamp(0, originalCents);
+      _amount = paid % 100 == 0
+          ? (paid ~/ 100).toString()
+          : (paid / 100).toStringAsFixed(2);
+      _acc = 0;
+      _op = null;
     });
   }
 
   /// AA 分摊：他承担的金额不能超过本笔金额。
   Future<void> _editSplit() async {
     final v = await editSplitCents(context, currentCents: _splitCents);
-    if (v == null) return;
+    if (v == null || !mounted) return;
     final max = _resultCents > 0 ? _resultCents : v;
     setState(() => _splitCents = v.clamp(0, max));
   }
@@ -2613,7 +2736,7 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
         ],
       ),
     );
-    if (picked == null) return;
+    if (picked == null || !mounted) return;
     final cur = picked == '__follow__' ? null : picked;
     setState(() => _currency = cur);
     if (cur == null) return;
@@ -2680,7 +2803,7 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
         ),
       ),
     );
-    if (v == null) return;
+    if (v == null || !mounted) return;
     setState(() => _toAmountCents = v == 0 ? null : v);
   }
 
@@ -2779,7 +2902,7 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
         ],
       ),
     );
-    if (picked == null) return;
+    if (picked == null || !mounted) return;
     setState(() => _refundOfId = picked == -1 ? null : picked);
   }
 
@@ -3021,6 +3144,14 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
                     spacing: 8,
                     runSpacing: 6,
                     children: [
+                      // 分类：编辑旧账时唯一能改分类的入口（审计 P2-9）
+                      if (!_isTransfer)
+                        _FieldChip(
+                          icon: Icons.category_outlined,
+                          label: _bucket?.title ?? '未分类',
+                          active: _bucket != null,
+                          onTap: _pickBucket,
+                        ),
                       _FieldChip(
                           icon: Icons.event_outlined,
                           label: dayKey(_day),

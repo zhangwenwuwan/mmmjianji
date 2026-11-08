@@ -375,6 +375,8 @@ class Entry {
     bool clearCurrency = false,
     bool clearToAmount = false,
     bool clearRefund = false,
+    // ④ 改到历史日期后时分为 null（见 core/rules.dart 的 saveTimeMinutes）
+    bool clearTime = false,
   }) =>
       Entry(
         id: id,
@@ -403,7 +405,7 @@ class Entry {
         splitCents: splitCents ?? this.splitCents,
         aaOfEntryId: aaOfEntryId ?? this.aaOfEntryId,
         aaCounterparty: aaCounterparty ?? this.aaCounterparty,
-        timeMinutes: timeMinutes ?? this.timeMinutes,
+        timeMinutes: clearTime ? null : (timeMinutes ?? this.timeMinutes),
       );
 }
 
@@ -2086,13 +2088,23 @@ class LedgerStore {
 
   /// 搜索：备注 / 标签 / 分类名。空关键词返回最近的流水。
   Future<List<Entry>> searchEntries(int bookId, String keyword) async {
-    final like = '%${keyword.trim()}%';
+    // ⚠️ LIKE 的通配符必须转义（2026-11-08 审计 P3-1）：
+    // 直接拼 `%关键词%` 时，用户输入一个 `%` 就等于「匹配全部」，
+    // 输入 `_` 会多匹配任意一个字符 —— 搜索结果是错的，但界面看着正常。
+    // 用 ESCAPE '\\' 声明转义符，再把 \ % _ 三个字符各自转义一遍。
+    final escaped = keyword
+        .trim()
+        .replaceAll('\\', '\\\\')
+        .replaceAll('%', '\\%')
+        .replaceAll('_', '\\_');
+    final like = '%$escaped%';
     final rows = await _db.rawQuery('''
       SELECT e.* FROM entries e
       LEFT JOIN buckets b ON b.id = e.bucket_id
       WHERE e.book_id = ?
         AND e.deleted_at IS NULL
-        AND (e.memo LIKE ? OR e.tags LIKE ? OR COALESCE(b.title, '') LIKE ?)
+        AND (e.memo LIKE ? ESCAPE '\\' OR e.tags LIKE ? ESCAPE '\\'
+             OR COALESCE(b.title, '') LIKE ? ESCAPE '\\')
       ORDER BY e.day DESC, e.id DESC
       LIMIT 200
     ''', [bookId, like, like, like]);
@@ -2286,6 +2298,18 @@ class LedgerStore {
     // 已经报销过就别再记一笔（界面上按钮会消失，但重复点击/并发回调仍可能进来）。
     // 返回已有那笔的 id，没有就 -1。
     if (e.reimburse == 2) return e.reimburseEntryId ?? -1;
+    // 币种必须一致（同 settleAa 的理由）：报销回来的钱是「原样退回」，
+    // 记进别的币种账户就等于把 100 USD 记成 ¥100，余额直接错 7 倍。
+    // 界面只列同币种账户，这里再兜一道数据层。
+    final entryPocketCur = await _pocketCurrencyOf(e.pocketId) ??
+        await _bookBaseCurrency(e.bookId);
+    final toCur =
+        await _pocketCurrencyOf(pocketId) ?? await _bookBaseCurrency(e.bookId);
+    if (entryPocketCur != toCur) {
+      throw StateError(
+          '这笔支出在 $entryPocketCur 账户，报销账户却是 $toCur —— 请选一个 $entryPocketCur 账户');
+    }
+    final from = (e.currency ?? '').isNotEmpty ? e.currency! : entryPocketCur;
     final when = day ?? DateTime.now();
     final memo = e.memo.trim().isEmpty ? '报销' : '报销 · ${e.memo.trim()}';
     late int createdId;
@@ -2299,7 +2323,8 @@ class LedgerStore {
         'day': dayKey(when),
         'tags': '报销',
         'reimburse': 0,
-        'currency': e.currency,
+        // 冻结成具体币种（原来写 e.currency，null 时会跟着报销账户走）。
+        'currency': from,
         'created_at': DateTime.now().toIso8601String(),
       });
       await txn.update(
@@ -2336,6 +2361,50 @@ class LedgerStore {
 
   // ---------------------------------------------------------------- AA 应收
 
+  /// 账户币种；账户已被删时返回 null（调用方自行兜底成账本主币）。
+  Future<String?> _pocketCurrencyOf(int pocketId) async {
+    final rows = await _db.query('pockets',
+        columns: ['currency'],
+        where: 'id = ?',
+        whereArgs: [pocketId],
+        limit: 1);
+    final c = rows.isEmpty ? null : rows.first['currency'] as String?;
+    return (c ?? '').isEmpty ? null : c;
+  }
+
+  /// 账本主币种（查不到就退回 CNY）。
+  Future<String> _bookBaseCurrency(int bookId) async {
+    final rows = await _db.query('books',
+        columns: ['base_currency'],
+        where: 'id = ?',
+        whereArgs: [bookId],
+        limit: 1);
+    final base = rows.isEmpty ? null : rows.first['base_currency'] as String?;
+    return (base ?? '').isEmpty ? 'CNY' : base!;
+  }
+
+  /// 某笔 AA 垫付**已收回**多少（只统计币种一致的回款，单位=原币种分）。
+  ///
+  /// 为什么不直接 `SUM(amount_cents)`：回款行可能因为历史数据/异常路径
+  /// 落在别的币种账户上，把美元分和人民币分加在一起比 split_cents 就是算错账。
+  /// 币种不一致的行直接不计入 —— 待收宁可显示「还没收齐」，也不能假收清。
+  Future<int> _aaSettledCentsOf(int entryId, String currency) async {
+    final rows = await _db.rawQuery(
+        'SELECT COALESCE(e.currency, p.currency) AS cur, '
+        'COALESCE(SUM(e.amount_cents), 0) AS total '
+        'FROM entries e LEFT JOIN pockets p ON p.id = e.pocket_id '
+        'WHERE e.aa_of_entry_id = ? AND e.deleted_at IS NULL '
+        'GROUP BY COALESCE(e.currency, p.currency)',
+        [entryId]);
+    var sum = 0;
+    for (final r in rows) {
+      if ((r['cur'] as String?) == currency) {
+        sum += (r['total'] as num?)?.toInt() ?? 0;
+      }
+    }
+    return sum;
+  }
+
   /// 收回一笔 AA 垫付：从 [pocketId] 记一笔「回款」收入（**不计收支**），
   /// 冲掉剩余待收。返回生成的收入流水 id。
   ///
@@ -2351,12 +2420,24 @@ class LedgerStore {
     if (e.flow != 'out' || e.splitCents <= 0) {
       throw StateError('这笔流水没有 AA 分摊');
     }
+    // 币种必须一致：回款是「这笔钱原样回来」，跨币种要折算，而 AA 单上没有
+    // 汇率信息。界面早就只列同币种账户，这里再兜一道 —— 数据层的 API 也会被
+    // 将来的入口（批量、导入、快捷指令）调用，光靠界面拦不住。
+    //
+    // 比的是**两个账户的币种**（不是流水上冻结的 currency）：余额是按账户
+    // 原币种直接累加的，钱从哪个币种的账户出去、就得回哪个币种的账户。
+    final entryPocketCur = await _pocketCurrencyOf(e.pocketId) ??
+        await _bookBaseCurrency(e.bookId);
+    final toCur =
+        await _pocketCurrencyOf(pocketId) ?? await _bookBaseCurrency(e.bookId);
+    if (entryPocketCur != toCur) {
+      throw StateError(
+          '这笔 AA 垫付在 $entryPocketCur 账户，回款账户却是 $toCur —— 请选一个 $entryPocketCur 账户收回');
+    }
+    // 回款行冻结成「这笔钱」的币种（有冻结值就用冻结值，没有就用账户币种）。
+    final from = (e.currency ?? '').isNotEmpty ? e.currency! : entryPocketCur;
     // 已经收清就别重复生成（界面按钮会消失，但并发/重复点击仍可能进来）。
-    final settledRows = await _db.rawQuery(
-        'SELECT COALESCE(SUM(amount_cents), 0) AS s FROM entries '
-        'WHERE aa_of_entry_id = ? AND deleted_at IS NULL',
-        [entryId]);
-    final settled = (settledRows.first['s'] as num?)?.toInt() ?? 0;
+    final settled = await _aaSettledCentsOf(entryId, from);
     final left = e.splitCents - settled;
     if (left <= 0) {
       final last = await _db.query('entries',
@@ -2382,7 +2463,9 @@ class LedgerStore {
         'tags': 'AA回款',
         'reimburse': 0,
         'exclude_from_stats': 1,
-        'currency': e.currency,
+        // 冻结成具体币种，不再跟着收款账户走；也不再留 null —— 留 null 的话，
+        // 哪天账户币种被改，历史回款的币种会跟着变，待收就永远对不上。
+        'currency': from,
         'aa_of_entry_id': entryId,
         'created_at': DateTime.now().toIso8601String(),
       });
@@ -2413,12 +2496,23 @@ class LedgerStore {
   }
 
   /// 每笔支出已收回的金额：entryId → Σ 回款（未删除）。
+  ///
+  /// ⚠️ 只累加**币种与本笔支出一致**的回款（2026-11-08 审计 P1-3）：
+  /// 以前是不带条件的 `SUM(amount_cents)`，一旦有回款落在别的币种账户上，
+  /// 美元分和人民币分会被直接相加，再跟 split_cents（原币种）比 —— 部分收回
+  /// 后待收要么提前变 0，要么永远收不清。币种不符的行不计入本笔待收。
   Future<Map<int, int>> aaSettledByEntry(int bookId) async {
-    final rows = await _db.rawQuery(
-        'SELECT aa_of_entry_id AS eid, SUM(amount_cents) AS total '
-        'FROM entries WHERE book_id = ? AND aa_of_entry_id IS NOT NULL '
-        'AND deleted_at IS NULL GROUP BY aa_of_entry_id',
-        [bookId]);
+    final rows = await _db.rawQuery('''
+      SELECT r.aa_of_entry_id AS eid, SUM(r.amount_cents) AS total
+      FROM entries r
+      JOIN entries o ON o.id = r.aa_of_entry_id
+      LEFT JOIN pockets pr ON pr.id = r.pocket_id
+      LEFT JOIN pockets po ON po.id = o.pocket_id
+      WHERE r.book_id = ? AND r.aa_of_entry_id IS NOT NULL
+        AND r.deleted_at IS NULL
+        AND COALESCE(r.currency, pr.currency) = COALESCE(o.currency, po.currency)
+      GROUP BY r.aa_of_entry_id
+    ''', [bookId]);
     return {
       for (final r in rows)
         (r['eid'] as int): (r['total'] as num?)?.toInt() ?? 0,
@@ -2441,7 +2535,7 @@ class LedgerStore {
       SELECT e.flow AS flow,
              SUM(ROUND(
                (CASE WHEN e.flow = 'out'
-                     THEN e.amount_cents - COALESCE(e.split_cents, 0)
+                     THEN MAX(0, e.amount_cents - COALESCE(e.split_cents, 0))
                      ELSE e.amount_cents END)
                * CASE WHEN COALESCE(e.currency, p.currency, b.base_currency) = b.base_currency
                       THEN 1.0
@@ -2489,7 +2583,7 @@ class LedgerStore {
                           THEN 1.0 ELSE COALESCE(r.rate, 1.0) END)
                       ELSE 0 END) AS income,
              SUM(CASE WHEN e.flow = 'out'
-                      THEN ROUND((e.amount_cents - COALESCE(e.split_cents, 0)) * CASE
+                      THEN ROUND((MAX(0, e.amount_cents - COALESCE(e.split_cents, 0))) * CASE
                         WHEN COALESCE(e.currency, p.currency, b.base_currency) = b.base_currency
                           THEN 1.0 ELSE COALESCE(r.rate, 1.0) END)
                       ELSE 0 END) AS expense,
@@ -2536,7 +2630,7 @@ class LedgerStore {
              COALESCE(b.glyph, '🧾') AS glyph,
              COALESCE(e.currency, p.currency) AS currency,
              SUM(CASE WHEN e.flow = 'out'
-                      THEN e.amount_cents - COALESCE(e.split_cents, 0)
+                      THEN MAX(0, e.amount_cents - COALESCE(e.split_cents, 0))
                       ELSE e.amount_cents END) AS total
       FROM entries e
       LEFT JOIN buckets b ON b.id = e.bucket_id
@@ -2560,29 +2654,43 @@ class LedgerStore {
   /// 分类占比（按币种分组；跨币种由上层折算合并）。
   ///
   /// 默认按 [month] 取当月；传 [from]/[to] 可覆盖成任意区间（本年 / 全部）。
-  Future<List<({String label, String glyph, String currency, int cents})>>
-      bucketSlices(int bookId, DateTime month,
-          {String flow = 'out', DateTime? from, DateTime? to}) async {
+  ///
+  /// ⚠️ 必须按 **bucket_id** 分组，不能按「标题 + 图标 + 币种」
+  /// （2026-11-08 审计 P2-2）：分类允许重名（`addBucket` 没有唯一约束，
+  /// 用户完全可能建两个「餐饮」，子分类也可能和父分类同名）。
+  /// 按标题分组会把它们合成一条，而排行榜 [bucketRank] 是按 id 分组的 ——
+  /// 同一份数据，占比图和排行榜给出两个总数。
+  Future<
+      List<
+          ({
+            int? bucketId,
+            String label,
+            String glyph,
+            String currency,
+            int cents
+          })>> bucketSlices(int bookId, DateTime month,
+      {String flow = 'out', DateTime? from, DateTime? to}) async {
     final startDay = dayKey(from ?? firstDayOfMonth(month));
     final endDay = dayKey(to ?? lastDayOfMonth(month));
     final rows = await _db.rawQuery('''
-      SELECT COALESCE(b.title, '未分类') AS title,
+      SELECT e.bucket_id AS bid,
+             COALESCE(b.title, '未分类') AS title,
              COALESCE(b.glyph, '🧾') AS glyph,
              COALESCE(e.currency, p.currency) AS currency,
              SUM(CASE WHEN e.flow = 'out'
-                      THEN e.amount_cents - COALESCE(e.split_cents, 0)
+                      THEN MAX(0, e.amount_cents - COALESCE(e.split_cents, 0))
                       ELSE e.amount_cents END) AS total
       FROM entries e
       LEFT JOIN buckets b ON b.id = e.bucket_id
       JOIN pockets p ON p.id = e.pocket_id
       WHERE e.book_id = ? AND e.deleted_at IS NULL AND e.day >= ? AND e.day <= ? AND e.flow = ?
         AND e.exclude_from_stats = 0
-      GROUP BY COALESCE(b.title, '未分类'), COALESCE(b.glyph, '🧾'),
-               COALESCE(e.currency, p.currency)
+      GROUP BY e.bucket_id, COALESCE(e.currency, p.currency)
       ORDER BY total DESC
     ''', [bookId, startDay, endDay, flow]);
     return rows
         .map((r) => (
+              bucketId: r['bid'] as int?,
               label: r['title'] as String,
               glyph: r['glyph'] as String,
               currency: r['currency'] as String,
@@ -2599,7 +2707,7 @@ class LedgerStore {
       SELECT e.day AS day, e.flow AS flow,
              SUM(ROUND(
                (CASE WHEN e.flow = 'out'
-                     THEN e.amount_cents - COALESCE(e.split_cents, 0)
+                     THEN MAX(0, e.amount_cents - COALESCE(e.split_cents, 0))
                      ELSE e.amount_cents END)
                * CASE WHEN COALESCE(e.currency, p.currency, b.base_currency) = b.base_currency
                       THEN 1.0
@@ -2717,7 +2825,7 @@ class LedgerStore {
       int bookId, DateTime month) async {
     final rows = await _db.rawQuery('''
       SELECT e.bucket_id AS bid, COALESCE(e.currency, p.currency) AS currency,
-             SUM(e.amount_cents - COALESCE(e.split_cents, 0)) AS total
+             SUM(MAX(0, e.amount_cents - COALESCE(e.split_cents, 0))) AS total
       FROM entries e
       JOIN pockets p ON p.id = e.pocket_id
       WHERE e.book_id = ? AND e.deleted_at IS NULL AND e.day >= ? AND e.day <= ? AND e.flow = 'out'
@@ -2755,7 +2863,7 @@ class LedgerStore {
     final rows = await _db.rawQuery('''
       SELECT e.tags AS tags, COALESCE(e.currency, p.currency) AS currency,
              SUM(CASE WHEN e.flow = 'out'
-                      THEN e.amount_cents - COALESCE(e.split_cents, 0)
+                      THEN MAX(0, e.amount_cents - COALESCE(e.split_cents, 0))
                       ELSE e.amount_cents END) AS total
       FROM entries e
       JOIN pockets p ON p.id = e.pocket_id
@@ -2800,7 +2908,7 @@ class LedgerStore {
     final rows = await _db.rawQuery('''
       SELECT e.pocket_id AS pid, COALESCE(e.currency, p.currency) AS currency,
              SUM(CASE WHEN e.flow = 'out'
-                      THEN e.amount_cents - COALESCE(e.split_cents, 0)
+                      THEN MAX(0, e.amount_cents - COALESCE(e.split_cents, 0))
                       ELSE e.amount_cents END) AS total
       FROM entries e
       JOIN pockets p ON p.id = e.pocket_id
@@ -3358,7 +3466,7 @@ class LedgerStore {
       "SELECT substr(e.day, 1, 7) AS m, "
       "COALESCE(e.currency, p.currency) AS currency, "
       "SUM(CASE WHEN e.flow = 'out' "
-      "THEN e.amount_cents - COALESCE(e.split_cents, 0) "
+      "THEN MAX(0, e.amount_cents - COALESCE(e.split_cents, 0)) "
       "ELSE e.amount_cents END) AS total "
       "FROM entries e JOIN pockets p ON p.id = e.pocket_id "
       "WHERE e.book_id = ? AND e.bucket_id IN ($marks) AND e.flow = ? "
@@ -3721,7 +3829,7 @@ class LedgerStore {
     final rows = await _db.rawQuery(
       "SELECT e.flow AS flow, COALESCE(e.currency, p.currency) AS currency, "
       "SUM(CASE WHEN e.flow = 'out' "
-      "THEN e.amount_cents - COALESCE(e.split_cents, 0) "
+      "THEN MAX(0, e.amount_cents - COALESCE(e.split_cents, 0)) "
       "ELSE e.amount_cents END) AS total "
       "FROM entries e "
       "LEFT JOIN buckets b ON b.id = e.bucket_id "
@@ -3871,6 +3979,13 @@ class LedgerStore {
       'debts',
       'debt_payments',
       'wishes',
+      // 这三张以前漏了（审计 P3-2）：
+      // templates 是用户自己建的快捷项，month_notes 是手写月结，
+      // attachments 是凭证记录（文件本身在私有目录里）——
+      // 「数据管理」页按这张表报数，少了它们用户以为那些数据不存在。
+      'templates',
+      'month_notes',
+      'attachments',
     ];
     final out = <String, int>{};
     for (final t in tables) {

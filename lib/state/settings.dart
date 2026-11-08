@@ -399,6 +399,31 @@ class SettingsNotifier extends Notifier<AppSettings> {
   bool _started = false;
   bool _touched = false;
 
+  /// 写之前先确保「Prefs 实例已就绪 + 旧偏好已回读」。
+  ///
+  /// 两个坑都在这里一次性堵住（2026-11-08 审计 P2-14）：
+  /// ① 以前 setter 写的是 `await _prefs?.setX(...)`，补水还没完成时 `_prefs`
+  ///    是 null，这行**静默什么都不做** —— 界面看着改了，重启变回原样；
+  /// ② 同时 `_touched` 又让稍后的补水整份跳过回读，于是**其它**设置也退回默认。
+  /// 现在先 await 补水（此刻 `_touched` 还是 false，回读会正常生效），
+  /// 再置 `_touched` 改本次这一项，谁都不会被丢。
+  Future<SharedPreferences?> _ready() async {
+    if (_prefs == null) {
+      await _hydrate();
+    }
+    return _prefs;
+  }
+
+  Future<void> _setBool(String key, bool value) async =>
+      (await _ready())?.setBool(key, value);
+  Future<void> _setInt(String key, int value) async =>
+      (await _ready())?.setInt(key, value);
+  Future<void> _setString(String key, String value) async =>
+      (await _ready())?.setString(key, value);
+  Future<void> _setDouble(String key, double value) async =>
+      (await _ready())?.setDouble(key, value);
+  Future<void> _remove(String key) async => (await _ready())?.remove(key);
+
   @override
   AppSettings build() {
     if (!_started) {
@@ -481,9 +506,10 @@ class SettingsNotifier extends Notifier<AppSettings> {
   }
 
   Future<void> setThemeMode(ThemeMode mode) async {
+    await _ready();
     _touched = true;
     state = state.copyWith(themeMode: mode);
-    await _prefs?.setString(
+    await _setString(
         _kTheme,
         switch (mode) {
           ThemeMode.light => 'light',
@@ -493,19 +519,22 @@ class SettingsNotifier extends Notifier<AppSettings> {
   }
 
   Future<void> setHideAmounts(bool value) async {
+    await _ready();
     _touched = true;
     state = state.copyWith(hideAmounts: value);
-    await _prefs?.setBool(_kHide, value);
+    await _setBool(_kHide, value);
   }
 
   Future<void> setSymbol(String symbol) async {
+    await _ready();
     _touched = true;
     state = state.copyWith(symbol: symbol);
-    await _prefs?.setString(_kSymbol, symbol);
+    await _setString(_kSymbol, symbol);
   }
 
   /// 设置 PIN（4-8 位数字）。开启应用锁。
   Future<void> setPin(String pin) async {
+    await _ready();
     _touched = true;
     final salt = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
     final hash = hashPin(salt, pin);
@@ -515,10 +544,10 @@ class SettingsNotifier extends Notifier<AppSettings> {
       pinSalt: salt,
       pinLength: pin.length,
     );
-    await _prefs?.setBool(_kLock, true);
-    await _prefs?.setString(_kPinHash, hash);
-    await _prefs?.setString(_kPinSalt, salt);
-    await _prefs?.setInt(_kPinLen, pin.length);
+    await _setBool(_kLock, true);
+    await _setString(_kPinHash, hash);
+    await _setString(_kPinSalt, salt);
+    await _setInt(_kPinLen, pin.length);
   }
 
   /// 老数据自愈：以前没记 PIN 位数，用户成功解锁一次后就把长度补上，
@@ -526,15 +555,16 @@ class SettingsNotifier extends Notifier<AppSettings> {
   Future<void> rememberPinLength(int len) async {
     if (len <= 0 || state.pinLength == len) return;
     state = state.copyWith(pinLength: len);
-    await _prefs?.setInt(_kPinLen, len);
+    await _setInt(_kPinLen, len);
   }
 
   /// 设置切后台多久后回来要重新解锁（秒）。0 = 每次切回都要锁。
   Future<void> setLockGrace(int seconds) async {
+    await _ready();
     _touched = true;
     final v = seconds < 0 ? 0 : seconds;
     state = state.copyWith(lockGraceSeconds: v);
-    await _prefs?.setInt(_kLockGrace, v);
+    await _setInt(_kLockGrace, v);
   }
 
   /// 开关生物识别解锁（指纹/面容）。
@@ -543,50 +573,57 @@ class SettingsNotifier extends Notifier<AppSettings> {
   /// 方式，没有 PIN 兜底时一旦硬件抽风，用户就再也进不去了。
   /// 设置页据此把开关藏起来，这里也不去动 lockEnabled。
   Future<void> setBiometricEnabled(bool value) async {
+    await _ready();
     _touched = true;
     state = state.copyWith(biometricEnabled: value);
-    await _prefs?.setBool(_kBiometric, value);
+    await _setBool(_kBiometric, value);
   }
 
   Future<void> disableLock() async {
+    await _ready();
     _touched = true;
     state = state.copyWith(
         lockEnabled: false, pinHash: '', pinSalt: '', pinLength: 0);
-    await _prefs?.setBool(_kLock, false);
-    await _prefs?.setString(_kPinHash, '');
-    await _prefs?.setString(_kPinSalt, '');
+    await _setBool(_kLock, false);
+    await _setString(_kPinHash, '');
+    await _setString(_kPinSalt, '');
   }
 
   Future<void> setPalette(String id) async {
+    await _ready();
     _touched = true;
     state = state.copyWith(paletteId: id);
-    await _prefs?.setString(_kPalette, id);
+    await _setString(_kPalette, id);
   }
 
   Future<void> setFontScale(double scale) async {
+    await _ready();
     _touched = true;
     state = state.copyWith(fontScale: scale);
-    await _prefs?.setDouble(_kFontScale, scale);
+    await _setDouble(_kFontScale, scale);
   }
 
   /// 界面字体档位：system / display / all（含义见 [AppSettings.fontStyle]）。
   Future<void> setFontStyle(String style) async {
+    await _ready();
     _touched = true;
     state = state.copyWith(fontStyle: style);
-    await _prefs?.setString(_kFontStyle, style);
+    await _setString(_kFontStyle, style);
   }
 
   Future<void> setCompactAmounts(bool value) async {
+    await _ready();
     _touched = true;
     state = state.copyWith(compactAmounts: value);
-    await _prefs?.setBool(_kCompact, value);
+    await _setBool(_kCompact, value);
   }
 
   /// 列表行主标题：'note' 备注优先 / 'category' 分类名优先
   Future<void> setNoteDisplay(String value) async {
+    await _ready();
     _touched = true;
     state = state.copyWith(noteDisplay: value);
-    await _prefs?.setString(_kNoteDisplay, value);
+    await _setString(_kNoteDisplay, value);
   }
 
   /// 设置封面：路径 + 从图里取到的主色 + 平均亮度，一次性写进去。
@@ -598,35 +635,38 @@ class SettingsNotifier extends Notifier<AppSettings> {
     required int seed,
     required double luminance,
   }) async {
+    await _ready();
     _touched = true;
     state = state.copyWith(
       coverPath: path,
       coverSeed: seed,
       coverLuminance: luminance,
     );
-    await _prefs?.setString(_kCoverPath, path);
-    await _prefs?.setInt(_kCoverSeed, seed);
-    await _prefs?.setDouble(_kCoverLuminance, luminance);
+    await _setString(_kCoverPath, path);
+    await _setInt(_kCoverSeed, seed);
+    await _setDouble(_kCoverLuminance, luminance);
   }
 
   /// 只重取色、不动图片（用户觉得抽出来的颜色不好看时点「重新取色」）。
   Future<void> setCoverPalette(int seed, double luminance) async {
+    await _ready();
     _touched = true;
     state = state.copyWith(coverSeed: seed, coverLuminance: luminance);
-    await _prefs?.setInt(_kCoverSeed, seed);
-    await _prefs?.setDouble(_kCoverLuminance, luminance);
+    await _setInt(_kCoverSeed, seed);
+    await _setDouble(_kCoverLuminance, luminance);
   }
 
   Future<void> clearCover() async {
+    await _ready();
     _touched = true;
     state = state.copyWith(
       coverPath: '',
       coverSeed: 0,
       coverLuminance: 0.5,
     );
-    await _prefs?.remove(_kCoverPath);
-    await _prefs?.remove(_kCoverSeed);
-    await _prefs?.remove(_kCoverLuminance);
+    await _remove(_kCoverPath);
+    await _remove(_kCoverSeed);
+    await _remove(_kCoverLuminance);
   }
 
   /// 换头像。传空串 = 恢复默认图标。
@@ -634,54 +674,60 @@ class SettingsNotifier extends Notifier<AppSettings> {
   /// 旧文件由调用方（AvatarService.pickFromGallery）负责删，这里只管存档：
   /// 偏好层不该碰文件系统，否则换头像失败时状态和磁盘会不一致。
   Future<void> setAvatar(String path) async {
+    await _ready();
     _touched = true;
     state = state.copyWith(avatarPath: path);
     if (path.isEmpty) {
-      await _prefs?.remove(_kAvatar);
+      await _remove(_kAvatar);
     } else {
-      await _prefs?.setString(_kAvatar, path);
+      await _setString(_kAvatar, path);
     }
   }
 
   Future<void> clearAvatar() => setAvatar('');
 
   Future<void> setNickname(String name) async {
+    await _ready();
     _touched = true;
     final v = name.trim();
     state = state.copyWith(nickname: v);
     if (v.isEmpty) {
-      await _prefs?.remove(_kNickname);
+      await _remove(_kNickname);
     } else {
-      await _prefs?.setString(_kNickname, v);
+      await _setString(_kNickname, v);
     }
   }
 
   /// 开关到期提醒。
   Future<void> setDueReminderEnabled(bool value) async {
+    await _ready();
     _touched = true;
     state = state.copyWith(dueReminderEnabled: value);
-    await _prefs?.setBool(_kDueEnabled, value);
+    await _setBool(_kDueEnabled, value);
   }
 
   /// 设置提前多少天提醒（最小 1 天，避免"提前 0 天"和当天通知重复）。
   Future<void> setDueReminderLeadDays(int days) async {
+    await _ready();
     _touched = true;
     final v = days < 1 ? 1 : days;
     state = state.copyWith(dueReminderLeadDays: v);
-    await _prefs?.setInt(_kDueLead, v);
+    await _setInt(_kDueLead, v);
   }
 
   Future<void> setHideTransfers(bool value) async {
+    await _ready();
     _touched = true;
     state = state.copyWith(hideTransfers: value);
-    await _prefs?.setBool(_kHideTransfers, value);
+    await _setBool(_kHideTransfers, value);
   }
 
   /// 设默认账户。传 0 = 清除设置（回到"取第一个账户"）。
   Future<void> setDefaultPocket(int id) async {
+    await _ready();
     _touched = true;
     state = state.copyWith(defaultPocketId: id);
-    await _prefs?.setInt(_kDefaultPocket, id);
+    await _setInt(_kDefaultPocket, id);
   }
 
   /// 记住「上次用过的分类」。[flow] 用 'out' / 'in'，记账页保存成功后调用。
@@ -689,13 +735,14 @@ class SettingsNotifier extends Notifier<AppSettings> {
   /// 为什么要单独存两个而不是一个：支出和收入是两套分类树（餐饮 / 工资），
   /// 共用一个的话，记完一笔工资转去记午饭，默认分类会被拽成收入那棵树的。
   Future<void> setLastBucket(String flow, int id) async {
+    await _ready();
     _touched = true;
     if (flow == 'in') {
       state = state.copyWith(lastBucketInId: id);
-      await _prefs?.setInt(_kLastBucketIn, id);
+      await _setInt(_kLastBucketIn, id);
     } else {
       state = state.copyWith(lastBucketOutId: id);
-      await _prefs?.setInt(_kLastBucketOut, id);
+      await _setInt(_kLastBucketOut, id);
     }
   }
 
@@ -704,22 +751,25 @@ class SettingsNotifier extends Notifier<AppSettings> {
   /// 2026-11-07 用户要求：预选账户跟手上一次，而不是每次弹回默认账户。
   /// 编辑已有流水**不记**——改一笔三个月前的账不代表你现在在用那个账户。
   Future<void> setLastPocket(int id) async {
+    await _ready();
     _touched = true;
     state = state.copyWith(lastPocketId: id);
-    await _prefs?.setInt(_kLastPocket, id);
+    await _setInt(_kLastPocket, id);
   }
 
   /// 保存首页模块顺序（传完整顺序，内部落盘成 id 串）
   Future<void> setHomeOrder(List<HomeModule> order) async {
+    await _ready();
     _touched = true;
     final v = [for (final m in order) m.id].join(',');
     state = state.copyWith(homeOrder: v);
-    await _prefs?.setString(_kHomeOrder, v);
+    await _setString(_kHomeOrder, v);
   }
 
   /// 开关某个模块的显隐
   Future<void> setHomeModuleHidden(HomeModule m, bool hidden) async {
     if (!m.canHide) return;
+    await _ready();
     _touched = true;
     final cur = parseHidden(state.homeHidden);
     if (hidden) {
@@ -729,19 +779,21 @@ class SettingsNotifier extends Notifier<AppSettings> {
     }
     final v = [for (final x in cur) x.id].join(',');
     state = state.copyWith(homeHidden: v);
-    await _prefs?.setString(_kHomeHidden, v);
+    await _setString(_kHomeHidden, v);
   }
 
   /// 恢复默认顺序 + 全部显示
   Future<void> resetHomeModules() async {
+    await _ready();
     _touched = true;
     state = state.copyWith(homeOrder: '', homeHidden: '');
-    await _prefs?.remove(_kHomeOrder);
-    await _prefs?.remove(_kHomeHidden);
+    await _remove(_kHomeOrder);
+    await _remove(_kHomeHidden);
   }
 
   /// 开关「我的 → 常用」里的一个入口。
   Future<void> setProfileModuleHidden(String id, bool hidden) async {
+    await _ready();
     _touched = true;
     final cur = state.profileHiddenSet;
     if (hidden) {
@@ -751,34 +803,38 @@ class SettingsNotifier extends Notifier<AppSettings> {
     }
     final v = cur.join(',');
     state = state.copyWith(profileHidden: v);
-    await _prefs?.setString(_kProfileHidden, v);
+    await _setString(_kProfileHidden, v);
   }
 
   /// 「常用」恢复默认：显示默认那 6 个，其余收起。
   Future<void> resetProfileModules() async {
+    await _ready();
     _touched = true;
     state = state.copyWith(profileHidden: defaultProfileHiddenCsv);
-    await _prefs?.setString(_kProfileHidden, defaultProfileHiddenCsv);
+    await _setString(_kProfileHidden, defaultProfileHiddenCsv);
   }
 
   /// 记录一次成功备份。首页提示条据此消失。
   Future<void> markBackedUp([DateTime? at]) async {
+    await _ready();
     _touched = true;
     final ms = (at ?? DateTime.now()).millisecondsSinceEpoch;
     state = state.copyWith(lastBackupAt: ms);
-    await _prefs?.setInt(_kLastBackupAt, ms);
+    await _setInt(_kLastBackupAt, ms);
   }
 
   Future<void> setBudgetCarryUnused(bool value) async {
+    await _ready();
     _touched = true;
     state = state.copyWith(budgetCarryUnused: value);
-    await _prefs?.setBool(_kBudgetCarryUnused, value);
+    await _setBool(_kBudgetCarryUnused, value);
   }
 
   Future<void> setBudgetDeductOver(bool value) async {
+    await _ready();
     _touched = true;
     state = state.copyWith(budgetDeductOver: value);
-    await _prefs?.setBool(_kBudgetDeductOver, value);
+    await _setBool(_kBudgetDeductOver, value);
   }
 
   /// 记下「这条首页提醒已经点过了」。
@@ -795,13 +851,15 @@ class SettingsNotifier extends Notifier<AppSettings> {
     // 又不至于让这个字符串无限变长。
     final trimmed = parts.length > 24 ? parts.sublist(parts.length - 24) : parts;
     final next = trimmed.join(',');
+    await _ready();
     _touched = true;
     state = state.copyWith(hintsDismissed: next);
-    await _prefs?.setString(_kHintsDismissed, next);
+    await _setString(_kHintsDismissed, next);
   }
 
   /// 资产页：折叠 / 展开某个账户分组。状态落盘，跨重启保持。
   Future<void> setAssetGroupCollapsed(String group, bool collapsed) async {
+    await _ready();
     _touched = true;
     final set = {
       for (final g in state.assetCollapsed.split(','))
@@ -810,21 +868,23 @@ class SettingsNotifier extends Notifier<AppSettings> {
     collapsed ? set.add(group) : set.remove(group);
     final next = set.join(',');
     state = state.copyWith(assetCollapsed: next);
-    await _prefs?.setString(_kAssetCollapsed, next);
+    await _setString(_kAssetCollapsed, next);
   }
 
   Future<void> setCoverFollow(bool value) async {
+    await _ready();
     _touched = true;
     state = state.copyWith(coverFollow: value);
-    await _prefs?.setBool(_kCoverFollow, value);
+    await _setBool(_kCoverFollow, value);
   }
 
   /// 记下语音悬浮按钮的位置（归一化 0~1）。拖动松手时调用一次。
   Future<void> setVoiceFabPos(double dx, double dy) async {
+    await _ready();
     _touched = true;
     state = state.copyWith(voiceFabDx: dx, voiceFabDy: dy);
-    await _prefs?.setDouble(_kVoiceFabDx, dx);
-    await _prefs?.setDouble(_kVoiceFabDy, dy);
+    await _setDouble(_kVoiceFabDx, dx);
+    await _setDouble(_kVoiceFabDy, dy);
   }
 
   bool verifyPin(String pin) {

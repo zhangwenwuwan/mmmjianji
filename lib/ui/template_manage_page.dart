@@ -80,11 +80,11 @@ class _TemplateManagePageState extends ConsumerState<TemplateManagePage> {
 
   @override
   Widget build(BuildContext context) {
-    final bookId = ref.watch(activeBookIdProvider);
     final book = ref.watch(activeBookProvider).valueOrNull;
-    final asyncTemplates = bookId == null
-        ? const AsyncLoading<List<Template>>()
-        : ref.watch(templatesProvider(bookId));
+    // ⚠️ 走 activeTemplatesProvider（内部已兜底账本 id），不要按
+    // activeBookIdProvider == null 判 loading —— 它的默认值就是 null，
+    // 没点过账本胶囊的用户进来会永久转圈（审计 P1-1）。
+    final asyncTemplates = ref.watch(activeTemplatesProvider);
     final buckets = ref.watch(allBucketsProvider).valueOrNull ?? const <Bucket>[];
     final pockets = ref.watch(pocketsProvider).valueOrNull ?? const <Pocket>[];
 
@@ -120,7 +120,8 @@ class _TemplateManagePageState extends ConsumerState<TemplateManagePage> {
                   separatorBuilder: (_, __) => const Divider(height: 1),
                   itemBuilder: (_, i) {
                     final t = templates[i];
-                    final symbol = ref.watch(settingsProvider).symbol;
+                    final s = ref.watch(settingsProvider);
+                    final symbol = s.symbol;
                     final cat = t.bucketId == null
                         ? ''
                         : (bucketTitle[t.bucketId] ?? '未分类');
@@ -136,7 +137,10 @@ class _TemplateManagePageState extends ConsumerState<TemplateManagePage> {
                       ),
                       title: Text(t.title),
                       subtitle: Text(
-                        '$subtitle · $symbol${centsToText(t.amountCents)}',
+                        // 模板列表也是一串金额，别绕过「隐藏金额」（审计 P2-8）
+                        s.hideAmounts
+                            ? '$subtitle · ****'
+                            : '$subtitle · $symbol${centsToText(t.amountCents)}',
                         style: TextStyle(
                             fontSize: 12, color: Palette.inkFaint(context)),
                       ),
@@ -382,7 +386,9 @@ class _TemplateEditPageState extends ConsumerState<TemplateEditPage> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      '${settings.symbol}${centsToText(_amountCents)}',
+                      settings.hideAmounts
+                          ? '****'
+                          : '${settings.symbol}${centsToText(_amountCents)}',
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w600,

@@ -102,6 +102,9 @@ List<SubscriptionCandidate> findSubscriptions(List<Entry> entries) {
   final groups = <String, List<Entry>>{};
   for (final e in entries) {
     if (e.flow != 'out') continue;
+    // 和统计口径对齐（2026-11-08 审计 P2-1）：勾了「不计入收支」的笔
+    // 不该参与任何"消费分析"，否则一笔内部调账就能被猜成订阅。
+    if (e.excludeFromStats) continue;
     final label = e.memo.trim().isEmpty ? null : e.memo.trim();
     if (label == null) continue; // 没备注的不猜
     groups.putIfAbsent(label, () => []).add(e);
@@ -112,17 +115,18 @@ List<SubscriptionCandidate> findSubscriptions(List<Entry> entries) {
     final list = entry.value;
     final months = <String>{for (final e in list) monthKey(e.day)};
     if (months.length < 2) continue;
-    // 取众数金额（出现最多的那个）
+    // 取众数金额（出现最多的那个）。用 statsCents（我的份额）而不是
+    // amountCents：AA 垫付那笔的全额不是「我每月花在订阅上的钱」。
     final amountCount = <int, int>{};
     for (final e in list) {
-      amountCount[e.amountCents] = (amountCount[e.amountCents] ?? 0) + 1;
+      amountCount[e.statsCents] = (amountCount[e.statsCents] ?? 0) + 1;
     }
     final sorted = amountCount.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
     final cents = sorted.first.key;
     // 金额与主金额相差超过 1% 的视为不同消费，剔除
     final sameAmount =
-        list.where((e) => (e.amountCents - cents).abs() <= cents * 0.01);
+        list.where((e) => (e.statsCents - cents).abs() <= cents * 0.01);
     final sameMonths = <String>{for (final e in sameAmount) monthKey(e.day)};
     if (sameMonths.length < 2) continue;
     list.sort((a, b) => b.day.compareTo(a.day));
@@ -161,6 +165,9 @@ HeatmapData buildHeatmap(List<Entry> entries,
   final grid = List.generate(weeks, (_) => List<int>.filled(7, 0));
   for (final e in entries) {
     if (e.flow != 'out') continue;
+    // 「不计入收支」的笔不进热力图（审计 P2-1）：热力图和首页合计用的是
+    // 同一份 90 天流水，一个算一个不算，两屏数字对不上。
+    if (e.excludeFromStats) continue;
     final d = DateTime(e.day.year, e.day.month, e.day.day);
     final diff = d.difference(start).inDays;
     if (diff < 0 || diff >= weeks * 7) continue;
@@ -231,6 +238,8 @@ MoodStats moodStats(List<Entry> entries) {
   var markedCents = 0;
   for (final e in entries) {
     if (e.mood == 0) continue;
+    // 同上：情绪统计也不该把「不计入收支」的笔算进来（审计 P2-1）
+    if (e.excludeFromStats) continue;
     markedCents += e.statsCents;
     switch (e.mood) {
       case 1:

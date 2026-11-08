@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/currency.dart';
 import '../state/ledger_state.dart';
+import '../state/settings.dart';
 import 'app_log.dart';
 
 /// 把本月概览推给桌面小组件。
@@ -32,7 +33,11 @@ class WidgetBridge {
       final store = await ref.read(storeProvider.future);
       final book = await ref.read(activeBookProvider.future);
       final rates = await ref.read(ratesProvider.future);
-      final month = ref.read(monthProvider);
+      // ⚠️ 小组件永远显示**当前自然月**，不跟 monthProvider 走（审计 P3-12）：
+      // monthProvider 是「首页正在看哪个月」。用户翻到 3 月看一眼就退到后台，
+      // 小组件会一直贴 3 月的数在桌面上 —— 标签虽写着「3 月」，但贴在桌面上
+      // 没人会去读那三个字，只会当成"这个月花了这么多"。
+      final month = DateTime(now.year, now.month);
 
       final entries = await store.entriesOfMonth(book.id, month);
       final pockets = await store.allPockets();
@@ -54,8 +59,18 @@ class WidgetBridge {
       }
 
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setInt('widget_month_expense', expense);
-      await prefs.setInt('widget_month_income', income);
+      // 隐私闸门（2026-11-08 审计 P2-4）：
+      // 桌面小组件是**绕过应用锁**的一块玻璃 —— 只要写在桌面上，谁拿起手机
+      // 都能看见「本月支出 8,432」。所以两种情况下都不写真实金额：
+      //   ① 用户开了「隐藏金额」；
+      //   ② 用户开了应用锁（锁的意义就是不让旁人看到账目，小组件不该例外）。
+      // 注意是「覆盖成 0」而不是「跳过不写」：跳过的话，之前写进去的金额会
+      // 留在 prefs 里，下次小组件刷新（重启、系统重绘）又把它们捞出来显示。
+      final settings = ref.read(settingsProvider);
+      final masked = settings.hideAmounts || settings.lockEnabled;
+      await prefs.setBool('widget_masked', masked);
+      await prefs.setInt('widget_month_expense', masked ? 0 : expense);
+      await prefs.setInt('widget_month_income', masked ? 0 : income);
       await prefs.setString('widget_month_label', '${month.month} 月');
 
       // 通知原生刷新（没有小组件实例时原生会直接返回）

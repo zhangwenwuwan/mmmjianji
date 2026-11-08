@@ -47,13 +47,36 @@ while [[ $# -gt 0 ]]; do
 done
 
 # 1) 自动同步代理端口（从当前 env 取，避免 Gradle 因端口漂移无限挂起）
+#
+# ⚠️ 这里改的是**源码目录**的 gradle.properties（构建副本随后从它拷过去），
+# 所以改完必须还原，否则 git 工作区永远是 M 状态，两次构建之间看不出自己改了什么
+# （2026-11-08 审计 P3-6）。备份放构建副本里，跟着 trap 一起还原。
 PORT="$(printf '%s' "${https_proxy:-${HTTPS_PROXY:-}}" | sed -E 's#.*:([0-9]+)/?$#\1#')"
+GRADLE_PROPS="$SRC/android/gradle.properties"
+GRADLE_PROPS_BAK="$BC/.gradle.properties.srcbak"
+mkdir -p "$BC"
+cp "$GRADLE_PROPS" "$GRADLE_PROPS_BAK"
+restore_gradle_props() {
+  if [[ -f "$GRADLE_PROPS_BAK" ]]; then
+    cp "$GRADLE_PROPS_BAK" "$GRADLE_PROPS"
+    rm -f "$GRADLE_PROPS_BAK"
+  fi
+}
+trap restore_gradle_props EXIT
 if [[ -n "$PORT" ]]; then
-  sed -i -E "s#(systemProp\.(http|https)\.proxyPort=)[0-9]+#\1$PORT#" "$SRC/android/gradle.properties"
+  sed -i -E "s#(systemProp\.(http|https)\.proxyPort=)[0-9]+#\1$PORT#" "$GRADLE_PROPS"
   echo "[1/5] 代理端口同步为 $PORT"
 else
-  echo "[1/5] 未检测到代理端口，跳过（若有网络问题请手动核对 gradle.properties）"
+  # 直连环境：把残留的代理配置清掉。
+  # 代理端口是上一次构建写进去的，早就没人监听了 —— 留着它 Gradle 会无限挂起，
+  # 而且不报错（这是本项目最费时间的一类故障）。
+  sed -i -E '/^systemProp\.(http|https)\.proxy(Host|Port|User|Password)=/d' "$GRADLE_PROPS"
+  echo "[1/5] 未检测到代理端口，已清掉 gradle.properties 里的残留代理配置"
 fi
+
+# 1.5) 清掉上次被强杀（trap 没跑到）留下的临时 pubspec
+#     它们只有 EXIT 钩子负责收拾，Ctrl-C / 杀进程时会一直堆在副本里。
+rm -f "$BC"/pubspec.yaml.test-* 2>/dev/null || true
 
 # 2) 同步源码到构建副本（lib + assets + pubspec + android 三件套 + test）
 #    ⚠️ 用「原地覆盖」而不是 rm -rf + cp -r：
@@ -76,9 +99,29 @@ sync_mirrored "$SRC/lib" "$BC/lib"
 sync_mirrored "$SRC/assets" "$BC/assets"
 sync_mirrored "$SRC/android/app/src" "$BC/android/app/src"
 cp "$SRC/pubspec.yaml" "$BC/pubspec.yaml"
+# pubspec.lock 必须一起同步（2026-11-08 审计 P1-4）：
+# 只拷 pubspec.yaml 的话，副本继续沿用旧的 lock，源码里已删掉的包还钉在里面
+# （实测副本里留着 lpinyin / permission_handler*）。依赖图不可复现，
+# 而且「源码升了版本、包里还是旧版本」这类漂移，UI 上完全看不出来。
+cp "$SRC/pubspec.lock" "$BC/pubspec.lock"
 cp "$SRC/android/gradle.properties" "$BC/android/gradle.properties"
 cp "$SRC/android/build.gradle.kts" "$BC/android/build.gradle.kts"
 cp "$SRC/android/app/build.gradle.kts" "$BC/android/app/build.gradle.kts"
+# settings.gradle.kts（插件注册表）+ gradle wrapper（Gradle 版本）也必须同步：
+# 前者漏了 → 源码新加的插件在副本里根本没被 include，编译期就 "package not found"，
+# 或者更糟：旧 registration 让插件跑旧代码。后者漏了 → 两边 Gradle 版本不同，
+# 构建行为（尤其是 AGP 校验、native 合并策略）跟源码不一致，问题复现不了。
+cp "$SRC/android/settings.gradle.kts" "$BC/android/settings.gradle.kts"
+mkdir -p "$BC/android/gradle/wrapper"
+cp "$SRC/android/gradle/wrapper/gradle-wrapper.properties" \
+   "$BC/android/gradle/wrapper/gradle-wrapper.properties"
+if [[ -f "$SRC/android/gradle/wrapper/gradle-wrapper.jar" ]]; then
+  cp "$SRC/android/gradle/wrapper/gradle-wrapper.jar" \
+     "$BC/android/gradle/wrapper/gradle-wrapper.jar"
+fi
+cp "$SRC/android/gradlew" "$BC/android/gradlew"
+cp "$SRC/android/gradlew.bat" "$BC/android/gradlew.bat" 2>/dev/null || true
+chmod +x "$BC/android/gradlew" 2>/dev/null || true
 # 原生侧（MainActivity / AndroidManifest / res）必须一起同步。
 # 2026-10-26 踩坑：源码把 MainActivity 改成 FlutterFragmentActivity、
 # Manifest 加了 USE_BIOMETRIC，但这里没同步 android/app/src，
@@ -120,11 +163,45 @@ if [[ -z "$VER" || -z "$BUILD_NUMBER" || "$BUILD_NUMBER" == "$VERSION_LINE" ]]; 
 fi
 echo "      版本 $VER（$BUILD_NUMBER）"
 
-# 2.5) 同步校验：构建副本必须与源码一致，不一致就别往下跑
-if ! diff -rq "$SRC/lib" "$BC/lib" >/dev/null 2>&1; then
-  echo "⚠️  构建副本与源码不一致（可能有孤儿文件），差异如下："
-  diff -rq "$SRC/lib" "$BC/lib" | head -10
+# 2.5) 同步校验：构建副本必须与源码一致，**不一致就退出**
+#
+# ⚠️ 这里以前是「打印警告然后继续跑」，注释还写着「不一致就别往下跑」——
+# 两道关卡形同虚设（2026-11-08 审计 P1-5）。1.4.57~59 的 assets 事故就是
+# 「副本多了个源码已删的文件、包一直带着它」造成的，而那时的警告被刷屏淹了。
+# 现在：只要有差异就退出，让出包人先修同步逻辑。
+SYNC_PAIRS=(
+  "$SRC/lib|$BC/lib"
+  "$SRC/assets|$BC/assets"
+  "$SRC/test|$BC/test"
+  "$SRC/android/app/src|$BC/android/app/src"
+)
+SYNC_FILES=(
+  "pubspec.yaml" "pubspec.lock"
+  "android/gradle.properties" "android/build.gradle.kts"
+  "android/app/build.gradle.kts" "android/settings.gradle.kts"
+  "android/gradle/wrapper/gradle-wrapper.properties"
+  "android/gradlew" "android/gradlew.bat"
+)
+SYNC_PROBLEM=""
+for pair in "${SYNC_PAIRS[@]}"; do
+  s="${pair%%|*}"; d="${pair##*|}"
+  if ! diff -rq "$s" "$d" >/dev/null 2>&1; then
+    SYNC_PROBLEM+="$(diff -rq "$s" "$d" 2>&1 | head -5 || true)"$'\n'
+  fi
+done
+for f in "${SYNC_FILES[@]}"; do
+  [[ -e "$SRC/$f" ]] || continue
+  if ! cmp -s "$SRC/$f" "$BC/$f"; then
+    SYNC_PROBLEM+="文件不同步：$f"$'\n'
+  fi
+done
+if [[ -n "$SYNC_PROBLEM" ]]; then
+  echo "❌ 构建副本与源码不一致，已中止（否则打出来的包和源码对不上）："
+  printf '%s' "$SYNC_PROBLEM" | head -20 || true
+  echo "   → 检查 build_jianji.sh 第 2 步的同步清单，或手动删掉副本里的孤儿文件。"
+  exit 1
 fi
+echo "      同步校验通过（副本与源码逐字节一致）"
 # 生物识别的两个硬前提，缺一个指纹/面容就静默失效，必须构建期拦住。
 if ! grep -q "FlutterFragmentActivity" "$BC/android/app/src/main/kotlin/com/jianji/jianji/MainActivity.kt"; then
   echo "❌ MainActivity 不是 FlutterFragmentActivity —— local_auth 会抛 no_fragment_activity，指纹用不了"
@@ -218,7 +295,9 @@ restore_test_pubspec() {
     mv -f "$TEST_PUBSPEC" "$BC/pubspec.yaml"
   fi
 }
-trap restore_test_pubspec EXIT
+# 两个还原动作都要挂在 EXIT 上：gradle.properties 是第 1 步改的，
+# 这里如果不重新挂，前面的 trap 就被顶掉了，工作区会留一份脏文件。
+trap 'restore_test_pubspec; restore_gradle_props' EXIT
 cat >> "$BC/pubspec.yaml" <<'EOF'
 
 hooks:
@@ -241,7 +320,7 @@ else
   echo "      已跳过测试（--no-tests）"
 fi
 restore_test_pubspec
-trap - EXIT
+trap 'restore_gradle_props' EXIT
 if [[ "$CHECK_ONLY" == "true" ]]; then
   echo "[check] 静态检查和测试通过；未构建 APK"
   exit 0
@@ -249,14 +328,28 @@ fi
 flutter pub get
 
 # 5) 构建
-# UPDATE_URL 可选：注入更新清单地址（默认空 = 未接入，行为和以前一致）。
-# 为什么走 dart-define 而不是写死在代码里：
+# UPDATE_URL 可选：注入更新清单地址（不设就走 lib/core/update_config.dart
+# 里写死的默认地址）。
+# 为什么走 dart-define 而不是只写死在代码里：
 #  - 正式包要指向你的域名，验证包要指向本机（adb reverse 的 127.0.0.1）；
 #  - 改常量就得改代码、还得再改回来，容易漏（漏了就是发出去的包里带着测试地址）。
 # 用法：UPDATE_URL=https://xxx/version.json ./build_jianji.sh --incr
+# ⚠️ 只在环境变量**非空**时才注入。以前无条件传
+#    `--dart-define=UPDATE_URL="${UPDATE_URL:-}"`，忘记 export 时注入的是空串，
+#    而 `String.fromEnvironment` 只要「定义过」就不看 defaultValue ——
+#    检查更新 100% 显示「未接入更新服务」（1.4.58 事故根因，审计 P1-2）。
+DART_DEFINES=(
+  --dart-define=APP_VERSION="$VER"
+  --dart-define=APP_BUILD="$BUILD_NUMBER"
+)
+if [[ -n "${UPDATE_URL:-}" ]]; then
+  DART_DEFINES+=(--dart-define=UPDATE_URL="$UPDATE_URL")
+  echo "      更新清单地址（环境变量覆盖）：$UPDATE_URL"
+else
+  echo "      更新清单地址：用代码内默认值（不注入 UPDATE_URL）"
+fi
 flutter build apk --"$BUILD_TYPE" --target-platform android-arm64 \
-  --dart-define=APP_VERSION="$VER" --dart-define=APP_BUILD="$BUILD_NUMBER" \
-  --dart-define=UPDATE_URL="${UPDATE_URL:-}"
+  "${DART_DEFINES[@]}"
 echo "[5/6] 构建完成（$BUILD_TYPE）"
 
 # 6) 取出命名 APK
@@ -301,22 +394,49 @@ if [[ "$BUILD_TYPE" == "release" ]]; then
   fi
   echo "✅ ABI 校验通过：仅 arm64-v8a"
 
-  APKSIGNER="$(ls -d "${ANDROID_HOME:-/c/src/android-sdk}"/build-tools/*/apksigner.bat 2>/dev/null | sort -V | tail -1)"
+  APKSIGNER="$(ls -d "${ANDROID_HOME:-/c/src/android-sdk}"/build-tools/*/apksigner.bat 2>/dev/null | sort -V | tail -1 || true)"
   # jianji-release.jks（DN=CN=JianJi）的 SHA-1，小写无冒号
   WANT="95f4c153483dfa1618a2ec993e8a0fbab7580d5d"
+  # ⚠️ 找不到 apksigner 就**不能交付**（2026-11-08 审计 P1-5）。
+  # 以前是「跳过校验，请手动核对」——可交付时没人会手动核对，
+  # 而签错包能装能跑、UI 看不出，只在覆盖升级时炸。宁可这次不出包。
   if [[ -z "$APKSIGNER" ]]; then
-    echo "⚠️  找不到 apksigner，跳过签名校验（请手动核对 SHA-1 $WANT）"
-  else
-    GOT="$("$APKSIGNER" verify --print-certs "$OUT" 2>/dev/null \
-      | grep -i "SHA-1 digest" | head -1 \
-      | sed -E 's/.*digest:[[:space:]]*//' | tr -d ':' | tr 'A-F' 'a-f')"
-    if [[ "$GOT" != "$WANT" ]]; then
-      echo "❌ 签名不对！期望 jianji-release.jks ($WANT)，实际『$GOT』"
-      echo "   检查 android/key.properties 与 android/jianji-release.jks 是否到位。"
-      exit 1
-    fi
-    echo "✅ 签名校验通过：jianji-release.jks / SHA-1 $GOT"
+    echo "❌ 找不到 apksigner（在 ${ANDROID_HOME:-/c/src/android-sdk}/build-tools/*/ 下）"
+    echo "   签名无法校验，拒绝交付。装 build-tools 或修好 ANDROID_HOME 再跑。"
+    exit 1
   fi
+  GOT="$("$APKSIGNER" verify --print-certs "$OUT" 2>/dev/null \
+    | grep -i "SHA-1 digest" | head -1 \
+    | sed -E 's/.*digest:[[:space:]]*//' | tr -d ':' | tr 'A-F' 'a-f' || true)"
+  if [[ "$GOT" != "$WANT" ]]; then
+    echo "❌ 签名不对！期望 jianji-release.jks ($WANT)，实际『$GOT』"
+    echo "   检查 android/key.properties 与 android/jianji-release.jks 是否到位。"
+    exit 1
+  fi
+  echo "✅ 签名校验通过：jianji-release.jks / SHA-1 $GOT"
+
+  # 6.58) 更新清单地址硬校验：包里必须**真的**带着一个 https 清单地址。
+  # 这是 P1-2 的第二道锁：Dart 侧已经对空串兜底，脚本侧也不再注入空串，
+  # 但「地址到底进没进包」只有解包看 libapp.so 才能确认。
+  # 纯 ASCII 串在 libapp.so 里是单字节存放（含中文的串才整体按 UTF-16LE），
+  # 且 unzip -p 会先解压，所以可以直接在二进制里 grep。
+  WANT_URL="${UPDATE_URL:-}"
+  if [[ -z "$WANT_URL" ]]; then
+    WANT_URL="$(grep -oE "https://[^']+version\.json" "$BC/lib/core/update_config.dart" \
+      | head -1 || true)"
+  fi
+  if [[ -z "$WANT_URL" ]]; then
+    echo "❌ 解析不出更新清单地址（update_config.dart 的默认值丢了？），拒绝交付。"
+    exit 1
+  fi
+  HITS="$(unzip -p "$OUT" lib/arm64-v8a/libapp.so 2>/dev/null \
+    | grep -c -a -F "$WANT_URL" || true)"
+  if [[ "${HITS:-0}" -lt 1 ]]; then
+    echo "❌ 包里找不到更新清单地址：$WANT_URL"
+    echo "   这版装上去「检查更新」会一直显示「未接入更新服务」。"
+    exit 1
+  fi
+  echo "✅ 更新地址校验通过：$WANT_URL"
 
   # 6.6) 备份提醒：keystore 只存在于本机且被 gitignore，丢了就永远无法覆盖升级。
   # 这里只提醒不拦构建 —— 备份丢失不该挡住"修个 bug 得赶紧出包"，但必须喊出来。
