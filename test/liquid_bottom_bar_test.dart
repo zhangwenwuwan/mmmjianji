@@ -117,4 +117,47 @@ void main() {
     expect(painter().glow, 0.0, reason: '淡出结束后完全熄灭');
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('按下不动时水滴同帧出现在手指下方，松手确认切页', (tester) async {
+    final picked = <int>[];
+    await prepare(tester, host(selectedSlot: 0, onSelect: picked.add));
+    final bar = tester.getRect(find.byType(LiquidBottomBar));
+    final pill = find.byKey(const Key('liquid-pill'));
+    expect(pill, findsOneWidget);
+    final homeLeft = tester.getRect(pill).left;
+
+    // 选中在首页（槽 0），手指按下最右边的「我的」格但不移动。
+    final gesture = await tester.startGesture(
+        Offset(bar.right - 60, bar.center.dy));
+    await tester.pump();
+    expect(tester.getRect(pill).left, greaterThan(bar.width * 0.7),
+        reason: '水滴本身要按下同帧跳到手指下方，不能等松手切页');
+    expect(tester.getRect(pill).left, greaterThan(homeLeft + bar.width * 0.6),
+        reason: '水滴确实从首页格移开了');
+    expect(picked, isEmpty, reason: '还没松手，不应该提前触发切页');
+
+    // 松手点击确认：回调收到槽位 4，水滴留在那一格。
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(picked, [4], reason: '点击「我的」应照旧切页');
+    expect(tester.getRect(pill).left, greaterThan(bar.width * 0.7));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('按下中间的 + 键不预览水滴', (tester) async {
+    final picked = <int>[];
+    await prepare(tester, host(selectedSlot: 0, onSelect: picked.add));
+    final bar = tester.getRect(find.byType(LiquidBottomBar));
+    final pill = find.byKey(const Key('liquid-pill'));
+    final before = tester.getRect(pill).left;
+
+    final gesture = await tester.startGesture(bar.center);
+    await tester.pump();
+    expect(tester.getRect(pill).left, before,
+        reason: '+ 是动作键，按下时水滴不能跳到中间格');
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(picked, [2], reason: '点 + 仍应打开记账动作');
+    expect(tester.takeException(), isNull);
+  });
 }

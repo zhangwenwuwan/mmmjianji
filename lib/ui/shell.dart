@@ -594,6 +594,9 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
   Offset? _touch;
   bool _dragging = false;
 
+  /// 按下时预览到的槽位（还没被点击确认）。用于手势取消时把水滴弹回。
+  int? _previewSlot;
+
   bool get _reduce =>
       MediaQuery.maybeOf(context)?.disableAnimations ?? false;
 
@@ -657,6 +660,9 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
   }
 
   void _onTap(int slot) {
+    // 点击已经确认这次按下，取消 pointerUp 的「未确认则弹回」兜底。
+    // 不清的话，父级更新 selectedSlot 稍慢一帧就会把水滴拽回旧页。
+    _previewSlot = null;
     if (slot != 2) _snap(slot.toDouble());
     widget.onSelect(slot);
   }
@@ -667,7 +673,23 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
     _glow.stop();
     _glow.value = 1;
     if (!_reduce) _press.forward();
+    _previewFrom(at);
     _tick();
+  }
+
+  /// 2026-11-08 用户反馈：手指按在「我的」格时，**水滴本身**也要立刻
+  /// 出现在手指下方（原来只有软光过来，水滴要等松手切页才动）。
+  ///
+  /// 直接改 _pill.value 而不是跑弹簧 —— 按下那一帧就要到位，跑动画
+  /// 就还是「慢半拍」。+ 槽是动作键，不参与预览。
+  void _previewFrom(Offset at) {
+    if (_slotWidth <= 1) return; // LayoutBuilder 还没量过宽度
+    final slot =
+        (at.dx / _slotWidth).floor().clamp(0, _slotCount.toInt()).toInt();
+    if (slot == 2 || slot == widget.selectedSlot) return;
+    _previewSlot = slot;
+    _pill.stop();
+    _pill.value = slot.toDouble();
   }
 
   void _pointerUp() {
@@ -675,6 +697,23 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
     // 立刻清空会让它当帧消失（2026-11-08 用户反馈的「没切过来」）。
     _press.reverse();
     _fadeGlow();
+    final preview = _previewSlot;
+    if (preview == null) return;
+    // 点击的 onTap 紧跟 pointerUp、父级随后更新 selectedSlot，所以
+    // 用 postFrame 判断「这次预览有没有被确认」：没确认（手势取消、
+    // 手指移出按钮）就把水滴弹回真实选中页，别停在错误的格子上。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      // _onTap 会把 _previewSlot 清掉 = 这次按下已被确认，别弹回。
+      if (_previewSlot == preview &&
+          widget.selectedSlot != preview &&
+          !_dragging &&
+          !_pill.isAnimating &&
+          _pill.value.round() == preview) {
+        _snap(widget.selectedSlot.toDouble());
+      }
+      if (_previewSlot == preview) _previewSlot = null;
+    });
   }
 
   void _fadeGlow() {
@@ -688,6 +727,8 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
   void _dragStart(DragStartDetails d) {
     _dragging = true;
     _pill.stop();
+    // 拖拽已经接管水滴，不再需要「按下预览」的取消兜底。
+    _previewSlot = null;
     _touch = d.localPosition;
     _glow.stop();
     _glow.value = 1;
@@ -723,6 +764,7 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
 
   void _dragCancel() {
     _dragging = false;
+    _previewSlot = null;
     _snap(widget.selectedSlot.toDouble());
     _press.reverse();
     _fadeGlow();
@@ -848,6 +890,7 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
                             scaleX: 1.0 + v * 0.10,
                             scaleY: 1.0 - v * 0.05,
                             child: Container(
+                              key: const Key('liquid-pill'),
                               decoration: BoxDecoration(
                                 color: Palette.mint(context),
                                 // 同心圆角（2026-10-28）：外层胶囊 24，选中块距上边缘 7，
