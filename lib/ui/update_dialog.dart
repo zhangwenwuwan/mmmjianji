@@ -123,6 +123,21 @@ class _UpdateSheetState extends State<_UpdateSheet> {
             style: TextStyle(
                 fontSize: 11, height: 1.5, color: Palette.inkFaint(context)),
           ),
+          // 2026-11-08：用户实际踩到过「该安装包未包含任何证书」。
+          // 那不是包坏了 —— 上传到 GitHub 的字节与本地签名包 sha256 完全一致，
+          // adb install 同一个文件也成功。这句错误是 ColorOS 对**不完整 APK**
+          // 的报法：包体 124MB，手机网络中途断了，签名块（在文件末尾）先丢，
+          // 安装器读到清单却不读到证书，就报这个。用户第一反应是"包有问题"，
+          // 所以在这里把字数写清楚，并直接说明该报错的可操作含义。
+          if ((info.sizeBytes ?? 0) > 0) ...[
+            const SizedBox(height: 6),
+            Text(
+              '完整包 = ${info.sizeBytes} 字节。若安装时提示「该安装包未包含任何证书」，'
+              '是下载中途断了、文件不完整（不是包坏了）：删掉重新下载，最好连 WiFi 一次下完。',
+              style: TextStyle(
+                  fontSize: 10, height: 1.55, color: Palette.inkFaint(context)),
+            ),
+          ],
           if (_error != null) ...[
             const SizedBox(height: 10),
             Text(_error!,
