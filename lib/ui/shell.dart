@@ -845,7 +845,9 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
           // → 明暗层次改由上面的 gradient 承担（左上 0.34 → 右下 0.12，
           //   本身就是"上厚下薄"），Border 只负责一圈干净的边界。
           border: Border.all(
-            color: Colors.white.withValues(alpha: dark ? 0.20 : 0.48),
+            // 深色下 0.20 的纯白在墨绿玻璃上像一圈灰白描边（用户对"硬边"很敏感），
+            // 收到 0.14 —— 仍然是玻璃的受光边，但不抢眼。
+            color: Colors.white.withValues(alpha: dark ? 0.14 : 0.48),
             width: 0.9,
           ),
           // ⚠️ LayoutBuilder 必须包在 Stack **外面**，不能塞在 Positioned 里面：
@@ -897,6 +899,10 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
                               radius: _radius,
                               accent: Palette.brand(context),
                               dark: dark,
+                              // 2026-11-08 深色验收：深绿玻璃上普通叠加会把高光糊成
+                              // 一片灰雾（白 0.22 over 墨绿 = 脏灰蓝）。改成加色，
+                              // 光才是"加上去的"，浅色下也不会把玻璃冲成死白。
+                              additive: true,
                             ),
                           ),
                         ),

@@ -44,7 +44,9 @@ class LiquidTokens {
   static const Duration pressIn = Duration(milliseconds: 170);
   static const Duration glowFade = Duration(milliseconds: 220);
 
-  static const Color darkGlow = Color(0xFF9FD8FF);
+  /// 深色下的高光色。**不能用饱和的冷蓝**：墨绿玻璃上叠冷蓝 = 一片灰雾，
+  /// 看起来像脏了而不是被打亮。接近中性白、只留一点冷调才是玻璃表面的反射。
+  static const Color darkGlow = Color(0xFFE8F6FF);
 }
 
 /// 液态玻璃的表面层：跟手高光 + 按压期边缘色散 + 内阴影。
@@ -60,6 +62,7 @@ class LiquidOverlayPainter extends CustomPainter {
     required this.radius,
     required this.accent,
     required this.dark,
+    this.additive = false,
   });
 
   final double progress;
@@ -68,6 +71,22 @@ class LiquidOverlayPainter extends CustomPainter {
   final double radius;
   final Color accent;
   final bool dark;
+
+  /// 高光用**加色**混合而不是普通叠加（2026-11-08）。
+  ///
+  /// 底栏不需要：它的材质层在 Stack 最底层，下面只有玻璃自己的 tint，
+  /// 普通叠加就等于加在 tint 上。
+  ///
+  /// 但 [LiquidSurface] 的高光必须画在控件**上层**（下面是不透明的开关/滑条/按钮），
+  /// 这时候 `srcOver` 会把控件颜色朝白插值 —— 按下滑条，整条轨道发白、色相被吃掉，
+  /// 和底栏「水滴被冲成白块」是同一个病。改成 `plus`（加色）：光是被**加上去**的，
+  /// 绿色轨道按下去是"更亮的绿"，而不是"发白的绿"。物理上也更对：反射光是加量，不是替换。
+  final bool additive;
+
+  /// 加色时整体收一点：plus 是加法，同样的 alpha 比 srcOver 更亮，全量会过曝。
+  double get _k => additive ? 0.72 : 1.0;
+
+  BlendMode get _blend => additive ? BlendMode.plus : BlendMode.srcOver;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -84,18 +103,23 @@ class LiquidOverlayPainter extends CustomPainter {
     final cy = ((at.dy / size.height) * 2 - 1).clamp(-1.0, 1.0).toDouble();
     final center = Alignment(cx, cy);
 
-    // ① 跟手高光：从触点散开的软光。浅色偏白、深色偏冷蓝。
+    // ① 跟手高光：从触点散开的软光。浅色偏白、深色偏冷白。
+    //
+    // ⚠️ 深色半径要**小**（0.8 而不是 1.3）：同样 alpha 下，大半径在墨绿玻璃上
+    // 摊开就是一片灰雾；真实的玻璃反射是触点附近一小块亮斑 + 边缘受光线。
     if (glow > 0.001) {
       final shader = RadialGradient(
         center: center,
-        radius: LiquidTokens.glowRadius,
+        radius: dark ? 0.8 : LiquidTokens.glowRadius,
         colors: [
-          light.withValues(alpha: LiquidTokens.glowAlpha * glow),
+          light.withValues(alpha: LiquidTokens.glowAlpha * glow * _k),
           light.withValues(alpha: 0.0),
         ],
         stops: const [0.0, 1.0],
       ).createShader(rect);
-      canvas.drawRect(rect, Paint()..shader = shader);
+      canvas.drawRect(rect, Paint()
+        ..shader = shader
+        ..blendMode = _blend);
     }
 
     // ② 受光沿（1.4.65 replace 彩边 + 黑内阴影）：
@@ -111,8 +135,8 @@ class LiquidOverlayPainter extends CustomPainter {
         center: center,
         radius: 0.88,
         colors: [
-          light.withValues(alpha: 0.52 * glow),
-          light.withValues(alpha: 0.16 * glow),
+          light.withValues(alpha: 0.52 * glow * _k),
+          light.withValues(alpha: 0.16 * glow * _k),
           light.withValues(alpha: 0.0),
         ],
         stops: const [0.0, 0.55, 1.0],
@@ -124,6 +148,7 @@ class LiquidOverlayPainter extends CustomPainter {
           ..strokeWidth = LiquidTokens.rimWidth
           ..maskFilter =
               const MaskFilter.blur(BlurStyle.normal, LiquidTokens.rimBlur)
+          ..blendMode = _blend
           ..shader = rim,
       );
 
@@ -136,11 +161,12 @@ class LiquidOverlayPainter extends CustomPainter {
           ..strokeWidth = LiquidTokens.depthWidth
           ..maskFilter =
               const MaskFilter.blur(BlurStyle.normal, LiquidTokens.depthBlur)
+          ..blendMode = _blend
           ..shader = RadialGradient(
             center: center,
             radius: 0.7,
             colors: [
-              light.withValues(alpha: (dark ? 0.16 : 0.12) * glow),
+              light.withValues(alpha: (dark ? 0.16 : 0.12) * glow * _k),
               light.withValues(alpha: 0.0),
             ],
           ).createShader(rect),
@@ -156,7 +182,8 @@ class LiquidOverlayPainter extends CustomPainter {
       old.touch != touch ||
       old.radius != radius ||
       old.accent != accent ||
-      old.dark != dark;
+      old.dark != dark ||
+      old.additive != additive;
 }
 
 /// 把任意控件变成「会响应按压的液态玻璃」。
@@ -261,6 +288,8 @@ class _LiquidSurfaceState extends State<LiquidSurface>
                     radius: widget.radius,
                     accent: Palette.brand(context),
                     dark: dark,
+                    // 这一层压在实色控件上面，必须走加色，否则把控件颜色冲白。
+                    additive: true,
                   ),
                 ),
               ),
