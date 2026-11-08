@@ -564,10 +564,22 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
     value: widget.selectedSlot.toDouble(),
   );
 
-  /// 按压进度 0..1：驱动内容缩放、跟手高光、边缘色散与内阴影。
+  /// 按压进度 0..1：驱动内容缩放、边缘色散与内阴影（渐入，170ms）。
   late final AnimationController _press = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 170),
+  );
+
+  /// 跟手高光的亮度 0..1，**与按压渐入解耦**。
+  ///
+  /// 2026-11-08 修：高光原来挂在 _press 上，按下瞬间 progress=0 完全不画，
+  /// 170ms 才渐入 —— 快速点一下根本看不到；松手又把触点清空，高光当帧消失。
+  /// 现在按下同帧直接置 1（位置立刻切到手指处），松手才用 220ms 淡出，
+  /// 淡出期间保留最后触点，视觉上才像「光跟着手指走，抬手慢慢散」。
+  late final AnimationController _glow = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 220),
+    value: 0,
   );
 
   static final SpringDescription _spring =
@@ -597,6 +609,7 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
     super.initState();
     _pill.addListener(_tick);
     _press.addListener(_tick);
+    _glow.addListener(_tick);
     _pill.addStatusListener((status) {
       if (status == AnimationStatus.completed && _velocity != 0) {
         _velocity = 0;
@@ -625,6 +638,7 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
   void dispose() {
     _pill.dispose();
     _press.dispose();
+    _glow.dispose();
     super.dispose();
   }
 
@@ -649,19 +663,34 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
 
   void _pointerDown(Offset at) {
     _touch = at;
+    // 同帧点亮：不渐入，位置立刻从旧格切到这次手指按下的地方。
+    _glow.stop();
+    _glow.value = 1;
     if (!_reduce) _press.forward();
     _tick();
   }
 
   void _pointerUp() {
-    _touch = null;
+    // ⚠️ 不清 _touch：淡出期间高光要留在最后触点慢慢散，
+    // 立刻清空会让它当帧消失（2026-11-08 用户反馈的「没切过来」）。
     _press.reverse();
+    _fadeGlow();
+  }
+
+  void _fadeGlow() {
+    if (_reduce) {
+      _glow.value = 0;
+    } else {
+      _glow.animateTo(0, curve: XCurve.easeOut);
+    }
   }
 
   void _dragStart(DragStartDetails d) {
     _dragging = true;
     _pill.stop();
     _touch = d.localPosition;
+    _glow.stop();
+    _glow.value = 1;
     if (!_reduce) _press.forward();
     _tick();
   }
@@ -676,6 +705,7 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
         .clamp(-1.0, 1.0)
         .toDouble();
     _touch = d.localPosition;
+    _glow.value = 1; // 拖动全程常亮，跟着触点走
     _tick();
   }
 
@@ -687,6 +717,7 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
         _validSlots.contains(raw) ? raw : (_velocity >= 0 ? 3 : 1);
     _snap(target.toDouble(), velocity: _velocity * 4);
     _press.reverse();
+    _fadeGlow();
     if (target != widget.selectedSlot) widget.onSelect(target);
   }
 
@@ -694,6 +725,7 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
     _dragging = false;
     _snap(widget.selectedSlot.toDouble());
     _press.reverse();
+    _fadeGlow();
   }
 
   /// 胶囊高度 / 圆角 / 外边距。圆角取 24（略小于半高 27），
@@ -833,6 +865,7 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
                             child: CustomPaint(
                               painter: _LiquidOverlayPainter(
                                 progress: press,
+                                glow: _glow.value,
                                 touch: _touch,
                                 radius: _radius,
                                 accent: Palette.brand(context),
@@ -936,18 +969,27 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
 ///
 /// 真折射（lens / chromaticAberration）要 Impeller 的 ImageFilter.shader，
 /// 本项目走 Skia，这里用「一团会跟着手指走的光 + 一圈彩边 + 一道内暗边」
-/// 近似玻璃被按下去时的光学变化。全部随 progress 淡入淡出，
-/// 静止时 progress=0 直接 return，不产生任何额外绘制开销。
+/// 近似玻璃被按下去时的光学变化。
+///
+/// ⚠️ 两种亮度分开管（2026-11-08）：[glow] 是跟手高光，按下同帧到 1、
+/// 松手才淡出；[progress] 是按压形变/彩边，允许 170ms 渐入。
+/// 以前两者共用一个 progress，高光被渐入拖住，快速点击几乎看不见。
+/// 两者都为 0 时直接 return，静止时不产生任何额外绘制开销。
 class _LiquidOverlayPainter extends CustomPainter {
   const _LiquidOverlayPainter({
     required this.progress,
+    required this.glow,
     required this.touch,
     required this.radius,
     required this.accent,
     required this.dark,
   });
 
+  /// 按压进度：彩边与内阴影。
   final double progress;
+
+  /// 跟手高光亮度：按下瞬间为 1。
+  final double glow;
   final Offset? touch;
   final double radius;
   final Color accent;
@@ -955,15 +997,16 @@ class _LiquidOverlayPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (progress <= 0.001) return;
+    if (progress <= 0.001 && glow <= 0.001) return;
     final rect = Offset.zero & size;
     final rrect = RRect.fromRectAndRadius(rect, Radius.circular(radius));
     canvas.save();
     canvas.clipRRect(rrect);
 
     // ① 跟手高光：从触点散开的软光。浅色偏白、深色偏冷蓝。
+    //    用 glow，不用 progress —— 按下的那一帧就要出现在手指处。
     final at = touch;
-    if (at != null) {
+    if (glow > 0.001 && at != null) {
       final light = dark ? const Color(0xFF9FD8FF) : Colors.white;
       final cx = ((at.dx / size.width) * 2 - 1).clamp(-1.0, 1.0).toDouble();
       final cy = ((at.dy / size.height) * 2 - 1).clamp(-1.0, 1.0).toDouble();
@@ -971,7 +1014,7 @@ class _LiquidOverlayPainter extends CustomPainter {
         center: Alignment(cx, cy),
         radius: 1.3,
         colors: [
-          light.withValues(alpha: 0.22 * progress),
+          light.withValues(alpha: 0.22 * glow),
           light.withValues(alpha: 0.0),
         ],
         stops: const [0.0, 1.0],
@@ -981,38 +1024,41 @@ class _LiquidOverlayPainter extends CustomPainter {
 
     // ② 边缘色散：青 → 品牌 → 品红的一圈细描边。
     //    官方是 RGB 分通道按入射角错位采样，这里只借「彩边」观感。
-    final rim = LinearGradient(
-      begin: Alignment.topLeft,
-      end: Alignment.bottomRight,
-      colors: [
-        const Color(0xFF64D8FF).withValues(alpha: 0.34 * progress),
-        accent.withValues(alpha: 0.16 * progress),
-        const Color(0xFFFF8AD8).withValues(alpha: 0.30 * progress),
-      ],
-    ).createShader(rect);
-    canvas.drawRRect(
-      rrect.deflate(0.8),
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.4
-        ..shader = rim,
-    );
+    if (progress > 0.001) {
+      final rim = LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [
+          const Color(0xFF64D8FF).withValues(alpha: 0.34 * progress),
+          accent.withValues(alpha: 0.16 * progress),
+          const Color(0xFFFF8AD8).withValues(alpha: 0.30 * progress),
+        ],
+      ).createShader(rect);
+      canvas.drawRRect(
+        rrect.deflate(0.8),
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.4
+          ..shader = rim,
+      );
 
-    // ③ 内阴影：给玻璃一点厚度，只在按着或拖着时出现。
-    final inner = dark ? Colors.white : Colors.black;
-    canvas.drawRRect(
-      rrect.deflate(2.4),
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.4
-        ..color = inner.withValues(alpha: 0.10 * progress),
-    );
+      // ③ 内阴影：给玻璃一点厚度，只在按着或拖着时出现。
+      final inner = dark ? Colors.white : Colors.black;
+      canvas.drawRRect(
+        rrect.deflate(2.4),
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.4
+          ..color = inner.withValues(alpha: 0.10 * progress),
+      );
+    }
     canvas.restore();
   }
 
   @override
   bool shouldRepaint(covariant _LiquidOverlayPainter old) =>
       old.progress != progress ||
+      old.glow != glow ||
       old.touch != touch ||
       old.radius != radius ||
       old.accent != accent ||

@@ -85,4 +85,36 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('按下最右格同帧高光立即切到触点，松手才淡出', (tester) async {
+    final picked = <int>[];
+    await prepare(tester, host(selectedSlot: 0, onSelect: picked.add));
+    final bar = tester.getRect(find.byType(LiquidBottomBar));
+
+    // 找装饰层 painter。类在 shell.dart 里是库私有，用 dynamic 读字段。
+    final overlay = find.byWidgetPredicate((w) =>
+        w is CustomPaint &&
+        w.painter != null &&
+        w.painter.runtimeType.toString().contains('LiquidOverlay'));
+    expect(overlay, findsOneWidget);
+    dynamic painter() => tester.widget<CustomPaint>(overlay).painter;
+
+    // ① 当前选中在首页（槽 0），但手指按在最右边的「我的」格。
+    final gesture = await tester.startGesture(
+        Offset(bar.right - 60, bar.center.dy));
+    await tester.pump(); // 只走一帧，不给任何渐入时间
+    expect(painter().glow, greaterThan(0.9),
+        reason: '高光必须按下同帧就满亮，不能等 170ms 渐入');
+    expect((painter().touch as Offset).dx, greaterThan(bar.width * 0.7),
+        reason: '高光中心要立刻切到手指所在的最右格，而不是留在首页');
+
+    // ② 松手：高光留在最后触点慢慢淡出，不能当帧消失。
+    await gesture.up();
+    await tester.pump();
+    expect(painter().touch, isNotNull, reason: '淡出期间不能清空触点');
+    expect(painter().glow, greaterThan(0.0), reason: '松手当帧高光还在淡出');
+    await tester.pumpAndSettle();
+    expect(painter().glow, 0.0, reason: '淡出结束后完全熄灭');
+    expect(tester.takeException(), isNull);
+  });
 }
