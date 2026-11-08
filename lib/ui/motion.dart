@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
 
 import 'glass.dart';
+import 'liquid_surface.dart';
 import 'theme.dart';
 
 /// ui-motion 动效基础层。
@@ -521,10 +522,14 @@ class _AppSheetBody extends StatelessWidget {
       // 但 tint 要更实一点（0.88）—— 面板里全是输入框和选项，
       // 透得太厉害会看不清自己在填什么。
       child: Glass(
-        blur: 20,
-        tint: Palette.glass(context).withValues(alpha: 0.88),
+        blur: LiquidTokens.blurSheet,
+        tint: Palette.glass(context).withValues(alpha: LiquidTokens.tintSheet),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-        child: Container(
+        child: LiquidSurface(
+          // 面板整体接上跟手高光与按压缩放（和底栏同一套手感）。
+          // LiquidSurface 只用 Listener 读指针，不抢面板内输入框/滚动的手势。
+          radius: 22,
+          child: Container(
           constraints: BoxConstraints(
             maxHeight: MediaQuery.sizeOf(context).height * 0.86,
           ),
@@ -561,6 +566,7 @@ class _AppSheetBody extends StatelessWidget {
                     ? Expanded(child: content(context))
                     : Flexible(child: content(context)),
           ],
+        ),
         ),
         ),
       ),

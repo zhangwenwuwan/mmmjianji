@@ -549,6 +549,12 @@ ThemeData buildTheme(
                 end: Alignment.centerRight,
               ),
               borderRadius: BorderRadius.circular(AppRadius.control),
+              // 2026-11-08：40 个主按钮统一补一圈玻璃亮边，
+              // 和顶栏/底栏/弹窗的「有厚度的玻璃」是同一套语言。
+              border: Border.all(
+                color: Colors.white.withValues(alpha: isDark ? 0.14 : 0.38),
+                width: 0.8,
+              ),
             ),
             child: child,
           );
@@ -579,11 +585,83 @@ ThemeData buildTheme(
         fontWeight: FontWeight.w500,
         color: isDark ? const Color(0xFFEDF1EF) : const Color(0xFF17201C),
       ),
+      selectedColor: scheme.primaryContainer,
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(6),
         side: BorderSide(color: isDark ? const Color(0xFF29312D) : const Color(0xFFE3E8E5)),
       ),
+    ),
+    // 2026-11-08 全 App 材质统一：25 处系统 AlertDialog 与 6 处弹出菜单
+    // 不再各自是实心白板。用主题一处收编成「磨砂玻璃」——半透明 + 亮边 +
+    // 大圆角，和底部弹窗/顶栏/底栏同一套材质语言。
+    // ⚠️ 故意不加 BackdropFilter：对话框出现时顶栏+底栏的两次模糊还在，
+    // 再加一层离屏渲染会在骁龙 710 上掉帧；0.94 的 tint 保证可读性。
+    dialogTheme: DialogThemeData(
+      backgroundColor: (isDark
+              ? const Color(0xFF171D1A)
+              : Colors.white)
+          .withValues(alpha: 0.94),
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide(
+          color: isDark
+              ? Colors.white.withValues(alpha: 0.14)
+              : Colors.white.withValues(alpha: 0.9),
+          width: 0.9,
+        ),
+      ),
+    ),
+    popupMenuTheme: PopupMenuThemeData(
+      color: (isDark ? const Color(0xFF171D1A) : Colors.white)
+          .withValues(alpha: 0.94),
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(
+          color: isDark
+              ? Colors.white.withValues(alpha: 0.14)
+              : Colors.white.withValues(alpha: 0.9),
+          width: 0.9,
+        ),
+      ),
+    ),
+    // 2026-11-08：9 处设置开关与 5 处滑条统一成玻璃质感（半透明轨道 +
+    // 亮边拇指）。只改视觉，不改各页面的状态逻辑。
+    switchTheme: SwitchThemeData(
+      thumbColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.disabled)) {
+          return isDark ? const Color(0xFF6B7770) : const Color(0xFFB7C2BC);
+        }
+        return Colors.white;
+      }),
+      trackColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.selected)) {
+          return scheme.primary.withValues(alpha: 0.72);
+        }
+        return isDark
+            ? Colors.white.withValues(alpha: 0.14)
+            : const Color(0xFF173A31).withValues(alpha: 0.12);
+      }),
+      trackOutlineColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.selected)) {
+          return Colors.white.withValues(alpha: isDark ? 0.30 : 0.65);
+        }
+        return isDark
+            ? Colors.white.withValues(alpha: 0.16)
+            : Colors.white.withValues(alpha: 0.85);
+      }),
+    ),
+    sliderTheme: SliderThemeData(
+      trackHeight: 4,
+      activeTrackColor: scheme.primary,
+      inactiveTrackColor: scheme.primary.withValues(alpha: 0.18),
+      thumbColor: Colors.white,
+      overlayColor: scheme.primary.withValues(alpha: 0.12),
+      thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 10),
     ),
     snackBarTheme: SnackBarThemeData(
       behavior: SnackBarBehavior.floating,

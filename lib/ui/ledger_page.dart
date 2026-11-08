@@ -25,6 +25,7 @@ import 'export_page.dart';
 import 'glass.dart';
 import 'illustrations.dart';
 import 'month_summary_page.dart';
+import 'liquid_surface.dart';
 import 'motion.dart';
 import 'pull_to_add.dart';
 import 'recycle_bin_page.dart';
@@ -1059,7 +1060,7 @@ class _LedgerHeader extends SliverPersistentHeaderDelegate {
     return BootRevealItem(
       index: 0,
       y: 8,
-      child: hasCover ? ClipRect(child: bar) : Glass(blur: 18, child: bar),
+      child: hasCover ? ClipRect(child: bar) : Glass(blur: LiquidTokens.blurBar, child: bar),
     );
   }
 }

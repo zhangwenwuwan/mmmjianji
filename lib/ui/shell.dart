@@ -17,6 +17,7 @@ import 'glass.dart';
 import 'insight_hub_page.dart';
 import 'insights_page.dart';
 import 'ledger_page.dart';
+import 'liquid_surface.dart';
 import 'motion.dart';
 import 'pocket_manage_page.dart';
 import 'profile_page.dart';
@@ -567,7 +568,7 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
   /// 按压进度 0..1：驱动内容缩放、边缘色散与内阴影（渐入，170ms）。
   late final AnimationController _press = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 170),
+    duration: LiquidTokens.pressIn,
   );
 
   /// 跟手高光的亮度 0..1，**与按压渐入解耦**。
@@ -578,7 +579,7 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
   /// 淡出期间保留最后触点，视觉上才像「光跟着手指走，抬手慢慢散」。
   late final AnimationController _glow = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 220),
+    duration: LiquidTokens.glowFade,
     value: 0,
   );
 
@@ -826,7 +827,7 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
           // ④ 高光出厚度：CSS `inset 1px 1px #fff8` → Glass 的 highlight
           //    （Flutter 的 BoxShadow 没有 inset，改用渐变，见 glass.dart）。
           // ⑤ 边缘折射（SVG 位移滤镜）：不做。手机尺寸上收益极低，成本很高。
-          blur: 24,
+          blur: LiquidTokens.blurDock,
           borderRadius: BorderRadius.circular(_radius),
           tint: Color.lerp(
             dark ? const Color(0xFF151C18) : Colors.white,
@@ -874,7 +875,7 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
                   onHorizontalDragEnd: _dragEnd,
                   onHorizontalDragCancel: _dragCancel,
                   child: Transform.scale(
-                    scale: 1.0 + 0.035 * press,
+                    scale: 1.0 + LiquidTokens.pressScale * press,
                     child: Stack(
                       children: [
                         // 水滴指示：连续槽位坐标，拖动跟手、松手弹簧吸附。
@@ -906,7 +907,7 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
                         Positioned.fill(
                           child: IgnorePointer(
                             child: CustomPaint(
-                              painter: _LiquidOverlayPainter(
+                              painter: LiquidOverlayPainter(
                                 progress: press,
                                 glow: _glow.value,
                                 touch: _touch,
@@ -1006,104 +1007,4 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
       ),
     );
   }
-}
-
-/// 液态玻璃的表面层：跟手高光 + 按压期边缘色散 + 内阴影。
-///
-/// 真折射（lens / chromaticAberration）要 Impeller 的 ImageFilter.shader，
-/// 本项目走 Skia，这里用「一团会跟着手指走的光 + 一圈彩边 + 一道内暗边」
-/// 近似玻璃被按下去时的光学变化。
-///
-/// ⚠️ 两种亮度分开管（2026-11-08）：[glow] 是跟手高光，按下同帧到 1、
-/// 松手才淡出；[progress] 是按压形变/彩边，允许 170ms 渐入。
-/// 以前两者共用一个 progress，高光被渐入拖住，快速点击几乎看不见。
-/// 两者都为 0 时直接 return，静止时不产生任何额外绘制开销。
-class _LiquidOverlayPainter extends CustomPainter {
-  const _LiquidOverlayPainter({
-    required this.progress,
-    required this.glow,
-    required this.touch,
-    required this.radius,
-    required this.accent,
-    required this.dark,
-  });
-
-  /// 按压进度：彩边与内阴影。
-  final double progress;
-
-  /// 跟手高光亮度：按下瞬间为 1。
-  final double glow;
-  final Offset? touch;
-  final double radius;
-  final Color accent;
-  final bool dark;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (progress <= 0.001 && glow <= 0.001) return;
-    final rect = Offset.zero & size;
-    final rrect = RRect.fromRectAndRadius(rect, Radius.circular(radius));
-    canvas.save();
-    canvas.clipRRect(rrect);
-
-    // ① 跟手高光：从触点散开的软光。浅色偏白、深色偏冷蓝。
-    //    用 glow，不用 progress —— 按下的那一帧就要出现在手指处。
-    final at = touch;
-    if (glow > 0.001 && at != null) {
-      final light = dark ? const Color(0xFF9FD8FF) : Colors.white;
-      final cx = ((at.dx / size.width) * 2 - 1).clamp(-1.0, 1.0).toDouble();
-      final cy = ((at.dy / size.height) * 2 - 1).clamp(-1.0, 1.0).toDouble();
-      final shader = RadialGradient(
-        center: Alignment(cx, cy),
-        radius: 1.3,
-        colors: [
-          light.withValues(alpha: 0.22 * glow),
-          light.withValues(alpha: 0.0),
-        ],
-        stops: const [0.0, 1.0],
-      ).createShader(rect);
-      canvas.drawRect(rect, Paint()..shader = shader);
-    }
-
-    // ② 边缘色散：青 → 品牌 → 品红的一圈细描边。
-    //    官方是 RGB 分通道按入射角错位采样，这里只借「彩边」观感。
-    if (progress > 0.001) {
-      final rim = LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [
-          const Color(0xFF64D8FF).withValues(alpha: 0.34 * progress),
-          accent.withValues(alpha: 0.16 * progress),
-          const Color(0xFFFF8AD8).withValues(alpha: 0.30 * progress),
-        ],
-      ).createShader(rect);
-      canvas.drawRRect(
-        rrect.deflate(0.8),
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.4
-          ..shader = rim,
-      );
-
-      // ③ 内阴影：给玻璃一点厚度，只在按着或拖着时出现。
-      final inner = dark ? Colors.white : Colors.black;
-      canvas.drawRRect(
-        rrect.deflate(2.4),
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2.4
-          ..color = inner.withValues(alpha: 0.10 * progress),
-      );
-    }
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(covariant _LiquidOverlayPainter old) =>
-      old.progress != progress ||
-      old.glow != glow ||
-      old.touch != touch ||
-      old.radius != radius ||
-      old.accent != accent ||
-      old.dark != dark;
 }

@@ -12,6 +12,7 @@ import 'category_detail_page.dart';
 import 'charts.dart';
 import 'common.dart';
 import 'glass.dart';
+import 'liquid_surface.dart';
 import 'motion.dart';
 import 'sankey.dart';
 import 'tab_header.dart';
@@ -1041,8 +1042,8 @@ class _CompactFilterBar extends ConsumerWidget {
       // 0.88 而不是默认的 0.66：精简条是「钉住的控制条」，不是装饰性玻璃。
       // 0.66 那版在真机上一滚就能看见下面的区间行「~」透出来，像屏幕脏了一个点。
       tint: (Palette.isDark(context) ? const Color(0xFF151C18) : Colors.white)
-          .withValues(alpha: 0.88),
-      blur: 18,
+          .withValues(alpha: LiquidTokens.tintSheet),
+      blur: LiquidTokens.blurBar,
       border: Border(
         bottom: BorderSide(color: Palette.hairline(context), width: 0.5),
       ),
@@ -1125,56 +1126,81 @@ class _ScopeSegments extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 38,
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: Palette.inkFaint(context).withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        children: [
-          for (final e in _labels.entries)
-            Expanded(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () => onChanged(e.key),
-                child: AnimatedContainer(
-                  duration: Motion.d(context, Motion.small),
-                  curve: XCurve.easeOut,
-                  alignment: Alignment.center,
+    // 2026-11-08：选中态从「每格各自淡入」改成**一整块水滴滑过去**
+    // （和底栏同一条弹簧曲线），并接上公共液态材质（跟手高光/彩边/按压）。
+    // LayoutBuilder 只用于量格子宽度；拖拽切分段不做，避免和统计页的
+    // 月份横滑手势打架（底栏已经有拖拽了）。
+    return LayoutBuilder(builder: (_, constraints) {
+      final w = constraints.maxWidth / _labels.length;
+      final idx = _labels.keys.toList().indexOf(scope);
+      return LiquidSurface(
+        radius: 19,
+        child: SizedBox(
+          height: 38,
+          child: Stack(
+            children: [
+              // 轨道底：原来是外层 Container 的底色，改成 Stack 后要自己画。
+              Positioned.fill(
+                child: Container(
                   decoration: BoxDecoration(
-                    color: e.key == scope
-                        ? Palette.card(context)
-                        : Colors.transparent,
+                    color: Palette.inkFaint(context).withValues(alpha: 0.10),
                     borderRadius: BorderRadius.circular(999),
-                    boxShadow: e.key == scope
-                        ? [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.07),
-                              blurRadius: 6,
-                              offset: const Offset(0, 1),
-                            ),
-                          ]
-                        : null,
-                  ),
-                  child: Text(
-                    e.value,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight:
-                          e.key == scope ? FontWeight.w700 : FontWeight.w500,
-                      color: e.key == scope
-                          ? Palette.ink(context)
-                          : Palette.inkSoft(context),
-                    ),
                   ),
                 ),
               ),
-            ),
-        ],
-      ),
-    );
+              AnimatedPositioned(
+                // left + width 而不是 left + right：弹簧曲线会超调，
+                // 用 right 会算出负宽度（底栏踩过这个断言）。
+                duration: Motion.d(context, const Duration(milliseconds: 340)),
+                curve: XCurve.spring,
+                left: w * idx + 3,
+                width: w - 6,
+                top: 3,
+                height: 32,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Palette.card(context),
+                    borderRadius: BorderRadius.circular(999),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.07),
+                        blurRadius: 6,
+                        offset: const Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Row(
+                children: [
+                  for (final e in _labels.entries)
+                    Expanded(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => onChanged(e.key),
+                        child: Center(
+                          child: Text(
+                            e.value,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: e.key == scope
+                                  ? FontWeight.w700
+                                  : FontWeight.w500,
+                              color: e.key == scope
+                                  ? Palette.ink(context)
+                                  : Palette.inkSoft(context),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+    });
   }
 }
 

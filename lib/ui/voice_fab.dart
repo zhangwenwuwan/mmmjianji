@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/offline_speech.dart';
 import '../state/settings.dart';
 import 'boot_reveal.dart';
+import 'liquid_surface.dart';
 import 'theme.dart';
 import 'voice_entry_page.dart';
 
@@ -228,13 +229,30 @@ class _VoiceFabState extends State<VoiceFab>
                   setState(() => _dragging = false);
                   widget.onDragEnd?.call();
                 },
-                child: Container(
+                child: LiquidSurface(
+                  // 圆形：半径取按钮半宽，painter 的圆角矩形正好是圆。
+                  // 2026-11-08：语音键从实心渐变圆改成玻璃圆钮（半透 +
+                  // 亮边），并接上跟手高光/按压缩放；长按拖动仍归外层手势管。
+                  radius: VoiceFab.size / 2,
+                  child: Container(
                   key: const ValueKey('voice-entry-fab'),
                   width: VoiceFab.size,
                   height: VoiceFab.size,
                   decoration: BoxDecoration(
-                    gradient: Palette.gradient(context),
+                    gradient: LinearGradient(
+                      colors: [
+                        for (final c in Palette.gradient(context).colors)
+                          c.withValues(alpha: 0.90),
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
                     shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.white.withValues(
+                          alpha: Palette.isDark(context) ? 0.22 : 0.55),
+                      width: 1.0,
+                    ),
                     boxShadow: [
                       BoxShadow(
                         color: brand.withValues(alpha: listening ? 0.42 : 0.28),
@@ -260,6 +278,7 @@ class _VoiceFabState extends State<VoiceFab>
                           size: listening ? 26 : 24,
                           color: on,
                         ),
+                ),
                 ),
               ),
             ),

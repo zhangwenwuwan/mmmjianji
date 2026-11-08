@@ -1,7 +1,7 @@
 name: jianji
 description: "简记 —— 本地优先的个人记账应用"
 publish_to: 'none'
-version: 1.4.63+107
+version: 1.4.64+108
 
 environment:
   sdk: ^3.6.0

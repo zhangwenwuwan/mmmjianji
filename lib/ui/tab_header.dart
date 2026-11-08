@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'glass.dart';
+import 'liquid_surface.dart';
 import 'theme.dart';
 
 /// 四个 tab 共用的顶部条：玻璃底 + 48 高 + 17px 标题 + 右侧动作。
@@ -48,7 +49,7 @@ class TabHeader extends StatelessWidget {
       child: SizedBox(
       height: barHeight + top,
       child: Glass(
-        blur: 18,
+        blur: LiquidTokens.blurBar,
         child: Column(
           children: [
             SizedBox(height: top),

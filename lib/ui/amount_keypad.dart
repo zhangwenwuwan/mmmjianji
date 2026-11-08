@@ -5,6 +5,7 @@ import 'package:flutter/services.dart' show HapticFeedback;
 
 import '../core/rules.dart';
 import 'common.dart' show AppField;
+import 'liquid_surface.dart';
 import 'motion.dart' show PressScale;
 import 'theme.dart' show Palette;
 
@@ -366,12 +367,18 @@ class _ZheSliderRowState extends State<_ZheSliderRow> {
           ' · 实付 ${centsToText(base - discount)}';
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          children: [
-            Text('折数',
+    // 2026-11-08：折数条接上公共液态材质（按下挤压 + 跟手高光 + 彩边）。
+    // mainAxisSize.min 必须写：LiquidSurface 内部是 Stack，给 child 的是
+    // loose 约束，Column 默认 mainAxisSize.max 会拿到无界高度直接报错。
+    return LiquidSurface(
+      radius: 12,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Text('折数',
                 style: TextStyle(
                     fontSize: 12, color: Palette.inkSoft(context))),
             Expanded(
@@ -442,6 +449,7 @@ class _ZheSliderRowState extends State<_ZheSliderRow> {
           ),
         ),
       ],
+      ),
     );
   }
 }
