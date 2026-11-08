@@ -106,6 +106,23 @@ android {
             isMinifyEnabled = false
             isShrinkResources = false
         }
+
+        // profile 也用正式签名（2026-11-08 加）。
+        //
+        // 原因：真机验证要**覆盖安装**在 release 之上，否则
+        // `INSTALL_FAILED_UPDATE_INCOMPATIBLE`；卸载重装会清掉数据库 ——
+        // 拿自己的账本当测试数据时这等于删库。profile 比 release 快得多，
+        // 是最适合做视觉/交互验证的档位，所以必须能直接盖上去。
+        //
+        // ⚠️ 不能写 `profile { ... }`：Flutter 的 profile 不是 AGP 内建 buildType，
+        // 是 Flutter Gradle 插件在运行时注册的，Kotlin DSL 编译期没有这个访问器
+        // （报 "Expression 'profile' cannot be invoked as a function"）。
+        // 用 configureEach 按名字兜住 —— 对后注册的 buildType 同样生效。
+        configureEach {
+            if (name == "profile") {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
     }
 }
 

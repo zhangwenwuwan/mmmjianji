@@ -859,9 +859,6 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
               final pill = _pill.value.clamp(0.0, _slotCount).toDouble();
               final press = _press.value;
               final v = _velocity.abs();
-              // ⚠️ 缩放只包在 Glass 的 child 上。玻璃层（BackdropFilter +
-              // ClipRRect）留在原位，缩放它等于把背景采样一起放大，
-              // 官方教程里专门演示了这个错位（要用 layerBlock 修）。
               return Listener(
                 // translucent：玻璃边缘/圆角空白处也能收到按压，高光不漏。
                 // Listener 不进手势竞技场，不会抢 tab 的点击。
@@ -874,62 +871,80 @@ class LiquidBottomBarState extends State<LiquidBottomBar>
                   onHorizontalDragUpdate: _dragUpdate,
                   onHorizontalDragEnd: _dragEnd,
                   onHorizontalDragCancel: _dragCancel,
-                  child: Transform.scale(
-                    scale: 1.0 + LiquidTokens.pressScale * press,
-                    child: Stack(
-                      children: [
-                        // 水滴指示：连续槽位坐标，拖动跟手、松手弹簧吸附。
-                        // 不再用 AnimatedPositioned —— 弹簧超调会让 right 变负
-                        // （margin.isNonNegative 断言），改成 left + width。
-                        Positioned(
-                          left: slotW * pill + slotW * 0.12,
-                          width: slotW * 0.76,
-                          top: 7,
-                          height: 40,
-                          child: Transform.scale(
-                            // 拖得越快越"拉丝"：横向拉长、纵向压扁。
-                            scaleX: 1.0 + v * 0.10,
-                            scaleY: 1.0 - v * 0.05,
-                            child: Container(
-                              key: const Key('liquid-pill'),
-                              decoration: BoxDecoration(
-                                color: Palette.mint(context),
-                                // 同心圆角（2026-10-28）：外层胶囊 24，选中块距上边缘 7，
-                                // 所以内层要 24-7 = 17 才"同圆心"。
-                                borderRadius: BorderRadius.circular(
-                                    AppRadius.inside(_radius, 7)),
-                              ),
+                  // ⚠️ 缩放只包在**内容层**（水滴 + 图标）。玻璃层（BackdropFilter +
+                  // ClipRRect）和材质层（受光沿）留在原位 —— 缩放它们等于把背景
+                  // 采样一起放大，官方教程里专门演示了这个错位。
+                  //
+                  // 1.4.65：材质层**也**必须留在缩放外面。之前它在 Transform.scale
+                  // 里，按压缩放 3.5% 后整圈描边被外框 ClipRRect 裁掉半条，圆角处
+                  // 还会断开 —— 那正是用户看到的「按住时浮出几层灰黑硬边」的来源之一。
+                  child: Stack(
+                    children: [
+                      // 跟手受光沿 + 内侧厚度光（折射的廉价近似，无硬描边）。
+                      //
+                      // 1.4.65：挪到**最底层**。之前它压在水滴上面，白高光
+                      // （0.22）+ 白受光沿（0.52）会把滴色冲成一块纯白，
+                      // 看着像"按下去格子变白了"而不是"玻璃被打亮"。
+                      // 真实玻璃的受光是**表面**的事，液滴本身不该被冲淡。
+                      // IgnorePointer：纯装饰层绝不抢 tab 的点击。
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: CustomPaint(
+                            painter: LiquidOverlayPainter(
+                              progress: press,
+                              glow: _glow.value,
+                              touch: _touch,
+                              radius: _radius,
+                              accent: Palette.brand(context),
+                              dark: dark,
                             ),
                           ),
                         ),
-                        // 跟手高光 + 按压期边缘色散/内阴影（折射的廉价近似）。
-                        // IgnorePointer：纯装饰层绝不抢 tab 的点击。
-                        Positioned.fill(
-                          child: IgnorePointer(
-                            child: CustomPaint(
-                              painter: LiquidOverlayPainter(
-                                progress: press,
-                                glow: _glow.value,
-                                touch: _touch,
-                                radius: _radius,
-                                accent: Palette.brand(context),
-                                dark: dark,
+                      ),
+                      Positioned.fill(
+                        child: Transform.scale(
+                          scale: 1.0 + LiquidTokens.pressScale * press,
+                          child: Stack(
+                            children: [
+                              // 水滴指示：连续槽位坐标，拖动跟手、松手弹簧吸附。
+                              // 不再用 AnimatedPositioned —— 弹簧超调会让 right 变负
+                              // （margin.isNonNegative 断言），改成 left + width。
+                              Positioned(
+                                left: slotW * pill + slotW * 0.12,
+                                width: slotW * 0.76,
+                                top: 7,
+                                height: 40,
+                                child: Transform.scale(
+                                  // 拖得越快越"拉丝"：横向拉长、纵向压扁。
+                                  scaleX: 1.0 + v * 0.10,
+                                  scaleY: 1.0 - v * 0.05,
+                                  child: Container(
+                                    key: const Key('liquid-pill'),
+                                    decoration: BoxDecoration(
+                                      color: Palette.mint(context),
+                                      // 同心圆角（2026-10-28）：外层胶囊 24，选中块距上边缘 7，
+                                      // 所以内层要 24-7 = 17 才"同圆心"。
+                                      borderRadius: BorderRadius.circular(
+                                          AppRadius.inside(_radius, 7)),
+                                    ),
+                                  ),
+                                ),
                               ),
-                            ),
+                              Row(
+                                children: [
+                                  _tab(context, 0, Icons.home_outlined, '首页'),
+                                  _tab(context, 1, Icons.pie_chart_outline, '统计'),
+                                  _addButton(context),
+                                  _tab(context, 3,
+                                      Icons.account_balance_wallet_outlined, '资产'),
+                                  _tab(context, 4, Icons.person_outline, '我的'),
+                                ],
+                              ),
+                            ],
                           ),
                         ),
-                        Row(
-                          children: [
-                            _tab(context, 0, Icons.home_outlined, '首页'),
-                            _tab(context, 1, Icons.pie_chart_outline, '统计'),
-                            _addButton(context),
-                            _tab(context, 3,
-                                Icons.account_balance_wallet_outlined, '资产'),
-                            _tab(context, 4, Icons.person_outline, '我的'),
-                          ],
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               );

@@ -29,14 +29,21 @@ class LiquidTokens {
   static const double pressScale = 0.035;
   static const double glowAlpha = 0.22;
   static const double glowRadius = 1.3;
-  static const double rimWidth = 1.4;
-  static const double innerShadowWidth = 2.4;
+
+  /// 受光沿（1.4.65）：贴在轮廓上、只亮触点那一侧的一道柔光。
+  /// ⚠️ 必须是**模糊**的，宽度略大于 1 —— 硬描边（原来 1.4 + 2.4 黑内阴影
+  /// 两条贴在一起）在浅色玻璃上会读成「几层灰黑硬边」，用户实测反馈丑。
+  static const double rimWidth = 1.6;
+  static const double rimBlur = 1.4;
+
+  /// 内侧厚度光：从边缘向内衰减的一圈柔白，只在触点附近出现，不是整圈线圈。
+  static const double depthInset = 2.2;
+  static const double depthWidth = 3.4;
+  static const double depthBlur = 3.0;
+
   static const Duration pressIn = Duration(milliseconds: 170);
   static const Duration glowFade = Duration(milliseconds: 220);
 
-  /// 表面彩边的三段色（青 → 品牌 → 品红），近似色散。
-  static const Color rimCool = Color(0xFF64D8FF);
-  static const Color rimWarm = Color(0xFFFF8AD8);
   static const Color darkGlow = Color(0xFF9FD8FF);
 }
 
@@ -65,19 +72,22 @@ class LiquidOverlayPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (progress <= 0.001 && glow <= 0.001) return;
+    final at = touch;
+    if (at == null) return;
     final rect = Offset.zero & size;
     final rrect = RRect.fromRectAndRadius(rect, Radius.circular(radius));
     canvas.save();
     canvas.clipRRect(rrect);
 
+    final light = dark ? LiquidTokens.darkGlow : Colors.white;
+    final cx = ((at.dx / size.width) * 2 - 1).clamp(-1.0, 1.0).toDouble();
+    final cy = ((at.dy / size.height) * 2 - 1).clamp(-1.0, 1.0).toDouble();
+    final center = Alignment(cx, cy);
+
     // ① 跟手高光：从触点散开的软光。浅色偏白、深色偏冷蓝。
-    final at = touch;
-    if (glow > 0.001 && at != null) {
-      final light = dark ? LiquidTokens.darkGlow : Colors.white;
-      final cx = ((at.dx / size.width) * 2 - 1).clamp(-1.0, 1.0).toDouble();
-      final cy = ((at.dy / size.height) * 2 - 1).clamp(-1.0, 1.0).toDouble();
+    if (glow > 0.001) {
       final shader = RadialGradient(
-        center: Alignment(cx, cy),
+        center: center,
         radius: LiquidTokens.glowRadius,
         colors: [
           light.withValues(alpha: LiquidTokens.glowAlpha * glow),
@@ -88,33 +98,52 @@ class LiquidOverlayPainter extends CustomPainter {
       canvas.drawRect(rect, Paint()..shader = shader);
     }
 
-    if (progress > 0.001) {
-      // ② 边缘色散：青 → 品牌 → 品红的一圈细描边。
-      final rim = LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
+    // ② 受光沿（1.4.65 replace 彩边 + 黑内阴影）：
+    //
+    // 旧版是「青→品牌→品红」整圈描边 1.4px + 内侧再叠一圈黑 2.4px。
+    // 两条线只隔 1.6px，浅色玻璃上直接读成几层灰黑硬边；
+    // 再加上按压时整层放大 3.5% 被外框裁掉半条，断口更明显。
+    //
+    // 换成液态玻璃真正的做法：光只沿**触点那一侧**的轮廓出现，向两侧衰减到 0。
+    // 整圈没有硬线，光跟着手指走 —— 这才像液体被压出来的高光。
+    if (glow > 0.001) {
+      final rim = RadialGradient(
+        center: center,
+        radius: 0.88,
         colors: [
-          LiquidTokens.rimCool.withValues(alpha: 0.34 * progress),
-          accent.withValues(alpha: 0.16 * progress),
-          LiquidTokens.rimWarm.withValues(alpha: 0.30 * progress),
+          light.withValues(alpha: 0.52 * glow),
+          light.withValues(alpha: 0.16 * glow),
+          light.withValues(alpha: 0.0),
         ],
+        stops: const [0.0, 0.55, 1.0],
       ).createShader(rect);
       canvas.drawRRect(
-        rrect.deflate(0.8),
+        rrect.deflate(LiquidTokens.rimWidth / 2),
         Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = LiquidTokens.rimWidth
+          ..maskFilter =
+              const MaskFilter.blur(BlurStyle.normal, LiquidTokens.rimBlur)
           ..shader = rim,
       );
 
-      // ③ 内阴影：给玻璃一点厚度，只在按着时出现。
-      final inner = dark ? Colors.white : Colors.black;
+      // ③ 内侧厚度：同样跟手、同样模糊，只给一点点"玻璃有厚度"的暗示。
+      // 用白而不是黑 —— 黑色内阴影在浅色上是脏灰边，玻璃变厚应该是**更亮**。
       canvas.drawRRect(
-        rrect.deflate(2.4),
+        rrect.deflate(LiquidTokens.depthInset),
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = LiquidTokens.innerShadowWidth
-          ..color = inner.withValues(alpha: 0.10 * progress),
+          ..strokeWidth = LiquidTokens.depthWidth
+          ..maskFilter =
+              const MaskFilter.blur(BlurStyle.normal, LiquidTokens.depthBlur)
+          ..shader = RadialGradient(
+            center: center,
+            radius: 0.7,
+            colors: [
+              light.withValues(alpha: (dark ? 0.16 : 0.12) * glow),
+              light.withValues(alpha: 0.0),
+            ],
+          ).createShader(rect),
       );
     }
     canvas.restore();
