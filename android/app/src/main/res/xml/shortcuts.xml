@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 桌面长按快捷方式（静态）。
+     走同一条 jianji:// 通道：前台已在 App 里就复用 scheme 的去重逻辑，
+     冷启动则由 launch intent 里的 data 带进来。
+     最多显示 4 个静态快捷方式，这里只放 2 个最高频的。 -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="add"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_add_short"
+        android:shortcutLongLabel="@string/shortcut_add_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.jianji.ledger"
+            android:targetClass="com.jianji.jianji.MainActivity"
+            android:data="jianji:///add" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="voice"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_voice_short"
+        android:shortcutLongLabel="@string/shortcut_voice_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.jianji.ledger"
+            android:targetClass="com.jianji.jianji.MainActivity"
+            android:data="jianji:///voice" />
+    </shortcut>
+</shortcuts>

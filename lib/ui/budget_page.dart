@@ -103,8 +103,18 @@ class BudgetPage extends ConsumerWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 20),
-                SectionLabel('分类预算（可选）'),
+                const SizedBox(height: 10),
+                _BudgetSuggestRow(
+                  configured: progress.configured,
+                  baseBudget: budget,
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    const Expanded(child: SectionLabel('分类预算（可选）')),
+                    _ProportionalSplitButton(baseBudget: budget),
+                  ],
+                ),
                 _BucketBudgets(symbol: settings.symbol),
                 const SizedBox(height: 16),
                 Panel(
@@ -205,6 +215,204 @@ class BudgetPage extends ConsumerWidget {
     final book = await ref.read(activeBookProvider.future);
     await store.setBudget(book.id, month, result);
     bumpRevision(ref);
+  }
+}
+
+/// 预算智能建议行（2026-11-09）。
+///
+/// 两个入口，各只在有料时出现：
+/// - 上月设过预算而本月没设 → 「沿用上月预算」；
+/// - 近 3 个月有消费 → 「按近 3 月平均设置」。
+/// 都是直接生效 + toast，预算随手可改，不值得再叠一层确认框。
+class _BudgetSuggestRow extends ConsumerWidget {
+  const _BudgetSuggestRow({
+    required this.configured,
+    required this.baseBudget,
+  });
+
+  final bool configured;
+  final int baseBudget;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final sug = ref.watch(budgetSuggestionProvider).valueOrNull;
+    if (sug == null) return const SizedBox.shrink();
+    final hide = ref.watch(settingsProvider).hideAmounts;
+
+    final showCarry = !configured && sug.prevBudgetCents > 0;
+    final showSuggest = sug.suggestCents > 0 &&
+        !(configured && sug.suggestCents == baseBudget);
+    if (!showCarry && !showSuggest) return const SizedBox.shrink();
+
+    return Panel(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (showCarry)
+            TextButton.icon(
+              onPressed: () =>
+                  _applySuggestedBudget(context, ref, sug.prevBudgetCents,
+                      '已沿用上月预算'),
+              icon: const Icon(Icons.history, size: 16),
+              label: Text(hide
+                  ? '沿用上月预算'
+                  : '沿用上月预算 ¥${centsToText(sug.prevBudgetCents)}'),
+            ),
+          if (showSuggest)
+            TextButton.icon(
+              onPressed: () => _applySuggestedBudget(
+                  context,
+                  ref,
+                  sug.suggestCents,
+                  hide
+                      ? '已按近 3 月平均设置'
+                      : '已按近 3 月平均设置 ¥${centsToText(sug.suggestCents)}'),
+              icon: const Icon(Icons.auto_awesome, size: 16),
+              label: Text(hide
+                  ? '按近 3 月平均设置'
+                  : '按近 3 月平均设置 ¥${centsToText(sug.suggestCents)}'),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _applySuggestedBudget(
+      BuildContext context, WidgetRef ref, int cents, String toast) async {
+    final store = await ref.read(storeProvider.future);
+    final book = await ref.read(activeBookProvider.future);
+    final month = ref.read(monthProvider);
+    await store.setBudget(book.id, month, cents);
+    bumpRevision(ref);
+    if (context.mounted) ScaffoldMessenger.of(context).toast(toast);
+  }
+}
+
+/// 分类预算「按消费分配」：把本月总预算按近 3 个月的分类消费占比
+/// 一键摊到各分类（最大余数法，见 core/budget_rules.dart）。
+///
+/// 为什么以基础预算为准：结转后的「可用」包含上月滚动结果，
+/// 拿它当分摊基数会让每个月的分类预算越来越看不懂。
+class _ProportionalSplitButton extends ConsumerWidget {
+  const _ProportionalSplitButton({required this.baseBudget});
+
+  final int baseBudget;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return TextButton(
+      onPressed: () => _run(context, ref),
+      style: TextButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        visualDensity: VisualDensity.compact,
+      ),
+      child: const Text('按消费分配', style: TextStyle(fontSize: 13)),
+    );
+  }
+
+  Future<void> _run(BuildContext context, WidgetRef ref) async {
+    if (baseBudget <= 0) {
+      ScaffoldMessenger.of(context).toast('先设置本月总预算，再按消费分配');
+      return;
+    }
+    final store = await ref.read(storeProvider.future);
+    final book = await ref.read(activeBookProvider.future);
+    final rates = await ref.read(ratesProvider.future);
+    final month = ref.read(monthProvider);
+
+    // 近 3 个月的分类消费（折主币）：占比来源。
+    final spent = <int, int>{};
+    for (var back = 1; back <= 3; back++) {
+      final m = DateTime(month.year, month.month - back);
+      for (final s in await store.bucketSlices(book.id, m)) {
+        final id = s.bucketId;
+        if (id == null) continue; // 未分类没有预算行，跳过
+        spent[id] = (spent[id] ?? 0) +
+            toBaseCents(s.cents, s.currency, book.baseCurrency, rates);
+      }
+    }
+    final plan = proportionalSplitCents(baseBudget, spent);
+    if (plan.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).toast('近 3 个月分类还没有消费，没法按比例分配');
+      }
+      return;
+    }
+
+    final buckets =
+        ref.read(bucketsProvider('out')).valueOrNull ?? const <Bucket>[];
+    final titleOf = {for (final b in buckets) b.id: b.title};
+    final glyphOf = {for (final b in buckets) b.id: b.glyph};
+
+    if (!context.mounted) return;
+    final ok = await showAppSheet<bool>(
+      context: context,
+      title: '按消费分配分类预算',
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                '按近 3 个月的消费比例，把总预算 ¥${centsToText(baseBudget)} 分到各分类：',
+                style: TextStyle(
+                    fontSize: 13, color: Palette.inkFaint(ctx)),
+              ),
+            ),
+          ),
+          // 分类多时别把弹层撑出屏幕：给预览列表一个上限，超出就滚。
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 320),
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  for (final e in plan.entries)
+                    ListTile(
+                      leading: Text(glyphOf[e.key] ?? '🧾',
+                          style: const TextStyle(fontSize: 18)),
+                      title: Text(titleOf[e.key] ?? '已删除分类'),
+                      trailing: Text('¥${centsToText(e.value)}'),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 18),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: const Text('取消'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: const Text('就这样分配'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final bookNow = await ref.read(activeBookProvider.future);
+    final storeNow = await ref.read(storeProvider.future);
+    for (final e in plan.entries) {
+      await storeNow.setBucketBudget(bookNow.id, month, e.key, e.value);
+    }
+    bumpRevision(ref);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).toast('已按消费比例设置 ${plan.length} 个分类预算');
+    }
   }
 }
 

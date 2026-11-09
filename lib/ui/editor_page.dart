@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'app_glyph.dart';
 import '../core/currency.dart';
 import '../core/rules.dart';
+import '../core/scheme.dart';
 import '../data/store.dart';
 import '../services/attachment_service.dart';
 import '../services/app_log.dart';
@@ -34,9 +35,13 @@ import 'wheel_date_picker.dart';
 /// 「债务」tab 也是异类：它不生成流水，而是记一条待收/待还（独立的 debts 表），
 /// 所以点了之后弹的是借贷表单，不是金额面板。
 class EntryEditorPage extends ConsumerStatefulWidget {
-  const EntryEditorPage({super.key, this.existing});
+  const EntryEditorPage({super.key, this.existing, this.schemeDraft});
 
   final Entry? existing;
+
+  /// URL Scheme 带进来的预填草稿（jianji://add?...）。
+  /// 只在新建模式生效；参数只在页面打开时消费一次，之后与手动记账无异。
+  final SchemeAddDraft? schemeDraft;
 
   @override
   ConsumerState<EntryEditorPage> createState() => _EntryEditorPageState();
@@ -44,14 +49,21 @@ class EntryEditorPage extends ConsumerStatefulWidget {
 
 class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
     with SingleTickerProviderStateMixin {
+  /// 初始 tab：编辑已有流水按其流向；scheme 带了 flow=in 时直接进收入 tab。
+  int get _initialTabIndex {
+    switch (widget.existing?.flow) {
+      case 'in':
+        return 1;
+      case 'transfer':
+        return 2;
+    }
+    return widget.schemeDraft?.flow == 'in' ? 1 : 0;
+  }
+
   late final TabController _tab = TabController(
     length: 4,
     vsync: this,
-    initialIndex: switch (widget.existing?.flow) {
-      'in' => 1,
-      'transfer' => 2,
-      _ => 0,
-    },
+    initialIndex: _initialTabIndex,
   );
 
   /// 当前所在的 tab。
@@ -59,11 +71,7 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
   /// 不能只靠 `_flow` 判断：债务 tab 不对应任何 flow，
   /// 停在债务 tab 时 `_flow` 还是上一个 tab 的值，
   /// 光看 `_flow` 会把底部金额面板继续画出来（面板盖在债务页上）。
-  late int _tabIndex = switch (widget.existing?.flow) {
-    'in' => 1,
-    'transfer' => 2,
-    _ => 0,
-  };
+  late int _tabIndex = _initialTabIndex;
 
   bool get _isEdit => widget.existing != null;
 
@@ -124,24 +132,119 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
     super.initState();
     _memoCtrl = TextEditingController();
     _tab.addListener(_onTabChanged);
-    // 编辑模式：分类已定，进入页面就直接弹金额面板
     if (_isEdit) {
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
+      _initEditMode();
+    } else if (widget.schemeDraft != null) {
+      _initSchemeDraft(widget.schemeDraft!);
+    }
+  }
+
+  /// 编辑模式：分类已定，进入页面就直接弹金额面板
+  void _initEditMode() {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      final e = widget.existing!;
+      Bucket? bucket;
+      if (e.flow != 'transfer') {
+        final buckets = await ref
+            .read(bucketsProvider(e.flow).future)
+            .catchError((_) => <Bucket>[]);
+        for (final b in buckets) {
+          if (b.id == e.bucketId) bucket = b;
+        }
+      }
+      if (!mounted) return;
+      await _openSheet(e.flow, bucket: bucket, editing: e);
+    });
+  }
+
+  /// URL Scheme 预填（jianji://add?...）。
+  ///
+  /// 同步字段直接落草稿；分类/账户按名字匹配要查库，放首帧后做。
+  /// 匹配不到就保持默认（分类=上次分类、账户=上次账户），绝不因为
+  /// URL 里写错一个名字而拒绝记账。
+  /// auto=1 时在匹配完成后自动落库 —— _saveDraft 自带全部校验，
+  /// 校验不过会留在编辑器让人补，不会静默丢账。
+  void _initSchemeDraft(SchemeAddDraft d) {
+    setState(() {
+      _flow = d.flow;
+      // 裸 add（桌面快捷方式，amountCents=0）：金额留空让人填。
+      _amount = d.amountCents > 0 ? d.amountText : '';
+      if (d.memo.isNotEmpty) _memoCtrl.text = d.memo;
+      if (d.day != null) _day = d.day!;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      if (d.bucketName != null) {
+        final buckets = await ref
+            .read(bucketsProvider(d.flow).future)
+            .catchError((_) => <Bucket>[]);
         if (!mounted) return;
-        final e = widget.existing!;
-        Bucket? bucket;
-        if (e.flow != 'transfer') {
-          final buckets = await ref
-              .read(bucketsProvider(e.flow).future)
-              .catchError((_) => <Bucket>[]);
-          for (final b in buckets) {
-            if (b.id == e.bucketId) bucket = b;
+        Bucket? hit;
+        for (final b in buckets) {
+          if (b.title == d.bucketName) {
+            hit = b;
+            break;
           }
         }
-        if (!mounted) return;
-        await _openSheet(e.flow, bucket: bucket, editing: e);
-      });
-    }
+        hit ??= buckets
+            .where((b) => b.title.startsWith(d.bucketName!))
+            .firstOrNull;
+        final bucketHit = hit;
+        if (bucketHit != null) {
+          setState(() {
+            _bucketId = bucketHit.id;
+            _bucketTitle = bucketHit.title;
+            _bucketGlyph = bucketHit.glyph;
+            _bucketByFlow[d.flow] = (
+              id: bucketHit.id,
+              title: bucketHit.title,
+              glyph: bucketHit.glyph,
+            );
+          });
+        }
+      }
+      // ⚠️ 必须 await future 而不是读 valueOrNull：auto 落库发生在首帧后，
+      // 那一刻账户/分类很可能还在加载中。valueOrNull 拿到 null 会让
+      // _saveDraft 误判「一个账户都没有」，把用户带去新建账户页。
+      final pockets = await ref
+          .read(pocketsProvider.future)
+          .catchError((_) => <Pocket>[]);
+      if (!mounted) return;
+      if (d.pocketName != null) {
+        Pocket? hit;
+        for (final p in pockets) {
+          if (!p.archived && p.title == d.pocketName) {
+            hit = p;
+            break;
+          }
+        }
+        hit ??= pockets
+            .where((p) => !p.archived && p.title.startsWith(d.pocketName!))
+            .firstOrNull;
+        final pocketHit = hit;
+        if (pocketHit != null) {
+          setState(() => _pocketId = pocketHit.id);
+        }
+      }
+      // 名字没给、或者没匹配上：自己补默认账户（上次用过的 → 设置里的默认
+      // → 第一个），不等 build 里那个 postFrame —— 它注册得比这里晚，
+      // auto 落库等不到它。
+      if (_pocketId == null) {
+        final usable = pockets.where((p) => !p.archived).toList();
+        if (usable.isNotEmpty) {
+          final last = ref.read(settingsProvider).lastPocketId;
+          final preferred = ref.read(settingsProvider).defaultPocketId;
+          final pick = usable.where((p) => p.id == last).firstOrNull ??
+              usable.where((p) => p.id == preferred).firstOrNull ??
+              usable.first;
+          setState(() => _pocketId = pick.id);
+        }
+      }
+      if (d.auto && mounted) {
+        await _saveDraft();
+      }
+    });
   }
 
   /// 优惠 / 折扣：走 App 自己的金额键盘（和转账那份共用 editFeeOrDiscount）。

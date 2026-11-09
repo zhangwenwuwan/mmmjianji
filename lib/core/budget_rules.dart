@@ -49,3 +49,64 @@ int overFromPrevCents({required int base, required int carry}) {
   final v = base + carry;
   return v < 0 ? -v : 0;
 }
+
+// ---------------------------------------------------------------------------
+// 智能建议（2026-11-09）：给「设多少」一个数字锚点，而不是让用户对着空框发呆。
+// 全部是纯函数：给输入出数字，不查库、不改状态。
+// ---------------------------------------------------------------------------
+
+/// 按近几个月的消费算建议预算（分）。
+///
+/// [recentSpents] 填近 3 个月的实际支出（0 = 那个月没消费）。
+/// 规则：只平均**有消费**的月份（没消费的月份拉低平均值，
+/// 会建议出一个明显不够花的数字）；全没消费 → 0（没有历史就不建议）。
+/// 平均值向上取整到整百元 —— 预算是心理锚点，「3217 元」这种精确数
+/// 没有锚定价值，「3200」才有；向上是为了不建议出「必然超支」的数。
+int suggestBudgetCents(List<int> recentSpents) {
+  final valid = recentSpents.where((s) => s > 0).toList();
+  if (valid.isEmpty) return 0;
+  final avg = valid.reduce((a, b) => a + b) ~/ valid.length;
+  if (avg <= 0) return 0;
+  const step = 10000; // 整百元
+  return (avg + step - 1) ~/ step * step;
+}
+
+/// 把总预算按消费比例分到各分类（最大余数法）。
+///
+/// [spentByBucket] 各分类近 3 个月的消费（分，按账本主币折算）。
+/// 规则：
+/// - 消费为 0 的分类不参与（给没花钱的分类设预算只会让进度条全绿，没有意义）；
+/// - 分摊结果去掉 0 和负数（比例极小的分类宁可不给，别建 0 元预算行）；
+/// - 最大余数法保证 Σ结果 == total（四舍五入做不到）。
+Map<int, int> proportionalSplitCents(int total, Map<int, int> spentByBucket) {
+  final parts = spentByBucket.entries.where((e) => e.value > 0).toList();
+  if (total <= 0 || parts.isEmpty) return const {};
+  final sum = parts.fold<int>(0, (a, e) => a + e.value);
+  if (sum <= 0) return const {};
+
+  final exact = <int, double>{};
+  final floor = <int, int>{};
+  for (final e in parts) {
+    final v = total * e.value / sum;
+    exact[e.key] = v;
+    floor[e.key] = v.floor();
+  }
+  // 剩下的分（floor 丢掉的小数部分合计，最多 parts.length 分）
+  var remainder = total - floor.values.fold(0, (a, b) => a + b);
+  // 余数给小数部分最大的；小数部分相同给消费大的（多花的分类多拿一点）
+  final order = [...parts]..sort((a, b) {
+      final fa = exact[a.key]! - floor[a.key]!;
+      final fb = exact[b.key]! - floor[b.key]!;
+      final cmp = fb.compareTo(fa);
+      if (cmp != 0) return cmp;
+      return b.value.compareTo(a.value);
+    });
+  final result = {...floor};
+  for (final e in order) {
+    if (remainder <= 0) break;
+    result[e.key] = result[e.key]! + 1;
+    remainder--;
+  }
+  result.removeWhere((_, v) => v <= 0);
+  return result;
+}

@@ -329,6 +329,37 @@ final budgetProvider = FutureProvider<int>((ref) async {
   return store.budgetOf(book.id, month);
 });
 
+/// 预算智能建议（2026-11-09）：给「设多少」一个数字锚点。
+///
+/// - [BudgetSuggestion.suggestCents]：所看月份前 3 个月的消费平均（纯函数
+///   [suggestBudgetCents] 出数），0 = 近三月没消费，不建议；
+/// - [BudgetSuggestion.prevBudgetCents]：前一个月的基础预算，0 = 上月没设。
+///
+/// 口径注意：消费历史取 `monthTotalsByFlow` 的支出（已折主币、剔回收站、
+/// 剔「不计入收支」、扣 AA 他人份额），和预算进度条用的「不计入预算」口径
+/// 差一层 —— 建议本来就是锚点不是承诺，这个差异可接受。
+final budgetSuggestionProvider =
+    FutureProvider<BudgetSuggestion>((ref) async {
+  final store = await ref.watch(storeProvider.future);
+  final book = await ref.watch(activeBookProvider.future);
+  final month = ref.watch(monthProvider);
+  ref.watch(revisionProvider);
+  DateTime prev(int back) => DateTime(month.year, month.month - back);
+  final prevBudget = await store.budgetOf(book.id, prev(1));
+  final s1 =
+      (await store.monthTotalsByFlow(book.id, prev(1)))['out'] ?? 0;
+  final s2 =
+      (await store.monthTotalsByFlow(book.id, prev(2)))['out'] ?? 0;
+  final s3 =
+      (await store.monthTotalsByFlow(book.id, prev(3)))['out'] ?? 0;
+  return (
+    suggestCents: suggestBudgetCents([s1, s2, s3]),
+    prevBudgetCents: prevBudget,
+  );
+});
+
+typedef BudgetSuggestion = ({int suggestCents, int prevBudgetCents});
+
 /// 上期预算结转到本期的金额（分，可为负）。
 ///
 /// 只在上期**确实设过预算**时才结转（见 core/budget_rules.dart 的说明），

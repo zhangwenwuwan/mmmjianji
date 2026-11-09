@@ -1,17 +1,24 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'core/scheme.dart';
 import 'services/app_log.dart';
 import 'services/offline_speech.dart';
 import 'services/reminder_service.dart';
+import 'services/scheme_service.dart';
 import 'state/settings.dart';
 import 'ui/boot_reveal.dart';
+import 'ui/editor_page.dart';
 import 'ui/lock_gate.dart';
+import 'ui/motion.dart' show AppPageRoute;
 import 'ui/shell.dart';
 import 'ui/splash_page.dart';
 import 'ui/theme.dart';
+import 'ui/voice_entry_page.dart';
 import 'ui/welcome_page.dart';
 
 void main() {
@@ -33,11 +40,130 @@ void main() {
   runApp(const ProviderScope(child: JianjiApp()));
 }
 
-class JianjiApp extends ConsumerWidget {
+class JianjiApp extends ConsumerStatefulWidget {
   const JianjiApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<JianjiApp> createState() => _JianjiAppState();
+}
+
+/// scheme 去重：同一链接 2 秒内只处理一次。
+///
+/// 冷启动（pullInitial）和热启动（onScheme 回调）可能先后送来同一条链接
+/// （例如冷启动瞬间系统又补发了一次 intent），共用同一份去重状态，
+/// 否则一次链接开两个页面。
+String? _lastScheme;
+DateTime _lastSchemeAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+bool _schemeSeen(String raw) {
+  final now = DateTime.now();
+  if (raw == _lastScheme &&
+      now.difference(_lastSchemeAt) < const Duration(seconds: 2)) {
+    return true;
+  }
+  _lastScheme = raw;
+  _lastSchemeAt = now;
+  return false;
+}
+
+/// 规范键：把「完整 URI」和「引擎剥掉 scheme 的残体」折算成同一个串，
+/// 否则同一链接从两条路进来（`jianji:///voice` 与 `/voice`）会漏判重复，
+/// 开两个页面。以 path+query 为准（host 形式折算成 /host）。
+String _canonicalScheme(String raw) {
+  final Uri uri;
+  try {
+    uri = Uri.parse(raw.trim());
+  } on FormatException {
+    return raw;
+  }
+  final path = uri.host.isNotEmpty ? '/${uri.host}' : uri.path;
+  final q = uri.hasQuery && uri.query.isNotEmpty ? '?${uri.query}' : '';
+  return '$path$q';
+}
+
+/// 透明直通路由：链接不认识/已处理时用它垫住框架（onGenerateRoute
+/// 返回 null 会让框架抛 onUnknownRoute 异常）。
+Route<dynamic> _passThroughRoute(RouteSettings settings) => PageRouteBuilder(
+      settings: settings,
+      opaque: false,
+      pageBuilder: (_, __, ___) => const SizedBox.shrink(),
+    );
+
+/// 把一条 jianji:// 链接变成路由。
+///
+/// 引擎热启动转发会把链接剥掉 scheme（`jianji:///voice` → `/voice`、
+/// `jianji:///add?...` → `/add?...`），所以 `/` 开头的残体也交给
+/// parseScheme 试试。残体不认识时给透明直通路由（返回 null 会让框架
+/// 抛 onUnknownRoute 异常）；非 jianji 的普通路由名维持原样返回 null。
+Route<dynamic>? schemeRoute(RouteSettings settings) {
+  final name = settings.name;
+  if (name == null) return null;
+  final isSchemeish = name.startsWith('jianji://') ||
+      (name.startsWith('/') && parseScheme(name) != null);
+  if (!isSchemeish && !name.startsWith('/')) return null;
+  final cmd = parseScheme(name);
+  if (cmd == null) {
+    // 不认识的 jianji 链接 / 剥残体：透明直通路由，home 照常可见。
+    return _passThroughRoute(settings);
+  }
+  if (_schemeSeen(_canonicalScheme(name))) {
+    // 已处理过（冷启动兜底和引擎转发同时到）：给透明直通路由，
+    // 返回 null 会让框架抛 onUnknownRoute 异常。
+    return _passThroughRoute(settings);
+  }
+  AppLog.info('scheme', '打开：$name');
+  switch (cmd.action) {
+    case 'add':
+      return AppPageRoute(page: EntryEditorPage(schemeDraft: cmd.draft));
+    case 'voice':
+      return AppPageRoute(page: const VoiceEntryPage());
+  }
+  return null;
+}
+
+class _JianjiAppState extends ConsumerState<JianjiApp> {
+  final _navigatorKey = GlobalKey<NavigatorState>();
+
+  @override
+  void initState() {
+    super.initState();
+    // 冷/热启动链接统一投递：
+    //  - 冷启动：原生存着 launch intent 的 jianji://，Dart 就绪后 pullInitial 来取；
+    //  - 热启动：原生 onNewIntent 经 'onScheme' 回调把原始完整 URI 推过来。
+    // （引擎自带的转发会剥掉 scheme，不可用，见 MainActivity.onNewIntent 注释。）
+    // 两条路共用 [_schemeSeen] 去重。
+    SchemeService.install(_deliverScheme);
+    unawaited(SchemeService.pullInitial().then(_deliverScheme));
+  }
+
+  /// 把一条原始 URI 变成页面推上栈。
+  ///
+  /// 冷启动时 initState 比 Navigator 首帧还早，`_navigatorKey.currentState`
+  /// 可能还是 null —— 轮询等它就绪（最多 1 秒），而不是直接丢掉链接。
+  Future<void> _deliverScheme(String? raw) async {
+    if (raw == null || raw.isEmpty) return;
+    final cmd = parseScheme(raw);
+    if (cmd == null || _schemeSeen(_canonicalScheme(raw))) return;
+    for (var i = 0; i < 20; i++) {
+      final nav = _navigatorKey.currentState;
+      if (nav != null) {
+        AppLog.info('scheme', '打开：$raw');
+        switch (cmd.action) {
+          case 'add':
+            unawaited(nav.push(
+                AppPageRoute(page: EntryEditorPage(schemeDraft: cmd.draft))));
+          case 'voice':
+            unawaited(nav.push(AppPageRoute(page: const VoiceEntryPage())));
+        }
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+    AppLog.warn('scheme', 'Navigator 未就绪，链接丢弃：$raw');
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final settings = ref.watch(settingsProvider);
     // 封面取色生效时，用它接管全 App 配色（settings.coverSeedColor 已内置
     // 「有封面 + 取到色 + 用户没关跟随」三重判断）。
@@ -45,6 +171,16 @@ class JianjiApp extends ConsumerWidget {
     return MaterialApp(
       title: '简记',
       debugShowCheckedModeBanner: false,
+      navigatorKey: _navigatorKey,
+      // 原生层覆盖 getInitialRoute() 返回 "/"，引擎不会把 jianji:// 链接
+      // 当初始路由（否则首页不进栈、目标页成根路由、按返回黑屏）；
+      // 深链接页面由 SchemeService 推在首页之上。
+      // 注意：框架的 _initialRouteName 会无条件覆盖 initialRoute，光在 Dart
+      // 侧写 initialRoute:'/' 没用，必须在原生侧挡住。
+      initialRoute: '/',
+      // 兜底：万一某条路把完整 jianji:// URI 送进框架路由（pushRoute），
+      // 也能接住。onGenerateRoute 返回 null 会让框架抛 onUnknownRoute 异常。
+      onGenerateRoute: schemeRoute,
       theme: buildTheme(Brightness.light,
           paletteId: settings.paletteId,
           seedOverride: seed,

@@ -395,6 +395,15 @@ if [[ "$BUILD_TYPE" == "release" ]]; then
   echo "✅ ABI 校验通过：仅 arm64-v8a"
 
   APKSIGNER="$(ls -d "${ANDROID_HOME:-/c/src/android-sdk}"/build-tools/*/apksigner.bat 2>/dev/null | sort -V | tail -1 || true)"
+  # apksigner.bat 是批处理，内部要起 java —— 没有 JAVA_HOME 会静默失败
+  # （输出为空 → GOT 为空串，曾被误报成「签名不对」；2026-11-09 修）。
+  # 构建环境没注入 JAVA_HOME 时在这里自动发现一个 JDK。
+  if [[ -z "$JAVA_HOME" || ! -x "$JAVA_HOME/bin/java.exe" ]]; then
+    JAVA_HOME="$(ls -d "/c/Program Files/Microsoft"/jdk-* "/c/Program Files/Java"/jdk-* \
+      "/c/Program Files/Android/Android Studio/jbr" 2>/dev/null \
+      | while read -r d; do [[ -x "$d/bin/java.exe" ]] && echo "$d" && break; done | head -1 || true)"
+    export JAVA_HOME
+  fi
   # jianji-release.jks（DN=CN=JianJi）的 SHA-1，小写无冒号
   WANT="95f4c153483dfa1618a2ec993e8a0fbab7580d5d"
   # ⚠️ 找不到 apksigner 就**不能交付**（2026-11-08 审计 P1-5）。
@@ -405,9 +414,18 @@ if [[ "$BUILD_TYPE" == "release" ]]; then
     echo "   签名无法校验，拒绝交付。装 build-tools 或修好 ANDROID_HOME 再跑。"
     exit 1
   fi
-  GOT="$("$APKSIGNER" verify --print-certs "$OUT" 2>/dev/null \
-    | grep -i "SHA-1 digest" | head -1 \
+  RAW_CERTS="$("$APKSIGNER" verify --print-certs "$OUT" 2>&1 || true)"
+  GOT="$(printf '%s' "$RAW_CERTS" | grep -i "SHA-1 digest" | head -1 \
     | sed -E 's/.*digest:[[:space:]]*//' | tr -d ':' | tr 'A-F' 'a-f' || true)"
+  if [[ -z "$GOT" ]]; then
+    # 工具本身没跑起来（多半是 JAVA_HOME 缺失），和「签名不匹配」是两回事
+    echo "❌ apksigner 无输出（工具没跑起来，不是签名问题）。"
+    echo "   JAVA_HOME=$JAVA_HOME"
+    printf '%s\n' "$RAW_CERTS" | head -5
+    echo "   修好 JAVA_HOME 后重跑；或手动核对："
+    echo "   apksigner verify --print-certs $OUT"
+    exit 1
+  fi
   if [[ "$GOT" != "$WANT" ]]; then
     echo "❌ 签名不对！期望 jianji-release.jks ($WANT)，实际『$GOT』"
     echo "   检查 android/key.properties 与 android/jianji-release.jks 是否到位。"

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 桌面长按快捷方式的文案（shortcuts.xml 引用）。 -->
+<resources>
+    <string name="shortcut_add_short">记一笔</string>
+    <string name="shortcut_add_long">快速记一笔</string>
+    <string name="shortcut_voice_short">语音记账</string>
+    <string name="shortcut_voice_long">语音说一笔</string>
+</resources>
