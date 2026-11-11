@@ -8,6 +8,7 @@ import '../data/store.dart';
 import '../state/ledger_state.dart';
 import '../state/settings.dart';
 import 'common.dart';
+import 'motion.dart';
 import 'theme.dart';
 
 // ============================================================ 现金流预测
@@ -17,23 +18,47 @@ class ForecastPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final recent =
-        ref.watch(recentEntriesProvider).valueOrNull ?? const <Entry>[];
-    final balances = ref.watch(balancesProvider).valueOrNull ?? const [];
+    final recentAsync = ref.watch(recentEntriesProvider);
+    final balancesAsync = ref.watch(balancesProvider);
+    final recent = recentAsync.valueOrNull;
+    final balances = balancesAsync.valueOrNull;
     final book = ref.watch(activeBookProvider).valueOrNull;
     final base = book?.baseCurrency ?? 'CNY';
     final rates = ref.watch(ratesProvider).valueOrNull ?? const {};
     final settings = ref.watch(settingsProvider);
 
-    // 净资产：资产 - 负债（折算主币）。
-    // 「不计入总资产」的账户在这里必须跳过 —— 它只是从列表里不消失，
-    // 不代表该参与净资产/现金流预测。
-    var net = 0;
-    for (final b in balances) {
-      if (!b.pocket.includeInAssets) continue;
-      final cents = toBaseCents(b.balanceCents, b.pocket.currency, base, rates);
-      net += cents;
+    // 之前这里两个 provider 都写成 `valueOrNull ?? const []`，
+    // 于是「还没读完」和「一个账户都没有」长得一模一样：
+    // 首次进本页（资产页没打开过、balances 还没算）会先显示「当前净资产 ¥0」，
+    // 一秒后跳到真实数字 —— 用户看到的就是"金额不对劲"。
+    // 现在加载期给骨架屏，出错给重试，只有真的读完了才渲染数字。
+    if (balances == null || recent == null) {
+      final err = balancesAsync.error ?? recentAsync.error;
+      return Scaffold(
+        appBar: AppBar(title: const Text('现金流预测')),
+        body: err != null
+            ? ErrorRetryView(
+                message: '读取失败',
+                detail: '$err',
+                onRetry: () async {
+                  ref.invalidate(balancesProvider);
+                  ref.invalidate(recentEntriesProvider);
+                },
+              )
+            : ListView(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
+                children: const [
+                  Skeleton(height: 132, radius: 8),
+                  SizedBox(height: 14),
+                  Skeleton(height: 92, radius: 8),
+                ],
+              ),
+      );
     }
+
+    // 净资产：资产 − 负债（折算主币）。口径与资产页合计完全一致，
+    // 具体算法抽在 insight_calc.netWorthOfBalances（负债账户取负）。
+    final net = netWorthOfBalances(balances, base, rates);
     final now = DateTime.now();
     final from = now.subtract(const Duration(days: 30));
     var expense = 0;
@@ -58,9 +83,11 @@ class ForecastPage extends ConsumerWidget {
       sampleDays: 30,
     );
 
+    // c.abs() 会把负号吃掉，必须自己补 —— 原来三元两支都是空串，
+    // 净资产为负时显示成和正数一模一样的「¥12,345」（只有颜色变红）。
     String money(int c) => settings.hideAmounts
         ? '****'
-        : '${settings.symbol}${centsToText(c.abs())}${c < 0 ? '' : ''}';
+        : '${c < 0 ? '-' : ''}${settings.symbol}${centsToText(c.abs())}';
 
     return Scaffold(
       appBar: AppBar(title: const Text('现金流预测')),

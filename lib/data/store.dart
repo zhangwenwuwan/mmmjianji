@@ -15,6 +15,7 @@ library;
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
@@ -4109,7 +4110,7 @@ class LedgerStore {
   }
 
   Future<String> exportJson() async {
-    final payload = {
+    final Map<String, Object?> payload = {
       'app': 'jianji',
       'schema': _version,
       'exportedAt': DateTime.now().toIso8601String(),
@@ -4128,7 +4129,11 @@ class LedgerStore {
       'templates': await _db.query('templates'),
       'monthNotes': await _db.query('month_notes'),
     };
-    return const JsonEncoder.withIndent('  ').convert(payload);
+    // ⚠️ 带缩进的整库 JSON 编码是纯 CPU 密集活：函数标了 async 并不会让它
+    // 让出主 isolate（await 已经在上面全部结束）。几万条流水时这行会冻住
+    // 首帧后的几百毫秒，连进度圈一起停。挪到后台 isolate，主线程只等结果。
+    return Isolate.run(
+        () => const JsonEncoder.withIndent('  ').convert(payload));
   }
 
   Future<void> importJson(String raw) async {

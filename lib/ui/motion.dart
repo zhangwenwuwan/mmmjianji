@@ -576,23 +576,33 @@ class _AppSheetBody extends StatelessWidget {
 
 /// 保存成功对勾（对应原版 save_success_overlay）。
 ///
-/// 在 rootOverlay 上弹一个圆底对勾：缩放进场（带轻微回弹）→ 停一下 → 淡出，
-/// 不阻塞后续的关闭流程。连续记账时不弹，避免打断录入。
-Future<void> showSaveSuccessCheck(BuildContext context) async {
+/// 在 rootOverlay 上弹一个圆底对勾：缩放进场（带轻微回弹）→ 停一下 → 淡出。
+/// **立刻返回**：以前这里 `await Future.delayed(760ms)` 才让调用方 pop，
+/// 注释写着「不阻塞关闭流程」但实现是反的，用户点了保存会愣 0.8 秒。
+/// 现在由 _CheckBurst 动画播完自己摘掉 overlay，路由该关就关。
+/// 连续记账（再记一笔）时仍不弹，避免打断录入。
+void showSaveSuccessCheck(BuildContext context) {
   if (MediaQuery.of(context).disableAnimations) return;
   final overlay = Overlay.maybeOf(context, rootOverlay: true);
   if (overlay == null) return;
   late OverlayEntry entry;
   entry = OverlayEntry(
-    builder: (_) => const IgnorePointer(child: Center(child: _CheckBurst())),
+    builder: (_) => IgnorePointer(
+      child: Center(
+        child: _CheckBurst(onDone: () {
+          if (entry.mounted) entry.remove();
+        }),
+      ),
+    ),
   );
   overlay.insert(entry);
-  await Future<void>.delayed(const Duration(milliseconds: 760));
-  if (entry.mounted) entry.remove();
 }
 
 class _CheckBurst extends StatefulWidget {
-  const _CheckBurst();
+  const _CheckBurst({required this.onDone});
+
+  /// 动画播完的回调，用来摘掉 overlay（不能靠外层 await 计时）。
+  final VoidCallback onDone;
 
   @override
   State<_CheckBurst> createState() => _CheckBurstState();
@@ -608,6 +618,13 @@ class _CheckBurstState extends State<_CheckBurst>
   @override
   void initState() {
     super.initState();
+    // 播完自己摘掉 overlay。用 microtask 等状态通知走完再 remove，
+    // 否则会在 controller 的 status 回调里 dispose 自己。
+    _ctrl.addStatusListener((status) {
+      if (status == AnimationStatus.completed) {
+        Future.microtask(widget.onDone);
+      }
+    });
     _ctrl.forward();
   }
 

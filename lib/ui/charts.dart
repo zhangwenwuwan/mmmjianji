@@ -190,29 +190,34 @@ class _DonutChartState extends State<DonutChart>
               ),
             ),
           ),
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // 选中扇区时中心换成「这一块的金额」，下面写上名字和占比 ——
-              // 以前点了只有扇区弹一下，中心永远显示总额，
-              // 等于点了个寂寞（想知道某块多少钱还得自己按比例算）。
-              Text(
-                widget.hideAmounts
-                    ? '****'
-                    : '${widget.symbol}${centsToText(_selected >= 0
-                        ? widget.slices[_selected].cents
-                        : _displayCents)}',
-                style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w700,
-                  color: Palette.ink(context),
-                  fontFeatures: const [FontFeature.tabularFigures()],
+          // 中心金额必须跟着 _progress 逐帧重建：只包 CustomPaint 的话，
+          // 600ms 扫过动画里 _displayCents 一直停在 0，看起来像金额算错。
+          AnimatedBuilder(
+            animation: _progress,
+            builder: (context, _) => Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // 选中扇区时中心换成「这一块的金额」，下面写上名字和占比 ——
+                // 以前点了只有扇区弹一下，中心永远显示总额，
+                // 等于点了个寂寞（想知道某块多少钱还得自己按比例算）。
+                Text(
+                  widget.hideAmounts
+                      ? '****'
+                      : '${widget.symbol}${centsToText(_selected >= 0
+                          ? widget.slices[_selected].cents
+                          : _displayCents)}',
+                  style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    color: Palette.ink(context),
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
                 ),
-              ),
-              const SizedBox(height: 2),
-              Text(_centerLabel, style: TextStyle(
-                  fontSize: 12, color: Palette.inkFaint(context))),
-            ],
+                const SizedBox(height: 2),
+                Text(_centerLabel, style: TextStyle(
+                    fontSize: 12, color: Palette.inkFaint(context))),
+              ],
+            ),
           ),
         ],
       ),

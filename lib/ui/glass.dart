@@ -4,6 +4,19 @@ import 'package:flutter/material.dart';
 
 import 'theme.dart';
 
+/// 按模糊半径缓存 [ImageFilter]。
+///
+/// `RenderBackdropFilter.filter` 的 setter 用 `!=` 判断变化，而每次 build 里
+/// `ImageFilter.blur(...)` 都是新对象 → 判定「变了」→ `markNeedsPaint()`
+/// → 底栏动画的每一帧都重做一次全宽离屏模糊（本项目最贵的常规效果）。
+/// blur 取值就那么几个，缓存住即可。
+final Map<double, ImageFilter> _blurFilters = <double, ImageFilter>{};
+
+ImageFilter _blurFilter(double sigma) => _blurFilters.putIfAbsent(
+      sigma,
+      () => ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+    );
+
 /// 毛玻璃条 / 面板。
 ///
 /// **只用在「下面有内容滚动」的地方**：首页顶栏、底部导航、底部弹窗。
@@ -106,7 +119,7 @@ class Glass extends StatelessWidget {
     );
 
     final blurred = BackdropFilter(
-      filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+      filter: _blurFilter(blur),
       child: content,
     );
 

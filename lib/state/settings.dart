@@ -39,6 +39,7 @@ class AppSettings {
     this.coverSeed = 0,
     this.coverLuminance = 0.5,
     this.coverFollow = true,
+    this.coverActive = false,
     this.budgetCarryUnused = false,
     this.budgetDeductOver = false,
     this.homeOrder = '',
@@ -121,6 +122,13 @@ class AppSettings {
 
   /// 是否让封面主色接管全 App 配色。关掉就继续用手动选的配色方案。
   final bool coverFollow;
+
+  /// 封面图此刻是否真的存在。**缓存值，不是实时磁盘查询**：
+  /// 只在补水（_hydrate，一次性）与 setCover / clearCover 时算，
+  /// 之前 [hasCover] 每次 build 都 File.existsSync()，而 MaterialApp 顶层
+  /// 每次 settings 变化都会读 coverSeedColor —— 拖一下语音按钮、记完一笔账
+  /// 都要撞一次同步磁盘 stat，还会连带重建两套主题。
+  final bool coverActive;
 
   /// 预算结转：上月没用完的预算累加到本月
   final bool budgetCarryUnused;
@@ -252,9 +260,8 @@ class AppSettings {
   ///
   /// 早期版本只判路径非空，结果封面图被删后 coverPath 仍残留，
   /// 「跟随封面换肤」会拿一张不存在的图继续接管全 App 配色（隐形改色）。
-  /// 这里补上文件存在性判断，图没了就当没封面处理。
-  bool get hasCover =>
-      coverPath.isNotEmpty && File(coverPath).existsSync();
+  /// 现在由 [coverActive] 承担这个判断：补水时校验一次，之后不再读盘。
+  bool get hasCover => coverActive;
 
   /// 封面主色是否真的在生效（有封面 + 有取到色 + 用户没关掉跟随）。
   bool get coverThemeActive => hasCover && coverSeed != 0 && coverFollow;
@@ -281,6 +288,7 @@ class AppSettings {
     int? coverSeed,
     double? coverLuminance,
     bool? coverFollow,
+    bool? coverActive,
     bool? budgetCarryUnused,
     bool? budgetDeductOver,
     String? homeOrder,
@@ -320,6 +328,7 @@ class AppSettings {
         coverSeed: coverSeed ?? this.coverSeed,
         coverLuminance: coverLuminance ?? this.coverLuminance,
         coverFollow: coverFollow ?? this.coverFollow,
+        coverActive: coverActive ?? this.coverActive,
         budgetCarryUnused: budgetCarryUnused ?? this.budgetCarryUnused,
         budgetDeductOver: budgetDeductOver ?? this.budgetDeductOver,
         homeOrder: homeOrder ?? this.homeOrder,
@@ -440,11 +449,10 @@ class SettingsNotifier extends Notifier<AppSettings> {
       final prefs = await SharedPreferences.getInstance();
       _prefs = prefs;
       if (!_touched) state = _read(prefs);
-      // 自愈：封面图被删后，hasCover 已改为判文件存在性，不会再去接管配色；
-      // 但残留的 coverPath 仍会误导其它读取方。启动时若图已不存在就清掉，
-      // 避免「封面设置入口已撤、却永远关不掉」的卡死态。
-      if (state.coverPath.isNotEmpty &&
-          !File(state.coverPath).existsSync()) {
+      // 自愈：封面图被删后，coverActive 已在补水时判过一次文件存在性，
+      // 不会再去接管配色；但残留的 coverPath 仍会误导其它读取方。
+      // 启动时若图已不存在就清掉，避免「封面设置入口已撤、却永远关不掉」。
+      if (state.coverPath.isNotEmpty && !state.coverActive) {
         await clearCover();
       }
     } catch (e) {
@@ -454,6 +462,15 @@ class SettingsNotifier extends Notifier<AppSettings> {
     // 成功失败都要标记：否则 LockGate 会一直停在「加载中」，
     // 那就成了「锁坏了打不开」比「锁没锁」更糟。
     ref.read(settingsHydratedProvider.notifier).state = true;
+  }
+
+  static bool _coverFileExists(String path) {
+    if (path.isEmpty) return false;
+    try {
+      return File(path).existsSync();
+    } catch (_) {
+      return false;
+    }
   }
 
   static AppSettings _read(SharedPreferences prefs) {
@@ -481,6 +498,8 @@ class SettingsNotifier extends Notifier<AppSettings> {
       coverSeed: prefs.getInt(_kCoverSeed) ?? 0,
       coverLuminance: prefs.getDouble(_kCoverLuminance) ?? 0.5,
       coverFollow: prefs.getBool(_kCoverFollow) ?? true,
+      // 只在补水时校验一次封面文件是否存在，之后 build 只读这个 bool。
+      coverActive: _coverFileExists(prefs.getString(_kCoverPath) ?? ''),
       budgetCarryUnused: prefs.getBool(_kBudgetCarryUnused) ?? false,
       budgetDeductOver: prefs.getBool(_kBudgetDeductOver) ?? false,
       homeOrder: prefs.getString(_kHomeOrder) ?? '',
@@ -641,6 +660,7 @@ class SettingsNotifier extends Notifier<AppSettings> {
       coverPath: path,
       coverSeed: seed,
       coverLuminance: luminance,
+      coverActive: _coverFileExists(path),
     );
     await _setString(_kCoverPath, path);
     await _setInt(_kCoverSeed, seed);
@@ -663,6 +683,7 @@ class SettingsNotifier extends Notifier<AppSettings> {
       coverPath: '',
       coverSeed: 0,
       coverLuminance: 0.5,
+      coverActive: false,
     );
     await _remove(_kCoverPath);
     await _remove(_kCoverSeed);
@@ -737,13 +758,21 @@ class SettingsNotifier extends Notifier<AppSettings> {
   Future<void> setLastBucket(String flow, int id) async {
     await _ready();
     _touched = true;
-    if (flow == 'in') {
-      state = state.copyWith(lastBucketInId: id);
-      await _setInt(_kLastBucketIn, id);
-    } else {
-      state = state.copyWith(lastBucketOutId: id);
-      await _setInt(_kLastBucketOut, id);
+    // ⚠️ 值没变就别 copyWith：AppSettings 没有 ==，每次 copyWith 都会
+    // 通知 54 个 watcher（含根 MaterialApp、预算聚合、小组件同步）。
+    // 保存一笔账会连调 setLastBucket + setLastPocket，两波全量重算纯属浪费。
+    // 偏好仍照常落盘，保证 hydrate 前后状态一致。
+    final same = flow == 'in'
+        ? state.lastBucketInId == id
+        : state.lastBucketOutId == id;
+    if (!same) {
+      if (flow == 'in') {
+        state = state.copyWith(lastBucketInId: id);
+      } else {
+        state = state.copyWith(lastBucketOutId: id);
+      }
     }
+    await _setInt(flow == 'in' ? _kLastBucketIn : _kLastBucketOut, id);
   }
 
   /// 记住「上次记账用的账户」。保存成功后调用（支出 / 收入 / 新建转账）。
@@ -753,7 +782,9 @@ class SettingsNotifier extends Notifier<AppSettings> {
   Future<void> setLastPocket(int id) async {
     await _ready();
     _touched = true;
-    state = state.copyWith(lastPocketId: id);
+    if (state.lastPocketId != id) {
+      state = state.copyWith(lastPocketId: id);
+    }
     await _setInt(_kLastPocket, id);
   }
 

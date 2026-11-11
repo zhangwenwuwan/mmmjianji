@@ -475,20 +475,27 @@ class _TabPageState extends State<_TabPage>
 
   bool get _reduce => MediaQuery.of(context).disableAnimations;
 
+  /// 进场动画只播第一次访问。统计 → 资产 → 统计时，熟悉的页面不该
+  /// 每次都重新淡入+位移 300ms，观感拖沓。
+  bool _played = false;
+
   @override
   void initState() {
     super.initState();
-    // 首帧直接到位：不能一进 App 四个页面一起闪
+    // 首帧直接到位：不能一进 App 四个页面一起闪。
+    // 首页初始就是 active，所以也算「已播过」。
     _ctrl.value = widget.active ? 1.0 : 0.0;
+    if (widget.active) _played = true;
   }
 
   @override
   void didUpdateWidget(covariant _TabPage old) {
     super.didUpdateWidget(old);
     if (widget.active && !old.active) {
-      if (_reduce) {
+      if (_reduce || _played) {
         _ctrl.value = 1.0;
       } else {
+        _played = true;
         _ctrl.forward(from: 0);
       }
     }

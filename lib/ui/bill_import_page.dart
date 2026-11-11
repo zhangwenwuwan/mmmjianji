@@ -1,6 +1,7 @@
 import 'app_glyph.dart';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -47,11 +48,16 @@ class _BillImportPageState extends ConsumerState<BillImportPage> {
       return;
     }
     _ctrl.text = text;
-    _parse();
+    await _parse();
   }
 
-  void _parse() {
-    final result = parseBillCsv(_ctrl.text);
+  Future<void> _parse() async {
+    // 几 MB 的账单逐行切分/日期金额解析是纯 CPU 活，放在按钮回调里会
+    // 直接冻住整页（连 _importing 的转圈都不动）。parseBillCsv 是顶层纯函数、
+    // 输入输出都是基础类型，正好挪去后台 isolate。
+    final text = _ctrl.text;
+    final result = await Isolate.run(() => parseBillCsv(text));
+    if (!mounted) return;
     setState(() => _result = result);
   }
 
@@ -67,9 +73,11 @@ class _BillImportPageState extends ConsumerState<BillImportPage> {
       final f = picked.files.first;
       String text;
       if (f.bytes != null) {
-        text = _decode(f.bytes!);
+        final bytes = f.bytes!;
+        text = await Isolate.run(() => _decode(bytes));
       } else if (f.path != null) {
-        text = _decode(await File(f.path!).readAsBytes());
+        final bytes = await File(f.path!).readAsBytes();
+        text = await Isolate.run(() => _decode(bytes));
       } else {
         _toast('读不到文件内容');
         return;

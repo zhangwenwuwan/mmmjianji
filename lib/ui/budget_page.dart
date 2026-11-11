@@ -676,13 +676,14 @@ class _BucketBudgetRow extends ConsumerWidget {
             // 「历史」单独一个按钮：整行点击是"改预算"（高频、用户预期），
             // 把它改成打开历史会让人每次改预算都多点一下。
             // 用紧凑 constraints 压住默认 48×48，否则每行会被撑高一截。
+            // 但横向给到 44dp：滚动中点「历史」经常点空，纯 32 宽太窄。
             IconButton(
               tooltip: '近 6 个月对比',
               onPressed: () => _showHistory(context, ref),
               iconSize: 18,
               visualDensity: VisualDensity.compact,
               padding: const EdgeInsets.all(6),
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              constraints: const BoxConstraints(minWidth: 44, minHeight: 32),
               icon: Icon(Icons.insights_outlined,
                   color: Palette.inkFaint(context)),
             ),

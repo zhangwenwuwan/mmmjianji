@@ -723,7 +723,8 @@ class _DayHeaderDelegate extends SliverPersistentHeaderDelegate {
             onTap: onReceipt,
             behavior: HitTestBehavior.opaque,
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              // 横向撑到约 44dp 命中区；纵向保持 6，不撑高日期头。
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
               child: Icon(Icons.receipt_long_outlined,
                   size: 16, color: Palette.inkFaint(context)),
             ),

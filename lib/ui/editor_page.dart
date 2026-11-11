@@ -332,7 +332,7 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
       return;
     }
     // 保存成功：先给对勾，再退出编辑器
-    await showSaveSuccessCheck(context);
+    showSaveSuccessCheck(context);
     if (!mounted) return;
     Navigator.of(context).pop(true);
   }
@@ -344,7 +344,7 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
   Future<void> _openDebt() async {
     final saved = await showDebtEditor(context, ref, null);
     if (!mounted || !saved) return;
-    await showSaveSuccessCheck(context);
+    showSaveSuccessCheck(context);
     if (!mounted) return;
     Navigator.of(context).pop(true);
   }
@@ -978,7 +978,7 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
           _day = DateTime.now();
         });
       } else {
-        await showSaveSuccessCheck(context);
+        showSaveSuccessCheck(context);
         if (!mounted) return;
         Navigator.of(context).pop(true);
       }
@@ -1631,7 +1631,7 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
       if (!mounted) return;
       HapticFeedback.lightImpact();
       SystemSound.play(SystemSoundType.click);
-      await showSaveSuccessCheck(context);
+      showSaveSuccessCheck(context);
       if (!mounted) return;
       messenger.toast('已记一笔：${t.title}');
     } catch (e) {

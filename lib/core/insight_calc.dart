@@ -5,9 +5,33 @@
 library;
 
 import '../data/store.dart';
+import 'currency.dart';
 import 'rules.dart';
 
 // ---------------------------------------------------------------- 现金流预测
+
+/// 当前净资产（主币分）= 普通账户余额之和 − 负债账户欠款之和。
+///
+/// ⚠️ 口径必须与资产页的合计（assets_page 的 `net = assets − liabilities`）逐分一致：
+/// [Store.pocketBalances] 里负债账户的 `balanceCents` 是**正数 = 还欠这么多**，
+/// 所以这里必须取负。1.4.68 之前这里写的是无差别 `net += cents`，
+/// 一张欠 8,000 的信用卡会被当成多了 8,000 资产 —— 净资产虚高 16,000，
+/// 连带「7 天后 / 30 天后 / 最低点」全部偏高。
+/// 「不计入总资产」的账户跳过（该开关唯一的语义就是不进任何合计）。
+int netWorthOfBalances(
+  List<({Pocket pocket, int balanceCents})> balances,
+  String baseCurrency,
+  Map<String, double> rates,
+) {
+  var net = 0;
+  for (final b in balances) {
+    if (!b.pocket.includeInAssets) continue;
+    final cents =
+        toBaseCents(b.balanceCents, b.pocket.currency, baseCurrency, rates);
+    net += b.pocket.kind.isLiability ? -cents : cents;
+  }
+  return net;
+}
 
 class Forecast {
   const Forecast({
