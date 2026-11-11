@@ -24,6 +24,28 @@ export PATH="/usr/bin:/bin:$PATH"
 SRC="/c/Users/Administrator/WorkBuddy/记账软件/JianjiApp"
 BC="/c/builds/jj"
 
+# 0) 先验 JAVA_HOME —— 必须在 Gradle 之前。
+#
+# ⚠️ 原来只在签名门（第 6 步）里才发现 JDK 不可用，而 Gradle 早就先炸了：
+# `JAVA_HOME is set to an invalid directory` → assembleRelease 122ms 失败，
+# 此时全量测试已经跑完 15 分钟，白等一轮（2026-11-11 实测）。
+# 这里只要设了但指不到 bin/java.exe，就直接换成自动发现的 JDK。
+if [[ -n "${JAVA_HOME:-}" && ! -x "$JAVA_HOME/bin/java.exe" ]]; then
+  echo "⚠️  JAVA_HOME=$JAVA_HOME 无效（找不到 bin/java.exe），改用自动发现的 JDK"
+  unset JAVA_HOME
+fi
+if [[ -z "${JAVA_HOME:-}" ]]; then
+  for cand in "/c/Program Files/Microsoft"/jdk-* \
+              "/c/Program Files/Java"/jdk-* \
+              "/c/Program Files/Android/Android Studio/jbr"; do
+    if [[ -x "$cand/bin/java.exe" ]]; then
+      export JAVA_HOME="$cand"
+      break
+    fi
+  done
+  echo "    JAVA_HOME=${JAVA_HOME:-（没找到 JDK，Gradle 会失败）}"
+fi
+
 CLEAN_MODE="full"    # full | app | none
 BUILD_TYPE="release"
 CHECK_ONLY=false
