@@ -13,6 +13,7 @@ Pocket _pocket({
   required PocketKind kind,
   String currency = 'CNY',
   bool includeInAssets = true,
+  bool archived = false,
 }) =>
     Pocket(
       id: id,
@@ -22,7 +23,7 @@ Pocket _pocket({
       kind: kind,
       currency: currency,
       openingCents: 0,
-      archived: false,
+      archived: archived,
       includeInAssets: includeInAssets,
     );
 
@@ -81,6 +82,20 @@ void main() {
       ),
     ], 'CNY', const {'USD': 7.1});
     expect(net, 0);
+  });
+
+  test('归档账户仍计入净资产，且其中的负债要扣掉', () {
+    // 资产页「已隐藏 N 个账户 · 合计」也走这个函数：归档列表里混入信用卡时，
+    // 不能把欠款当资产（1.4.69 之后又发现的第二处同类错误）。
+    final archived = _pocket(id: 1, kind: PocketKind.bank, archived: true);
+    final net = netWorthOfBalances([
+      (pocket: archived, balanceCents: 500000),
+      (
+        pocket: _pocket(id: 2, kind: PocketKind.credit, archived: true),
+        balanceCents: 120000,
+      ),
+    ], 'CNY', const {});
+    expect(net, 380000);
   });
 
   test('空账户列表 → 0', () {

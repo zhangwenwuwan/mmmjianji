@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/currency.dart';
+import '../core/insight_calc.dart';
 import '../core/pocket_types.dart';
 import '../core/rules.dart';
 import '../data/store.dart';
@@ -120,12 +121,10 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
         final net = assets - liabilities;
         final visible = list.where((b) => !b.pocket.archived).toList();
         final hidden = list.where((b) => b.pocket.archived).toList();
-        var hiddenTotal = 0;
-        for (final b in hidden) {
-          if (!b.pocket.includeInAssets) continue;
-          hiddenTotal +=
-              toBaseCents(b.balanceCents, b.pocket.currency, base, rates);
-        }
+        // 归档账户里也可能有信用卡 / 负债：balanceCents 是「还欠多少」（正数）。
+        // 原来直接相加会把欠款当资产，和现金流预测页犯的是同一个错。
+        // 统一走 netWorthOfBalances（资产 − 负债、跳过「不计入总资产」）。
+        final hiddenTotal = netWorthOfBalances(hidden, base, rates);
 
         return ListView(
           // 顶栏是浮在内容上的，顶部得留出它的高度
@@ -469,7 +468,7 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
                             style: TextStyle(
                                 fontSize: 13, color: Palette.inkSoft(context))),
                         subtitle: Text(
-                          '合计 ${settings.hideAmounts ? '****' : '${settings.symbol}${centsToText(hiddenTotal)}'}',
+                          '合计 ${settings.hideAmounts ? '****' : '${hiddenTotal < 0 ? '-' : ''}${settings.symbol}${centsToText(hiddenTotal.abs())}'}',
                           style: TextStyle(
                               fontSize: 12, color: Palette.inkFaint(context)),
                         ),

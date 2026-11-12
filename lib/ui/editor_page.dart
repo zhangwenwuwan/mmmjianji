@@ -1457,9 +1457,9 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
           for (final e in candidates.take(50))
             ListTile(
               dense: true,
-              leading: Text(
-                e.memo.isEmpty ? '💸' : '💸',
-                style: const TextStyle(fontSize: 17),
+              leading: const Text(
+                '💸',
+                style: TextStyle(fontSize: 17),
               ),
               title: Text(
                 e.memo.isEmpty ? '（无备注）' : e.memo,

@@ -16,6 +16,21 @@ import 'recycle_bin_page.dart';
 import 'motion.dart';
 import 'theme.dart';
 
+/// 筛选弹层里「不限」和「点外面取消」都会让 sheet 返回 null。
+/// 用这个哨兵把两者分开，否则用户只是改变主意划掉弹层，
+/// 已经选好的筛选条件会被悄悄清空（注释一直写着「取消不做改动」，代码却相反）。
+const Object filterAll = Object();
+
+/// 把筛选弹层的回传值解码成「是否要改筛选」+「改成什么」。
+/// - null（点外面 / 返回键取消）→ 不改，保持原筛选
+/// - [filterAll]（点「不限」）→ 改成 null，即清空
+/// - 其它 → 改成选中项
+({bool changed, T? value}) decodeFilterPick<T extends Object>(Object? picked) {
+  if (picked == null) return (changed: false, value: null);
+  if (identical(picked, filterAll)) return (changed: true, value: null);
+  return (changed: true, value: picked as T);
+}
+
 /// 搜索：关键词 + 类型 + 分类 + 金额区间 + 日期范围。
 class SearchPage extends ConsumerStatefulWidget {
   const SearchPage({super.key});
@@ -260,12 +275,12 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   }
 
   Future<void> _pickReimburse() async {
-    const options = <(String, int?)>[
-      ('不限', null),
+    const options = <(String, Object?)>[
+      ('不限', filterAll),
       ('待报销', 1),
       ('已报销', 2),
     ];
-    final picked = await showAppSheet<int?>(
+    final picked = await showAppSheet<Object?>(
       context: context,
       title: '报销状态',
       builder: (ctx) => Column(
@@ -274,15 +289,19 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           for (final o in options)
             ListTile(
               title: Text(o.$1),
-              trailing: _reimburse == o.$2 ? const Icon(Icons.check) : null,
+              trailing: (identical(o.$2, filterAll)
+                      ? _reimburse == null
+                      : _reimburse == o.$2)
+                  ? const Icon(Icons.check)
+                  : null,
               onTap: () => Navigator.pop(ctx, o.$2),
             ),
         ],
       ),
     );
-    // 取消（返回 null）与「不限」同值，这里按"不做改动"处理
-    if (picked == null && _reimburse == null) return;
-    setState(() => _reimburse = picked);
+    final decoded = decodeFilterPick<int>(picked);
+    if (!decoded.changed) return; // 点外面取消：保持原筛选
+    setState(() => _reimburse = decoded.value);
     _run();
   }
 
@@ -296,7 +315,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       ...?ref.read(bucketsProvider('out')).valueOrNull,
       ...?ref.read(bucketsProvider('in')).valueOrNull,
     ];
-    final picked = await showAppSheet<Bucket?>(
+    final picked = await showAppSheet<Object?>(
       context: context,
       title: '选择分类',
       builder: (ctx) => ListView(
@@ -305,7 +324,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           ListTile(
             leading: const Icon(Icons.clear, size: 18),
             title: const Text('不限分类'),
-            onTap: () => Navigator.pop(ctx, null),
+            onTap: () => Navigator.pop(ctx, filterAll),
           ),
           for (final b in buckets)
             ListTile(
@@ -317,11 +336,12 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         ],
       ),
     );
-    // 用户取消时 bottom sheet 返回 null，与「不限分类」同值：
-    // 这里简化处理——取消等同于不清空（重新点一次即可）
+    final decoded = decodeFilterPick<Bucket>(picked);
+    if (!decoded.changed) return; // 点外面取消：保持原筛选
+    final b = decoded.value;
     setState(() {
-      _bucketId = picked?.id;
-      _bucketName = picked?.title;
+      _bucketId = b?.id;
+      _bucketName = b?.title;
     });
     _run();
   }
@@ -380,6 +400,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         ],
       ),
     );
+    if (!mounted) return;
     if (ok != true) return;
     setState(() {
       _minCents = parseAmountToCents(minCtrl.text);
@@ -397,6 +418,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           ? DateTimeRange(start: _from!, end: _to!)
           : null,
     );
+    if (!mounted) return;
     if (range == null) return;
     setState(() {
       _from = range.start;

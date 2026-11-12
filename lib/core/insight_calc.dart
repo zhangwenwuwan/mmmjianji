@@ -82,10 +82,11 @@ Forecast forecastCashFlow({
     daysToZero = 0;
   } else if (dailyNet < 0) {
     daysToZero = (netWorthCents / -dailyNet).floor();
-  } else if (dailyExpense > 0) {
-    // 净流入非负时不会见底，但按"只花不赚"能给个保守答案
-    daysToZero = null;
   }
+  // 净流入 ≥ 0 时永远不见底，daysToZero 保持 null（UI 不显示这一行）。
+  // 这里原来挂了个 `else if (dailyExpense > 0) { daysToZero = null; }`，
+  // 注释写着"按只花不赚给个保守答案"，但赋值 null 等于什么都没做 ——
+  // 注释骗人、分支空转，已删。真要保守估算得单独实现，别留假实现。
 
   return Forecast(
     netWorthCents: netWorthCents,
