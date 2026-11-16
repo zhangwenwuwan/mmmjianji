@@ -102,9 +102,17 @@ class _VoiceFabState extends State<VoiceFab>
     if (!mounted) return;
     setState(() {
       _stage = stage;
+      // 系统开了「减少动态效果」就不跑呼吸脉冲：收音状态靠图标和波形文字表达，
+      // 不需要一个 1.5s 常驻循环动画折磨前庭敏感的人（也白烧一整个 ticker）。
+      final allowPulse = !MediaQuery.of(context).disableAnimations;
       if (stage == SpeechStage.listening) {
         _level = 0;
-        _pulse.repeat();
+        if (allowPulse) {
+          _pulse.repeat();
+        } else {
+          _pulse.stop();
+          _pulse.value = 0;
+        }
       } else {
         _level = 0;
         _pulse.stop();

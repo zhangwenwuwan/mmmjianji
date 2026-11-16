@@ -100,7 +100,13 @@ class _DonutChartState extends State<DonutChart>
     }
   }
 
-  int get _displayCents => (_progress.value * widget.totalCents).round();
+  /// 中心金额显示【终值】，不做数字插值。
+  ///
+  /// 以前这里用 `_progress.value * total` 让钱从 ¥0 滚到目标值，
+  /// 扫过动画里看到的是一串不断跳动的假金额 —— 记账 App 里钱数闪烁
+  /// 会让人以为算错了。参考竞品的设计纪律：动效可以走，数字不能插值。
+  /// 只有圆环本身跟动画，金额从第一帧就是最终值。
+  int get _displayCents => widget.totalCents;
 
   /// 中心那行小字：没选中是「本月支出」，选中是「餐饮 · 32%」。
   String get _centerLabel {
@@ -190,10 +196,10 @@ class _DonutChartState extends State<DonutChart>
               ),
             ),
           ),
-          // 中心金额必须跟着 _progress 逐帧重建：只包 CustomPaint 的话，
-          // 600ms 扫过动画里 _displayCents 一直停在 0，看起来像金额算错。
+          // 中心金额跟着 _pop / _selected 重建即可（选中扇区要换数字），
+          // 不要再跟 _progress：金额是终值，不需要逐帧刷新。
           AnimatedBuilder(
-            animation: _progress,
+            animation: _pop,
             builder: (context, _) => Column(
               mainAxisSize: MainAxisSize.min,
               children: [

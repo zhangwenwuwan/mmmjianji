@@ -23,9 +23,16 @@ class BudgetPage extends ConsumerWidget {
     final month = ref.watch(monthProvider);
     // 基础预算（用户手填的那个）与「本期可用」是两回事：
     // 后者 = 基础 + 上期结转，进度条必须按后者算，否则结转等于白设。
-    final budget = ref.watch(budgetProvider).valueOrNull ?? 0;
-    final available = ref.watch(effectiveBudgetProvider).valueOrNull ?? budget;
-    final carry = ref.watch(budgetCarryProvider).valueOrNull ?? 0;
+    final budgetAsync = ref.watch(budgetProvider);
+    final effectiveAsync = ref.watch(effectiveBudgetProvider);
+    final carryAsync = ref.watch(budgetCarryProvider);
+    final budget = budgetAsync.valueOrNull ?? 0;
+    final available = effectiveAsync.valueOrNull ?? budget;
+    final carry = carryAsync.valueOrNull ?? 0;
+    // 仍在首次加载（还没有任何值）才算 loading；有值但后台刷新不闪烁。
+    final budgetLoading = budgetAsync.isLoading && !budgetAsync.hasValue ||
+        effectiveAsync.isLoading && !effectiveAsync.hasValue ||
+        carryAsync.isLoading && !carryAsync.hasValue;
     final totals = ref.watch(totalsProvider).valueOrNull ??
         (incomeCents: 0, expenseCents: 0);
     final settings = ref.watch(settingsProvider);
@@ -66,12 +73,19 @@ class BudgetPage extends ConsumerWidget {
               padding: const EdgeInsets.fromLTRB(12, 6, 12, 96),
               children: [
                 Panel(
-                  child: progress.configured
-                      ? _BudgetStatus(
-                          progress: progress, symbol: settings.symbol)
-                      : _BudgetEmpty(
-                          onSet: () => _editBudget(context, ref, month, budget),
-                        ),
+                  // 加载期不要把还没读到的预算/支出显示成 ¥0 ——
+                  // 那看起来像「预算没设」或「超支 100%」，比等一下更糟。
+                  // 只在 truly loading 时替换；error / 空数据仍走原来的 0 分支，
+                  // 避免测试里手动 override 的空值被误当成加载中。
+                  child: budgetLoading
+                      ? const Skeleton(height: 96, radius: 16)
+                      : progress.configured
+                          ? _BudgetStatus(
+                              progress: progress, symbol: settings.symbol)
+                          : _BudgetEmpty(
+                              onSet: () =>
+                                  _editBudget(context, ref, month, budget),
+                            ),
                 ),
                 // 结转明细：只在真的启用了结转、且本月有基础预算时显示。
                 // 平时不显示——多数人没开结转，多一行数字只会让页面变吵。

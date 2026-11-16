@@ -1635,6 +1635,24 @@ class LedgerStore {
       _db.update('pockets', {'archived': archived ? 1 : 0},
           where: 'id = ?', whereArgs: [id]);
 
+  /// 删账户前的「影响范围」：让用户在确认框里看到到底有什么在挡着，
+  /// 而不是只丢一句「不能删」。不新增任何删除能力，纯查询。
+  Future<({int entries, int templates, int recurring})> pocketDeleteImpact(
+      int id) async {
+    Future<int> count(String sql, List<Object?> args) async =>
+        Sqflite.firstIntValue(await _db.rawQuery(sql, args)) ?? 0;
+    final entries = await count(
+        'SELECT COUNT(*) FROM entries WHERE pocket_id = ? OR to_pocket_id = ?',
+        [id, id]);
+    final templates = await count(
+        'SELECT COUNT(*) FROM templates WHERE pocket_id = ? OR to_pocket_id = ?',
+        [id, id]);
+    final recurring = await count(
+        'SELECT COUNT(*) FROM recurring WHERE pocket_id = ? AND enabled = 1',
+        [id]);
+    return (entries: entries, templates: templates, recurring: recurring);
+  }
+
   Future<void> deletePocketIfEmpty(int id) async {
     if (await pocketHasEntries(id)) {
       throw StateError('该账户还有流水，不能删除');
@@ -4128,6 +4146,9 @@ class LedgerStore {
       'recurring': await _db.query('recurring'),
       'templates': await _db.query('templates'),
       'monthNotes': await _db.query('month_notes'),
+      // 凭证关联行要跟着备份走。文件本身存在应用私有目录、不塞进 JSON
+      // （一张图 100~300KB，整库备份会涨到几十 MB）；恢复时用 path 校验文件还在。
+      'attachments': await _db.query('attachments'),
     };
     // ⚠️ 带缩进的整库 JSON 编码是纯 CPU 密集活：函数标了 async 并不会让它
     // 让出主 isolate（await 已经在上面全部结束）。几万条流水时这行会冻住
@@ -4161,14 +4182,31 @@ class LedgerStore {
       for (final t in tables.values) {
         await txn.delete(t);
       }
-      // 备份里不含凭证，但本机的 attachments 还按旧 entry_id 挂着；
-      // 不清理的话，恢复完别人的备份会看到自己的发票挂在别人的账上。
+      // 凭证行随备份一起恢复（1.4.69 之前的备份没有这个字段，会走空表，
+      // 和旧行为一致）。⚠️ 必须先清：否则旧 entry_id 会把本机发票挂到
+      // 恢复后的别人流水上 —— 这是当初一律删表的原因，不能省。
       await txn.delete('attachments');
       for (final key in tables.keys) {
         final rows = (decoded[key] as List?) ?? const [];
         for (final row in rows) {
           await txn.insert(tables[key]!, Map<String, Object?>.from(row as Map));
         }
+      }
+      // 只恢复「文件还在本机」的凭证：跨设备备份里 path 指向的是另一台机器的
+      // 私有目录，硬插进去只会得到一堆点不开的坏图。文件本身不进 JSON。
+      final validEntryIds = {
+        for (final r in (decoded['entries'] as List?) ?? const <Object?>[])
+          (r as Map)['id'],
+      };
+      for (final row in (decoded['attachments'] as List?) ?? const <Object?>[]
+          ) {
+        final a = Map<String, Object?>.from((row as Map).cast<String, Object?>());
+        final path = a['path'];
+        final entryId = a['entry_id'];
+        if (path is! String || path.isEmpty) continue;
+        if (!validEntryIds.contains(entryId)) continue;
+        if (!File(path).existsSync()) continue;
+        await txn.insert('attachments', a);
       }
     });
     await _seedIfEmpty();

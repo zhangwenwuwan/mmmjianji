@@ -201,17 +201,25 @@ class PocketManagePage extends ConsumerWidget {
 
   Future<void> _delete(BuildContext context, WidgetRef ref, Pocket p) async {
     final store = await ref.read(storeProvider.future);
-    final hasEntries = await store.pocketHasEntries(p.id);
+    final impact = await store.pocketDeleteImpact(p.id);
     if (!context.mounted) return;
-    if (hasEntries) {
-      ScaffoldMessenger.of(context).toast('该账户还有流水，不能删除。可以改成归档。');
+    final blockers = <String>[
+      if (impact.entries > 0) '${impact.entries} 笔流水',
+      if (impact.recurring > 0) '${impact.recurring} 条周期记账',
+      if (impact.templates > 0) '${impact.templates} 个快捷模板',
+    ];
+    if (blockers.isNotEmpty) {
+      ScaffoldMessenger.of(context).toast(
+          '这个账户还被 ${blockers.join('、')} 使用，不能删除。可以改成归档。');
       return;
     }
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text('删除「${p.title}」？'),
-        content: const Text('这个账户没有流水，删除后不可恢复。'),
+        // 没有流水 / 模板 / 周期记账才会走到这里；说明清楚「删了什么」，
+        // 别让用户对着一句「不可恢复」猜。
+        content: const Text('这个账户没有流水、周期记账或快捷模板，删除后不可恢复。'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
