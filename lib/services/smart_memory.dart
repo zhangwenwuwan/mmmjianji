@@ -35,8 +35,10 @@ class SmartMemory {
         }
       });
       return out;
-    } catch (e) {
-      AppLog.warn('voice', '读取记忆表失败: $e');
+    } catch (_) {
+      // 记忆表读不到就是「没学过」，静默回落空表。
+      // 这里不能 AppLog.warn：widget 测试里 SharedPreferences 没插件，
+      // 每次进记账页都会写一条 warn，日志的 2s flush 定时器直接让测试 Pending timers。
       return <String, int>{};
     }
   }
@@ -63,6 +65,29 @@ class SmartMemory {
 
   static Future<Map<String, int>> categoryHints() => _load(_kCategory);
   static Future<Map<String, int>> accountHints() => _load(_kAccount);
+
+  /// 记忆表的关键词。短于 2 字的备注不当关键词（"1"、"a" 会到处误命中），
+  /// 和 [SmartParser] 里的口径一致。
+  static String keywordOf(String memo) {
+    final s = memo.trim();
+    return s.length >= 2 ? s : '';
+  }
+
+  /// 从一段备注里找最长的已记忆关键词 → id。纯函数，方便穷举测试。
+  ///
+  /// 不自动改写草稿：只给调用方一个候选 id，由界面决定要不要一键采纳。
+  static int? match(String text, Map<String, int> hints) {
+    final s = text.trim();
+    if (s.length < 2 || hints.isEmpty) return null;
+    String? best;
+    for (final k in hints.keys) {
+      if (k.length >= 2 && s.contains(k) &&
+          (best == null || k.length > best.length)) {
+        best = k;
+      }
+    }
+    return best == null ? null : hints[best];
+  }
 
   static Future<void> rememberCategory(String keyword, int bucketId) =>
       _remember(_kCategory, keyword, bucketId);

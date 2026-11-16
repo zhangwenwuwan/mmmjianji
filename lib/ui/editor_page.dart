@@ -4,11 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app_glyph.dart';
 import '../core/currency.dart';
+import '../core/entry_guard.dart';
 import '../core/rules.dart';
 import '../core/scheme.dart';
 import '../data/store.dart';
 import '../services/attachment_service.dart';
 import '../services/app_log.dart';
+import '../services/smart_memory.dart';
 import '../state/ledger_state.dart';
 import '../state/settings.dart';
 import 'account_edit_page.dart';
@@ -127,16 +129,119 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
   /// 弹窗写一次、输入框写一次，两条路径互相覆盖，顺序一换就丢字。
   late final TextEditingController _memoCtrl;
 
+  /// 记忆表：语音页手动纠正过的「关键词 → 分类 / 账户」。
+  /// 只用来给手动记账出一键采纳的提示，绝不自动改写用户已经选好的值。
+  Map<String, int> _categoryHints = const {};
+  Map<String, int> _accountHints = const {};
+
   @override
   void initState() {
     super.initState();
     _memoCtrl = TextEditingController();
+    _loadSmartHints();
+    // 上一笔记账的「已记 [撤销]」还挂在根部 messenger 上，5 秒内不会被路由 pop 带走。
+    // 打开新编辑器时先清掉，否则它会盖在底部保存按钮上（真机上也是同一个问题）。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && context.mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+      }
+    });
     _tab.addListener(_onTabChanged);
     if (_isEdit) {
       _initEditMode();
     } else if (widget.schemeDraft != null) {
       _initSchemeDraft(widget.schemeDraft!);
     }
+  }
+
+  Future<void> _loadSmartHints() async {
+    final cats = await SmartMemory.categoryHints();
+    final accs = await SmartMemory.accountHints();
+    if (!mounted) return;
+    if (cats.isEmpty && accs.isEmpty) return;
+    setState(() {
+      _categoryHints = cats;
+      _accountHints = accs;
+    });
+  }
+
+  /// 记忆提示命中：备注里包含学过的关键词，且当前选的不是它推荐的那个。
+  /// 只返回候选；要不要采纳由用户点，不在这里偷偷 setState。
+  ({Bucket? bucket, Pocket? pocket}) _smartHintFor(
+    List<Bucket> buckets,
+    List<Pocket> pockets,
+  ) {
+    final keyword = SmartMemory.keywordOf(_memoCtrl.text);
+    if (keyword.isEmpty) return (bucket: null, pocket: null);
+    final catId = SmartMemory.match(keyword, _categoryHints);
+    final accId = SmartMemory.match(keyword, _accountHints);
+    Bucket? bucket;
+    if (catId != null && catId != _bucketId) {
+      for (final b in buckets) {
+        if (b.id == catId && b.flow == _flow) {
+          bucket = b;
+          break;
+        }
+      }
+    }
+    Pocket? pocket;
+    if (accId != null && accId != _pocketId) {
+      for (final p in pockets) {
+        if (p.id == accId) {
+          pocket = p;
+          break;
+        }
+      }
+    }
+    return (bucket: bucket, pocket: pocket);
+  }
+
+  /// 语音页学过的关键词命中时，在备注下方出一条「一键采纳」提示。
+  /// 只提示、不改写：用户已经选好的分类/账户绝不自动动，
+  /// 提示里只显示和当前选择**不同**的那一项，全一样就不打扰。
+  Widget _smartHintStrip(List<Bucket> buckets, List<Pocket> pockets) {
+    if (_isEdit || (_categoryHints.isEmpty && _accountHints.isEmpty)) {
+      return const SizedBox.shrink();
+    }
+    final hit = _smartHintFor(buckets, pockets);
+    if (hit.bucket == null && hit.pocket == null) {
+      return const SizedBox.shrink();
+    }
+    final parts = <String>[
+      if (hit.bucket != null) '分类 ${hit.bucket!.title}',
+      if (hit.pocket != null) '账户 ${hit.pocket!.displayName}',
+    ];
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: PressScale(
+        scale: 0.97,
+        onTap: () {
+          FocusManager.instance.primaryFocus?.unfocus();
+          setState(() {
+            if (hit.bucket != null) {
+              _bucketId = hit.bucket!.id;
+              _bucketTitle = hit.bucket!.title;
+              _bucketGlyph = hit.bucket!.glyph;
+              _bucketByFlow[_flow] = (
+                id: hit.bucket!.id,
+                title: hit.bucket!.title,
+                glyph: hit.bucket!.glyph,
+              );
+            }
+            if (hit.pocket != null) _pocketId = hit.pocket!.id;
+          });
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: Palette.brand(context).withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text('记住了：${parts.join(' · ')} · 点此采用',
+              style: TextStyle(fontSize: 11, color: Palette.brand(context))),
+        ),
+      ),
+    );
   }
 
   /// 编辑模式：分类已定，进入页面就直接弹金额面板
@@ -645,6 +750,7 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
             onTap: _primeMemos,
           ),
           _memoHints(),
+          _smartHintStrip(buckets, pockets),
           const SizedBox(height: 8),
           // 常用字段：横向滚动，屏幕再窄也不会挤爆
           SizedBox(
@@ -914,6 +1020,50 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
     try {
       final store = await ref.read(storeProvider.future);
       final book = await ref.read(activeBookProvider.future);
+
+      // 防手滑：同一账户 / 同金额 / 同备注 / 同流向，60 秒内刚记过 → 先问一句。
+      // 只拦「手动新建」，URL Scheme 的 auto=1 是自动化路径，不该弹窗卡住。
+      if (!_isEdit && !(widget.schemeDraft?.auto ?? false)) {
+        final memoText = _memoCtrl.text.trim();
+        // 空备注不判重复：两笔同额的咖啡、两次同额转账都很正常，
+        // 空串 == 空串会把它们误判成手滑。必须有明确备注才拦。
+        final candidates = memoText.isEmpty
+            ? const <Entry>[]
+            : await store.entriesBetween(book.id, _day, _day);
+        final dup = anyRecentDuplicate(
+          candidates: candidates.where((e) =>
+              e.pocketId == pocketId &&
+              e.amountCents == grossCents - _discountCents &&
+              e.memo.trim() == memoText &&
+              e.flow == _flow),
+          now: DateTime.now(),
+        );
+        if (!mounted) return;
+        if (dup) {
+          final confirmed = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('刚刚记过同样一笔'),
+              content: Text('同一账户、$_flow 方向、同样金额和备注，'
+                  '60 秒内已经记过一笔。还要再记一次吗？'),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: const Text('不记了')),
+                FilledButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: const Text('仍然保存')),
+              ],
+            ),
+          );
+          if (!mounted) return;
+          if (confirmed != true) {
+            setState(() => _saving = false);
+            return;
+          }
+        }
+      }
+
       final entryId = await store.addEntry(
         bookId: book.id,
         pocketId: pocketId,
@@ -953,6 +1103,26 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
       if (!mounted) return;
       HapticFeedback.lightImpact();
       SystemSound.play(SystemSoundType.click);
+
+      // 保存成功后给 5 秒后悔入口。存错只能去流水页翻、再进回收站，代价太大。
+      // 撤销 = 软删除（进回收站），不是硬删；用户还有第二次后悔机会。
+      // ⚠️ persist:false 见 common.showActionSnack —— 带按钮的 SnackBar 默认永不消失。
+      final uiSettings = ref.read(settingsProvider);
+      // 页面马上要 pop，回调里的 context 会失效；先抓住根部的 messenger。
+      final messenger = ScaffoldMessenger.of(context);
+      showActionSnack(
+        context,
+        message: uiSettings.hideAmounts
+            ? '已记一笔'
+            : '已记 ${uiSettings.symbol}${centsToText(grossCents - _discountCents)}',
+        actionLabel: '撤销',
+        onAction: () async {
+          await store.deleteEntry(entryId);
+          bumpRevision(ref);
+          if (messenger.mounted) messenger.toast('已撤销，可在回收站找回');
+        },
+      );
+
       if (continueAdding) {
         // 继续记下一笔：清掉金额/备注/标签/表达式，**保留分类和账户**
         // （连记三笔咖啡是常见操作，每次重选分类会很烦）
