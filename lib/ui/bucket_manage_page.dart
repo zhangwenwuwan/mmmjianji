@@ -352,7 +352,7 @@ class _BucketList extends ConsumerWidget {
     ];
     if (blockers.isNotEmpty) {
       ScaffoldMessenger.of(context)
-          .toast('「${b.title}」还被 ${blockers.join('、')} 使用，不能删除。可以改成归档。');
+          .toast('「${b.title}」还被 ${blockers.join('、')}使用，不能删除，可以改成归档。');
       return;
     }
     final ok = await showDialog<bool>(

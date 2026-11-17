@@ -209,8 +209,8 @@ class PocketManagePage extends ConsumerWidget {
       if (impact.templates > 0) '${impact.templates} 个快捷模板',
     ];
     if (blockers.isNotEmpty) {
-      ScaffoldMessenger.of(context).toast(
-          '这个账户还被 ${blockers.join('、')} 使用，不能删除。可以改成归档。');
+      ScaffoldMessenger.of(context)
+          .toast('这个账户还被 ${blockers.join('、')}使用，不能删除，可以改成归档。');
       return;
     }
     final ok = await showDialog<bool>(
