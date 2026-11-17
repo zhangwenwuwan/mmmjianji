@@ -132,3 +132,61 @@ int? saveTimeMinutes(DateTime day) {
   }
   return now.hour * 60 + now.minute;
 }
+
+/// 把分钟数格式化成 `HH:mm`。null → `--:--`（和流水时间轴显示一致）。
+String formatTimeMinutes(int? minutes) {
+  if (minutes == null) return '--:--';
+  final m = minutes.clamp(0, 1439);
+  return '${(m ~/ 60).toString().padLeft(2, '0')}:'
+      '${(m % 60).toString().padLeft(2, '0')}';
+}
+
+/// 保存时最终写库的时分。
+///
+/// - 用户**手动选过**时间（`picked != null`）→ 一律用选的，包括补记历史日期；
+///   这是 1.4.70 新增的「几时几分」入口，明确选过就别再被自动口径覆盖。
+/// - 没手动选 → 保持老口径：今天写当前时刻，补记历史留空。
+/// - 编辑已有流水且日期没变、也没手动选 → 传 null（copyWith 不改原值）。
+int? resolveTimeMinutes({
+  required DateTime day,
+  required DateTime? originalDay,
+  int? picked,
+
+  /// 仅供测试注入；正式调用不传，用真实时钟。
+  DateTime? now,
+}) {
+  if (picked != null) return picked;
+  if (originalDay != null && dayKey(day) == dayKey(originalDay)) {
+    return null;
+  }
+  final n = now ?? DateTime.now();
+  if (dayKey(day) != dayKey(n)) return null;
+  return n.hour * 60 + n.minute;
+}
+
+/// 是否需要显式清掉库里原来的时分（编辑模式改了日期且新日期没有时分）。
+bool shouldClearTime({
+  required DateTime day,
+  required DateTime? originalDay,
+  required int? resolvedMinutes,
+}) =>
+    originalDay != null &&
+    dayKey(day) != dayKey(originalDay) &&
+    resolvedMinutes == null;
+
+/// 面板 chip 上显示的时分。
+///
+/// 编辑已有流水且日期没变时显示库里原值；新记账 / 改了日期时按自动口径
+/// （今天=当前时刻，历史=--:--）。用户手动选过就优先显示他选的。
+int? displayTimeMinutes({
+  required DateTime day,
+  required DateTime? originalDay,
+  int? originalMinutes,
+  int? picked,
+}) {
+  if (picked != null) return picked;
+  if (originalDay != null && dayKey(day) == dayKey(originalDay)) {
+    return originalMinutes;
+  }
+  return saveTimeMinutes(day);
+}

@@ -93,6 +93,9 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
   String _amount = '';
   String _tags = '';
   DateTime _day = DateTime.now();
+
+  /// 用户手动选过的时分；null = 沿用自动口径（今天当前时刻 / 历史留空）。
+  int? _pickedTimeMinutes;
   int? _pocketId;
   int _reimburse = 0;
   int _mood = 0;
@@ -764,6 +767,16 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
                     label: dayKey(_day),
                     onTap: _pickDay),
                 const SizedBox(width: 6),
+                _FieldChip(
+                    icon: Icons.schedule_outlined,
+                    label: formatTimeMinutes(displayTimeMinutes(
+                      day: _day,
+                      originalDay: null,
+                      picked: _pickedTimeMinutes,
+                    )),
+                    active: _pickedTimeMinutes != null,
+                    onTap: _pickTime),
+                const SizedBox(width: 6),
                 // 账户紧跟日期：这是「记到哪个账户」，直接影响账对不对。
                 // 之前排在第 6 位，393dp 窄屏首屏根本看不到，得横滑才知道记哪了。
                 _FieldChip(
@@ -1074,7 +1087,11 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
         amountCents: grossCents - _discountCents,
         memo: _memoCtrl.text.trim(),
         day: _day,
-        timeMinutes: saveTimeMinutes(_day),
+        timeMinutes: resolveTimeMinutes(
+          day: _day,
+          originalDay: null,
+          picked: _pickedTimeMinutes,
+        ),
         tags: tags,
         reimburse: _flow == 'in' ? 0 : _reimburse,
         mood: _flow == 'in' ? 0 : _mood,
@@ -1169,6 +1186,16 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
   Future<void> _pickDay() async {
     final day = await pickDayQuick(context, _day, title: '选择日期');
     if (day != null && mounted) setState(() => _day = day);
+  }
+
+  Future<void> _pickTime() async {
+    final current = displayTimeMinutes(
+      day: _day,
+      originalDay: null,
+      picked: _pickedTimeMinutes,
+    );
+    final picked = await pickTimeMinutes(context, current);
+    if (picked != null && mounted) setState(() => _pickedTimeMinutes = picked);
   }
 
   Future<void> _pickMood() async {
@@ -2246,6 +2273,21 @@ Future<int?> editSplitCents(BuildContext context,
       allowZero: true,
     );
 
+/// 手动选时分：两个 State（一屏草稿 / 金额面板）共用一个入口。
+///
+/// null = 用户取消；用户明确选过的时间允许为 0 点 0 分，所以不能用
+/// `picked == null ? 原值 : picked` 之外的方式合并。
+Future<int?> pickTimeMinutes(BuildContext context, int? current) async {
+  final initial = current ?? saveTimeMinutes(DateTime.now()) ?? 0;
+  final picked = await showTimePicker(
+    context: context,
+    initialTime: TimeOfDay(hour: initial ~/ 60, minute: initial % 60),
+    helpText: '选择这笔账的时分',
+  );
+  if (picked == null) return null;
+  return picked.hour * 60 + picked.minute;
+}
+
 /// 金额面板（复刻原版 AmountEditorSheet 的字段顺序）：
 /// 金额 → 备注 → 账户（转账多一组「转入」）→ 日期/标签/报销/情绪 → 键盘 → 保存/再记一笔
 class _AmountSheet extends ConsumerStatefulWidget {
@@ -2270,6 +2312,9 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
   // 弹窗写一次、输入框写一次，两条路径互相覆盖，顺序一换就丢字。
   late String _tags;
   late DateTime _day;
+
+  /// 用户手动选过的时分；null = 沿用自动口径。
+  int? _pickedTimeMinutes;
   int? _pocketId;
   int? _toPocketId;
   late int _reimburse;
@@ -2325,6 +2370,12 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
 
   bool get _isTransfer => widget.flow == 'transfer';
   bool get _isEdit => widget.existing != null;
+
+  int? get _resolvedEditTimeMinutes => resolveTimeMinutes(
+        day: _day,
+        originalDay: widget.existing?.day,
+        picked: _pickedTimeMinutes,
+      );
 
   /// 「更多」展开层里已设了几项（显示在 chip 上，别让设置隐形）。
   int get _moreSetCount => [
@@ -2577,11 +2628,13 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
           // 改了日期就重算时分（审计 P3-3）：从今天挪到历史日期要清空
           // （和「补记历史留空」同一口径），从历史挪回今天要补当前时间。
           // 只改备注/金额时日期没变 → 传 null，原时分原样保留。
-          timeMinutes: dayKey(_day) == dayKey(widget.existing!.day)
-              ? null
-              : saveTimeMinutes(_day),
-          clearTime: dayKey(_day) != dayKey(widget.existing!.day) &&
-              saveTimeMinutes(_day) == null,
+          // 用户手动选过时分就优先用它，包括补记历史日期。
+          timeMinutes: _resolvedEditTimeMinutes,
+          clearTime: shouldClearTime(
+            day: _day,
+            originalDay: widget.existing!.day,
+            resolvedMinutes: _resolvedEditTimeMinutes,
+          ),
         ));
         entryId = widget.existing!.id;
       } else {
@@ -2594,7 +2647,11 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
           amountCents: _resultCents,
           memo: _memoCtrl.text.trim(),
           day: _day,
-          timeMinutes: saveTimeMinutes(_day),
+          timeMinutes: resolveTimeMinutes(
+            day: _day,
+            originalDay: null,
+            picked: _pickedTimeMinutes,
+          ),
           tags: tags,
           reimburse: _isTransfer ? 0 : _reimburse,
           mood: _isTransfer ? 0 : _mood,
@@ -2704,6 +2761,17 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
     // "setState() called after dispose()"。同文件其它 State 都判了 mounted，
     // 只有这一片没判（审计 P2-13）。
     if (day != null && mounted) setState(() => _day = day);
+  }
+
+  Future<void> _pickTime() async {
+    final current = displayTimeMinutes(
+      day: _day,
+      originalDay: widget.existing?.day,
+      originalMinutes: widget.existing?.timeMinutes,
+      picked: _pickedTimeMinutes,
+    );
+    final picked = await pickTimeMinutes(context, current);
+    if (picked != null && mounted) setState(() => _pickedTimeMinutes = picked);
   }
 
   /// 改分类（编辑旧账用）。分类网格在页面主体上，被金额面板盖住，
@@ -3354,6 +3422,16 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
                           icon: Icons.event_outlined,
                           label: dayKey(_day),
                           onTap: _pickDay),
+                      _FieldChip(
+                          icon: Icons.schedule_outlined,
+                          label: formatTimeMinutes(displayTimeMinutes(
+                            day: _day,
+                            originalDay: widget.existing?.day,
+                            originalMinutes: widget.existing?.timeMinutes,
+                            picked: _pickedTimeMinutes,
+                          )),
+                          active: _pickedTimeMinutes != null,
+                          onTap: _pickTime),
                       _FieldChip(
                           icon: Icons.edit_note,
                           label: _tags.isEmpty ? '标签' : _tags,
