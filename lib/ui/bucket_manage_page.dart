@@ -243,18 +243,33 @@ class _BucketList extends ConsumerWidget {
                         leading: AppGlyph(archived[i].glyph, size: 16),
                         title: Text(archived[i].title,
                             style: TextStyle(
-                                fontSize: 14,
-                                color: Palette.inkSoft(context))),
-                        subtitle: const Text('已归档',
-                            style: TextStyle(fontSize: 12)),
-                        trailing: TextButton(
-                          onPressed: () async {
-                            final store =
-                                await ref.read(storeProvider.future);
-                            await store.archiveBucket(archived[i].id, false);
-                            bumpRevision(ref);
-                          },
-                          child: const Text('恢复'),
+                                fontSize: 14, color: Palette.inkSoft(context))),
+                        subtitle:
+                            const Text('已归档', style: TextStyle(fontSize: 12)),
+                        // 归档区也能删：归档只是「暂时不用」，误建的分类
+                        // 不该逼用户先恢复再去主列表里找删除。
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            TextButton(
+                              onPressed: () async {
+                                final store =
+                                    await ref.read(storeProvider.future);
+                                await store.archiveBucket(
+                                    archived[i].id, false);
+                                bumpRevision(ref);
+                              },
+                              child: const Text('恢复'),
+                            ),
+                            IconButton(
+                              tooltip: '删除',
+                              visualDensity: VisualDensity.compact,
+                              onPressed: () =>
+                                  _delete(context, ref, archived[i]),
+                              icon: Icon(Icons.delete_outline,
+                                  size: 18, color: Palette.expense),
+                            ),
+                          ],
                         ),
                       ),
                     ],
@@ -305,13 +320,68 @@ class _BucketList extends ConsumerWidget {
             final store = await ref.read(storeProvider.future);
             await store.archiveBucket(b.id, true);
             bumpRevision(ref);
+            return;
+          }
+          if (v == 'delete') {
+            await _delete(context, ref, b);
           }
         },
         itemBuilder: (_) => const [
           PopupMenuItem(value: 'edit', child: Text('编辑')),
           PopupMenuItem(value: 'archive', child: Text('归档')),
+          // 和账户管理同一套口径：有流水 / 子分类 / 周期记账就不让删，
+          // 只让归档 —— 删掉会把历史流水变成「未分类」，统计口径全变。
+          PopupMenuItem(
+              value: 'delete',
+              child: Text('删除', style: TextStyle(color: Palette.expense))),
         ],
       ),
     );
+  }
+
+  /// 删除分类。和 [PocketManagePage] 的删除同一套流程：
+  /// 先算影响面 → 有引用就拦下并说明 → 没有才二次确认。
+  Future<void> _delete(BuildContext context, WidgetRef ref, Bucket b) async {
+    final store = await ref.read(storeProvider.future);
+    final impact = await store.bucketDeleteImpact(b.id);
+    if (!context.mounted) return;
+    final blockers = <String>[
+      if (impact.entries > 0) '${impact.entries} 笔流水',
+      if (impact.children > 0) '${impact.children} 个子分类',
+      if (impact.recurring > 0) '${impact.recurring} 条周期记账',
+    ];
+    if (blockers.isNotEmpty) {
+      ScaffoldMessenger.of(context)
+          .toast('「${b.title}」还被 ${blockers.join('、')} 使用，不能删除。可以改成归档。');
+      return;
+    }
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('删除「${b.title}」？'),
+        // 没有流水才会走到这里；说清楚删的是什么，别只给一句「不可恢复」。
+        content: const Text('这个分类没有流水、子分类或周期记账，删除后不可恢复。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child:
+                  const Text('删除', style: TextStyle(color: Palette.expense))),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await store.deleteBucketIfEmpty(b.id);
+    } on StateError catch (e) {
+      // 并发兜底：确认框打开期间另一边刚记了一笔，落库时再拦一次。
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).toast(e.message);
+      }
+      return;
+    }
+    bumpRevision(ref);
   }
 }

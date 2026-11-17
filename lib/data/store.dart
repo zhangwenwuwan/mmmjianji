@@ -1729,6 +1729,53 @@ class LedgerStore {
       _db.update('buckets', {'archived': archived ? 1 : 0},
           where: 'id = ?', whereArgs: [id]);
 
+  /// 删除分类前的「影响面」。
+  ///
+  /// 分类是历史流水的一个**维度**（`entries.bucket_id`）：删掉它，那些流水
+  /// 不会消失，但会变成「未分类」—— 历史统计、排行榜、预算归集的口径全变，
+  /// 而用户当时只是想清理一个建错的分类。所以和账户一样：**有引用就不让删**，
+  /// 让用户去归档（归档只是从选择列表消失，历史流水照样显示原分类名）。
+  Future<({int entries, int children, int recurring, int templates})>
+      bucketDeleteImpact(int id) async {
+    Future<int> count(String sql, List<Object?> args) async =>
+        Sqflite.firstIntValue(await _db.rawQuery(sql, args)) ?? 0;
+    // 含回收站里的流水：它们恢复之后照样指着这个分类。
+    final entries =
+        await count('SELECT COUNT(*) FROM entries WHERE bucket_id = ?', [id]);
+    final children =
+        await count('SELECT COUNT(*) FROM buckets WHERE parent_id = ?', [id]);
+    final recurring = await count(
+        'SELECT COUNT(*) FROM recurring WHERE bucket_id = ? AND enabled = 1',
+        [id]);
+    final templates =
+        await count('SELECT COUNT(*) FROM templates WHERE bucket_id = ?', [id]);
+    return (
+      entries: entries,
+      children: children,
+      recurring: recurring,
+      templates: templates,
+    );
+  }
+
+  /// 只删「没人用」的分类：流水 / 子分类 / 周期记账任一存在就抛 [StateError]。
+  ///
+  /// 快捷模板和分类预算是**从属数据**，跟着一起收尾：
+  /// - 模板的 `bucket_id` 置空、模板本身留着（用户只是不用这个分类了，模板还有用）；
+  /// - 该分类各月的预算记录直接删（没有分类的预算没法归集，留着是脏数据）。
+  Future<void> deleteBucketIfEmpty(int id) async {
+    final impact = await bucketDeleteImpact(id);
+    if (impact.entries > 0) throw StateError('该分类还有流水，不能删除');
+    if (impact.children > 0) throw StateError('该分类下还有子分类，先处理子分类');
+    if (impact.recurring > 0) throw StateError('该分类还有周期记账，先改掉再删');
+    await _db.transaction((txn) async {
+      await txn.update('templates', {'bucket_id': null},
+          where: 'bucket_id = ?', whereArgs: [id]);
+      await txn.delete('bucket_budgets',
+          where: 'bucket_id = ?', whereArgs: [id]);
+      await txn.delete('buckets', where: 'id = ?', whereArgs: [id]);
+    });
+  }
+
   /// 分类迁移：把 [fromId] 下的所有流水批量改到 [toId]（对齐原版分类迁移页）。
   /// 返回受影响的流水条数。
   Future<int> migrateBucket(int bookId, int fromId, int toId) =>

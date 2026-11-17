@@ -247,7 +247,8 @@ class _ShimmerClock {
     if (_ticker != null) return;
     _ticker = Ticker((elapsed) {
       value.value = (elapsed.inMilliseconds % 1500) / 1500;
-    })..start();
+    })
+      ..start();
   }
 
   static void detach() {
@@ -525,49 +526,54 @@ class _AppSheetBody extends StatelessWidget {
         blur: LiquidTokens.blurSheet,
         tint: Palette.glass(context).withValues(alpha: LiquidTokens.tintSheet),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-        child: LiquidSurface(
-          // 面板整体接上跟手高光与按压缩放（和底栏同一套手感）。
-          // LiquidSurface 只用 Listener 读指针，不抢面板内输入框/滚动的手势。
-          radius: 22,
-          child: Container(
+        // ⚠️ 这里原来包着 LiquidSurface（跟手高光 + 按压缩放），2026-11-17 撤掉。
+        //
+        // 那是**按钮级**反馈，套在**容器**上会出事：面板里每次点击（数字键、标签
+        // chip、账户行、日期 chip）都会让整块面板放大 3.5% 再弹回 —— 满宽面板
+        // 3.5% 就是左右各挪近 19px；高光还会从触点散开铺满整块（面板占屏 86%，
+        // 等于整页亮一下再 220ms 淡出）。连续点数字时看到的就是「页面一闪一闪」。
+        //
+        // 记账 / 转账面板是这个坑最容易撞见的地方（面积最大、点击最密），但所有
+        // showAppSheet 面板都受影响。面板内部的可点控件各自已有按压反馈，容器
+        // 不该再来一次 —— 真实玻璃面板也不会因为里面有人按按钮而整体发光。
+        child: Container(
           constraints: BoxConstraints(
             maxHeight: MediaQuery.sizeOf(context).height * 0.86,
           ),
           child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 10),
-            Container(
-              width: 38,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Palette.inkFaint(context).withValues(alpha: 0.35),
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            if (title != null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(title!,
-                      style: const TextStyle(
-                          fontSize: 17, fontWeight: FontWeight.w700)),
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 10),
+              Container(
+                width: 38,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Palette.inkFaint(context).withValues(alpha: 0.35),
+                  borderRadius: BorderRadius.circular(2),
                 ),
               ),
-            scrollable
-                ? Flexible(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: content(context),
-                    ),
-                  )
-                : fillsHeight
-                    ? Expanded(child: content(context))
-                    : Flexible(child: content(context)),
-          ],
-        ),
-        ),
+              if (title != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(title!,
+                        style: const TextStyle(
+                            fontSize: 17, fontWeight: FontWeight.w700)),
+                  ),
+                ),
+              scrollable
+                  ? Flexible(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: content(context),
+                      ),
+                    )
+                  : fillsHeight
+                      ? Expanded(child: content(context))
+                      : Flexible(child: content(context)),
+            ],
+          ),
         ),
       ),
     );
