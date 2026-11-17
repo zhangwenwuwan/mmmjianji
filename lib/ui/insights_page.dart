@@ -12,7 +12,7 @@ import 'category_detail_page.dart';
 import 'charts.dart';
 import 'common.dart';
 import 'glass.dart';
-import 'liquid_surface.dart';
+import 'liquid_surface.dart' show LiquidTokens;
 import 'motion.dart';
 import 'sankey.dart';
 import 'tab_header.dart';
@@ -1133,9 +1133,11 @@ class _ScopeSegments extends StatelessWidget {
     return LayoutBuilder(builder: (_, constraints) {
       final w = constraints.maxWidth / _labels.length;
       final idx = _labels.keys.toList().indexOf(scope);
-      return LiquidSurface(
-        radius: 19,
-        child: SizedBox(
+      // 2026-11-17：撤掉 LiquidSurface。它是按钮级反馈（按压放大 3.5% +
+      // 整块高光），套在这条满宽分段控件上，每次点「周/月/年」整条都会
+      // 左右各涨约 12px 再弹回；而切换本来就有 AnimatedPositioned 的水滴
+      // 滑块在动，两层动效叠起来更晃。和底部面板整块闪烁同一个根因。
+      return SizedBox(
           height: 38,
           child: Stack(
             children: [
@@ -1198,7 +1200,6 @@ class _ScopeSegments extends StatelessWidget {
               ),
             ],
           ),
-        ),
       );
     });
   }

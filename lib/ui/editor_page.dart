@@ -372,10 +372,17 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
   /// AA 分摊：他承担的金额不能超过本笔金额（否则统计会算成负数）。
   /// 优惠后实付变少，上限也要跟着用实付。
   Future<void> _editSplit() async {
+    // ⚠️ 先挡掉非正金额：金额栏支持四则运算，「100 − 200」这种表达式没按等号
+    // 时 `_resultCents` 已经是负数，而 `num.clamp(0, 负数)` 会直接抛
+    // ArgumentError（upperLimit 必须 ≥ lowerLimit），整页红屏。
+    if (_resultCents <= 0) {
+      _toast('先输入金额，再设 AA 分摊');
+      return;
+    }
     final v = await editSplitCents(context, currentCents: _splitCents);
     if (v == null || !mounted) return;
     final net = (_resultCents - _discountCents).clamp(0, _resultCents);
-    final max = net > 0 ? net : v;
+    final max = net > 0 ? net : _resultCents;
     setState(() => _splitCents = v.clamp(0, max));
   }
 
@@ -1126,20 +1133,32 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
       // 撤销 = 软删除（进回收站），不是硬删；用户还有第二次后悔机会。
       // ⚠️ persist:false 见 common.showActionSnack —— 带按钮的 SnackBar 默认永不消失。
       final uiSettings = ref.read(settingsProvider);
-      // 页面马上要 pop，回调里的 context 会失效；先抓住根部的 messenger。
-      final messenger = ScaffoldMessenger.of(context);
-      showActionSnack(
-        context,
-        message: uiSettings.hideAmounts
-            ? '已记一笔'
-            : '已记 ${uiSettings.symbol}${centsToText(grossCents - _discountCents)}',
-        actionLabel: '撤销',
-        onAction: () async {
-          await store.deleteEntry(entryId);
-          bumpRevision(ref);
-          if (messenger.mounted) messenger.toast('已撤销，可在回收站找回');
-        },
-      );
+      // ⚠️ 「再记一笔」时**不弹**撤销条：普通 SnackBar 钉在页面底部，正好压在
+      // 面板底部的「清空 / 再记一笔 / 保存」那一行上，5 秒内想再点保存会被挡住。
+      // 连记场景用户还在录入，打断比撤销更伤；「连续记账不弹对勾」也是同一取舍
+      // （见 showSaveSuccessCheck 的注释）。单笔保存后 pop 回列表时才给撤销入口。
+      if (!continueAdding) {
+        // 页面马上要 pop，回调里的 context 会失效；先抓住根部的 messenger。
+        final messenger = ScaffoldMessenger.of(context);
+        // ⚠️ 撤销回调在**页面已经 pop 之后**才跑（5 秒窗口）。那时 `ref` 属于
+        // 已销毁的 ConsumerState，`ref.read` 会抛 StateError，而 bumpRevision
+        // 内部把 StateError 吞掉了 —— 数据库里删成功了，列表却收不到通知，
+        // 用户会看到「点了撤销，账还在」。所以这里先把 notifier 本体抓出来：
+        // StateController 活在 ProviderContainer 里，页面死了它照样能写。
+        final revision = ref.read(revisionProvider.notifier);
+        showActionSnack(
+          context,
+          message: uiSettings.hideAmounts
+              ? '已记一笔'
+              : '已记 ${uiSettings.symbol}${centsToText(grossCents - _discountCents)}',
+          actionLabel: '撤销',
+          onAction: () async {
+            await store.deleteEntry(entryId);
+            revision.state++;
+            if (messenger.mounted) messenger.toast('已撤销，可在回收站找回');
+          },
+        );
+      }
 
       if (continueAdding) {
         // 继续记下一笔：清掉金额/备注/标签/表达式，**保留分类和账户**
@@ -1164,6 +1183,9 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
           _excludeBudget = false;
           _currency = null;
           _day = DateTime.now();
+          // 时分也要清：上一笔手动选了 10:30，连记的第二笔会继续记成 10:30，
+          // 而「今天默认当前时刻」才是老口径。不选手动时间时它本来就该是 null。
+          _pickedTimeMinutes = null;
         });
       } else {
         showSaveSuccessCheck(context);
@@ -2524,6 +2546,15 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
       _toast('请输入金额');
       return;
     }
+    // 优惠不能等于或超过本笔金额（和 _saveDraft 同一口径）。
+    // 面板的金额栏就是**实付**，编辑一笔「实付 900 / 优惠 100」的账时把它改成
+    // 50，会落出「实付 50、省 100」这种自相矛盾的记录（流水页会写「省 ¥100」，
+    // 比这笔钱本身还多）。新建路径一直有这道校验，编辑路径漏了。
+    if (!_isTransfer && _discountCents >= _resultCents) {
+      HapticFeedback.mediumImpact();
+      _toast('优惠不能等于或超过本笔金额');
+      return;
+    }
     final pocketId = _pocketId;
     if (pocketId == null) {
       // 一个账户都没有（新装、或全归档了）时只说「请选择账户」是死路：
@@ -2702,6 +2733,8 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
           _excludeBudget = false;
           _currency = null;
           _day = DateTime.now();
+          // 同 _saveDraft：上一笔手动选的时分不能带进下一笔。
+          _pickedTimeMinutes = null;
         });
         _memoCtrl.clear();
       } else {
@@ -2941,6 +2974,14 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
   /// 数字立刻可见；不碰优惠时实付原样不动（不会误伤历史数据）。
   Future<void> _editFeeOrDiscount({required bool isFee}) async {
     final originalCents = _resultCents + _discountCents; // 原价（改前）
+    // 优惠的基数必须是正数：金额栏支持四则运算，「100 − 200」这种没按等号的
+    // 表达式会让 originalCents 变负 —— 往下传进折数滑条（max 为负）或
+    // `v.clamp(0, originalCents)` 都会直接抛 ArgumentError。
+    // 手续费不依赖金额，照旧可设。
+    if (!isFee && originalCents <= 0) {
+      _toast('先输入金额，再设优惠');
+      return;
+    }
     final v = await editFeeOrDiscount(
       context,
       isFee: isFee,

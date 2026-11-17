@@ -5,7 +5,6 @@ import 'package:flutter/services.dart' show HapticFeedback;
 
 import '../core/rules.dart';
 import 'common.dart' show AppField;
-import 'liquid_surface.dart';
 import 'motion.dart' show PressScale;
 import 'theme.dart' show Palette;
 
@@ -367,12 +366,13 @@ class _ZheSliderRowState extends State<_ZheSliderRow> {
           ' · 实付 ${centsToText(base - discount)}';
     }
 
-    // 2026-11-08：折数条接上公共液态材质（按下挤压 + 跟手高光 + 彩边）。
-    // mainAxisSize.min 必须写：LiquidSurface 内部是 Stack，给 child 的是
-    // loose 约束，Column 默认 mainAxisSize.max 会拿到无界高度直接报错。
-    return LiquidSurface(
-      radius: 12,
-      child: Column(
+    // 2026-11-17：这里原来包着 LiquidSurface（按压挤压 + 跟手高光）。
+    // 那是**按钮级**反馈，套在一条满宽（约 400px）的折数条上会出事：
+    // 按住滑条拖动期间整条一直放大 3.5%（左右各涨约 14px），松手再弹回；
+    // 高光还停在按下的位置不动（LiquidSurface 只在 pointerDown 记一次触点，
+    // 不跟踪移动），拖到哪都亮着开头那一点。滑条本身已有拇指跟手反馈，
+    // 外层再放大纯属干扰 —— 和底部面板整块闪烁是同一个根因。
+    return Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -449,7 +449,6 @@ class _ZheSliderRowState extends State<_ZheSliderRow> {
           ),
         ),
       ],
-      ),
     );
   }
 }
