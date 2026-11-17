@@ -20,6 +20,7 @@ import 'amount_keypad.dart';
 import 'common.dart';
 import 'loans_page.dart' show showDebtEditor;
 import 'motion.dart';
+import 'tag_editor.dart';
 import 'theme.dart';
 import 'template_manage_page.dart';
 import 'wheel_date_picker.dart';
@@ -1196,52 +1197,14 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
   }
 
   Future<void> _editNote() async {
-    final memoCtrl = TextEditingController(text: _memoCtrl.text);
-    final tagCtrl = TextEditingController(text: _tags);
-    final ok = await showDialog<bool>(
+    // 只管标签。备注在主页面已有常驻输入框，弹窗里再放一个是两个真源，
+    // 用户改完不知道哪个会被保存（2026-11-17 用户实测反馈）。
+    final picked = await showTagEditor(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('备注与标签'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            AppTextField(
-              label: '备注',
-              controller: memoCtrl,
-              hint: '这笔钱花在哪了',
-              autofocus: true,
-              maxLength: 60,
-            ),
-            const SizedBox(height: 14),
-            AppTextField(
-              label: '标签',
-              controller: tagCtrl,
-              hint: '逗号分隔，如：聚餐,报销',
-              maxLength: 40,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('确定')),
-        ],
-      ),
+      ref: ref,
+      initial: _tags,
     );
-    if (ok == true && mounted) {
-      setState(() {
-        _tags = tagCtrl.text;
-        // 弹窗里的文本回写到常驻控制器（唯一真源）
-        _memoCtrl.text = memoCtrl.text;
-      });
-    }
-    // 临时控制器必须释放：不 dispose 的话每次打开备注弹窗都漏一个
-    // 带监听器的对象，还会被 Flutter 的 debug 断言报出来（审计 P3-10）。
-    memoCtrl.dispose();
-    tagCtrl.dispose();
+    if (picked != null && mounted) setState(() => _tags = picked);
   }
 
   /// 备注联想条：按已输入内容过滤历史备注，点一下直接填。
@@ -2791,52 +2754,14 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
   }
 
   Future<void> _editNote() async {
-    final memoCtrl = TextEditingController(text: _memoCtrl.text);
-    final tagCtrl = TextEditingController(text: _tags);
-    final ok = await showDialog<bool>(
+    // 只管标签。备注在主页面已有常驻输入框，弹窗里再放一个是两个真源，
+    // 用户改完不知道哪个会被保存（2026-11-17 用户实测反馈）。
+    final picked = await showTagEditor(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('备注与标签'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            AppTextField(
-              label: '备注',
-              controller: memoCtrl,
-              hint: '这笔钱花在哪了',
-              autofocus: true,
-              maxLength: 60,
-            ),
-            const SizedBox(height: 14),
-            AppTextField(
-              label: '标签',
-              controller: tagCtrl,
-              hint: '逗号分隔，如：聚餐,报销',
-              maxLength: 40,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('确定')),
-        ],
-      ),
+      ref: ref,
+      initial: _tags,
     );
-    if (ok == true && mounted) {
-      setState(() {
-        _tags = tagCtrl.text;
-        // 弹窗里的文本回写到常驻控制器（唯一真源）
-        _memoCtrl.text = memoCtrl.text;
-      });
-    }
-    // 临时控制器必须释放：不 dispose 的话每次打开备注弹窗都漏一个
-    // 带监听器的对象，还会被 Flutter 的 debug 断言报出来（审计 P3-10）。
-    memoCtrl.dispose();
-    tagCtrl.dispose();
+    if (picked != null && mounted) setState(() => _tags = picked);
   }
 
   /// 备注联想条（和新建面板那套是同一份实现，改的时候两边都要改）
