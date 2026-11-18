@@ -921,6 +921,22 @@ final subscriptionsProvider = FutureProvider<List<Subscription>>((ref) async {
   return store.subscriptions(book.id);
 });
 
+/// 订阅关联的那笔账：key = entry id。
+///
+/// 一次取齐（[LedgerStore.entriesByIds]）：列表里可能十几张卡，逐张查库会多
+/// 十几次异步往返，首帧要多等好几帧。取不到（已被永久删除）就不在 Map 里，
+/// 卡片按「账单已删除」显示。
+///
+/// 跟着订阅列表走：订阅本身变了才重算；单独改那笔账由 revision 触发。
+final subscriptionEntriesProvider =
+    FutureProvider<Map<int, Entry>>((ref) async {
+  final subs = await ref.watch(subscriptionsProvider.future);
+  final ids = [for (final s in subs) if (s.linked) s.entryId];
+  if (ids.isEmpty) return const {};
+  final store = await ref.watch(storeProvider.future);
+  return store.entriesByIds(ids);
+});
+
 /// 到期提醒聚合：把本账本里账户的还款日/账单日、目标截止日、借还款到期日，
 /// 转成一组 [DueReminder]（纯计算在 core/due_reminders.dart）。
 ///
@@ -933,6 +949,7 @@ final dueRemindersProvider = FutureProvider<List<DueReminder>>((ref) async {
   final goals = await ref.watch(goalsProvider.future);
   final debts = await ref.watch(debtsProvider.future);
   final subscriptions = await ref.watch(subscriptionsProvider.future);
+  final links = await ref.watch(subscriptionEntriesProvider.future);
   final settings = ref.watch(settingsProvider);
   ref.watch(revisionProvider);
   return buildDueReminders(
@@ -942,7 +959,15 @@ final dueRemindersProvider = FutureProvider<List<DueReminder>>((ref) async {
     now: DateTime.now(),
     leadDays: settings.dueReminderLeadDays,
     symbol: settings.symbol,
-    subscriptions: subscriptions,
+    // 关联了账的订阅，金额以那笔账为准：卡片上是这么显示的，
+    // 提醒文案（「网易云音乐（¥238 / 12 个月）」）不能还念着旧数字。
+    subscriptions: [
+      for (final s in subscriptions)
+        switch (links[s.entryId]) {
+          final Entry e => s.withFee(e.amountCents),
+          _ => s,
+        }
+    ],
   );
 });
 

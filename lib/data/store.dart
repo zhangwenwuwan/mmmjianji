@@ -609,6 +609,7 @@ class Subscription {
     required this.autoRenew,
     required this.note,
     required this.remindDays,
+    this.entryId = 0,
   });
 
   final int id;
@@ -635,6 +636,32 @@ class Subscription {
 
   /// 到期前多少天提醒。0 = 不提醒。
   final int remindDays;
+
+  /// 关联的那笔流水 id。0 = 没关联。
+  ///
+  /// 只存指针，不复制金额：那笔账才是唯一真相（见 v24 迁移注释）。
+  final int entryId;
+
+  bool get linked => entryId > 0;
+
+  /// 复制一份、只换费用。
+  ///
+  /// 关联了账单时，展示和提醒里的金额都该跟着那笔账走（那笔账是唯一真相），
+  /// 但库里存的 feeCents 是上次保存时的快照 —— 用户后来改了账的金额，
+  /// 读出来的路径上用这个换一下就行，不必回写库。
+  Subscription withFee(int cents) => Subscription(
+        id: id,
+        bookId: bookId,
+        name: name,
+        glyph: glyph,
+        startDay: startDay,
+        months: months,
+        feeCents: cents,
+        autoRenew: autoRenew,
+        note: note,
+        remindDays: remindDays,
+        entryId: entryId,
+      );
 
   DateTime get startDate => LedgerStore.parseDay(startDay);
 
@@ -739,7 +766,7 @@ class LedgerStore {
   /// `allPockets().first` 这样的默认账户，改默认值会让十几处测试同时红。
   final bool withSamplePockets;
 
-  static const _version = 23;
+  static const _version = 24;
 
   static Future<LedgerStore> open({
     String? path,
@@ -1178,9 +1205,19 @@ class LedgerStore {
       fee_cents INTEGER NOT NULL DEFAULT 0,
       auto_renew INTEGER NOT NULL DEFAULT 0,
       note TEXT NOT NULL DEFAULT '',
-      remind_days INTEGER NOT NULL DEFAULT 7
+      remind_days INTEGER NOT NULL DEFAULT 7,
+      entry_id INTEGER NOT NULL DEFAULT 0
     )
   ''');
+
+  // v24：订阅关联的那笔流水（0 = 没关联）。
+  //
+  // 一张订阅卡上的「¥238」到底是哪笔账？用户点了会员就该看到它，
+  // 否则金额只是个孤立的数字，对不上账就没法核。存 entry id 而不是复制
+  // 一份金额/日期：那笔账才是唯一真相，改账、删账都要能反映过来。
+  // 只在**读卡片**时按 id 取，取不到（已删/回收站）就当没关联显示。
+  await _addColumnIfMissing(
+      db, 'subscriptions', 'entry_id', 'INTEGER NOT NULL DEFAULT 0');
 
   // v8：附件（图片凭证）
     await db.execute('''
@@ -1928,6 +1965,7 @@ class LedgerStore {
         autoRenew: ((r['auto_renew'] as num?)?.toInt() ?? 0) == 1,
         note: (r['note'] as String?) ?? '',
         remindDays: (r['remind_days'] as num?)?.toInt() ?? 7,
+        entryId: (r['entry_id'] as num?)?.toInt() ?? 0,
       );
 
   Map<String, Object?> _subscriptionMap(Subscription s) => {
@@ -1940,6 +1978,7 @@ class LedgerStore {
         'auto_renew': s.autoRenew ? 1 : 0,
         'note': s.note,
         'remind_days': s.remindDays,
+        'entry_id': s.entryId,
       };
 
   Future<int> addSubscription(Subscription s) =>
@@ -2329,6 +2368,33 @@ class LedgerStore {
         whereArgs: [bookId, dayKey(day)],
         orderBy: 'id DESC');
     return rows.map(_toEntry).toList();
+  }
+
+  /// 按 id 批量取流水（**含已删除的**）。
+  ///
+  /// 会员订阅卡片要按 entry_id 回查那笔账：删进回收站的也得取到，
+  /// 否则会显示成「没关联」，用户以为关联被弄丢了（取到 deleted_at 非空
+  /// 就显示「账单已删除」）。
+  ///
+  /// 一次取齐而不是每张卡查一次库：列表里可能十几张卡，逐条查会多十几次
+  /// 异步往返，首帧要多等好几帧。
+  Future<Map<int, Entry>> entriesByIds(Iterable<int> ids) async {
+    final list = ids.where((id) => id > 0).toSet().toList();
+    if (list.isEmpty) return const {};
+    final out = <int, Entry>{};
+    // SQLite 的绑定变量上限是 999，分批更稳（订阅量级到不了，但别留坑）
+    for (var i = 0; i < list.length; i += 400) {
+      final end = (i + 400).clamp(0, list.length);
+      final chunk = list.sublist(i, end);
+      final marks = List.filled(chunk.length, '?').join(',');
+      final rows = await _db.query('entries',
+          where: 'id IN ($marks)', whereArgs: chunk);
+      for (final r in rows) {
+        final e = _toEntry(r);
+        out[e.id] = e;
+      }
+    }
+    return out;
   }
 
   /// 搜索：备注 / 标签 / 分类名。空关键词返回最近的流水。

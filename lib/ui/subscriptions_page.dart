@@ -11,6 +11,7 @@ import '../state/settings.dart';
 import 'amount_input.dart';
 import 'app_glyph.dart';
 import 'common.dart';
+import 'entry_peek.dart';
 import 'motion.dart';
 import 'theme.dart';
 import 'wheel_date_picker.dart';
@@ -78,13 +79,16 @@ class SubscriptionsPage extends ConsumerWidget {
             );
           }
           final today = DateTime.now();
+          // 关联的那笔账：一次取齐，取不到（已永久删除）就不在 Map 里。
+          final links = ref.watch(subscriptionEntriesProvider).valueOrNull ??
+              const <int, Entry>{};
           return ListView.separated(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
             itemCount: list.length + 1,
             separatorBuilder: (_, __) => const SizedBox(height: 10),
             itemBuilder: (context, i) {
               if (i == list.length) return _footer(context);
-              return _card(context, ref, list[i], today);
+              return _card(context, ref, list[i], today, links);
             },
           );
         },
@@ -103,8 +107,8 @@ class SubscriptionsPage extends ConsumerWidget {
     );
   }
 
-  Widget _card(
-      BuildContext context, WidgetRef ref, Subscription s, DateTime today) {
+  Widget _card(BuildContext context, WidgetRef ref, Subscription s,
+      DateTime today, Map<int, Entry> links) {
     final cd = countdownOf(s, today);
     final color = switch (cd.state) {
       SubscriptionState.expired || SubscriptionState.today => Palette.expense,
@@ -155,8 +159,10 @@ class SubscriptionsPage extends ConsumerWidget {
                     ),
                     const SizedBox(height: 5),
                     Text(
+                      // 关联了账单就不再显示填的费用：金额只有一个真相，
+                      // 两处并存时用户改了一边没改另一边，自己都分不清信谁。
                       '${ymdText(s.startDate)} 开卡 · ${s.months} 个月'
-                      '${s.feeCents > 0 ? ' · ${centsToText(s.feeCents)}' : ''}',
+                      '${(!s.linked && s.feeCents > 0) ? ' · ${centsToText(s.feeCents)}' : ''}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -168,6 +174,10 @@ class SubscriptionsPage extends ConsumerWidget {
                       style: TextStyle(
                           fontSize: 12, color: Palette.inkFaint(context)),
                     ),
+                    if (s.linked) ...[
+                      const SizedBox(height: 6),
+                      _linkRow(context, ref, s, links[s.entryId]),
+                    ],
                     if (s.note.isNotEmpty) ...[
                       const SizedBox(height: 4),
                       Text(
@@ -214,6 +224,65 @@ class SubscriptionsPage extends ConsumerWidget {
                   ),
                 ],
               ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 卡片上的「关联账单」行：点一下看那笔账。
+  ///
+  /// 显示的是**那笔账自己**的日期和金额，不是表单里填的费用 —— 关联之后
+  /// 金额只留一个真相，卡片上两处数字打架比没有数字更糟。
+  Widget _linkRow(
+      BuildContext context, WidgetRef ref, Subscription s, Entry? entry) {
+    final symbol = ref.watch(settingsProvider).symbol;
+    final removed = entry != null && entry.deletedAt != null;
+    final brand = Palette.brand(context);
+    final color = removed || entry == null ? Palette.inkFaint(context) : brand;
+
+    final String text;
+    if (entry == null) {
+      text = '关联的账单已经不在了';
+    } else {
+      final memo = entry.memo.isEmpty ? '' : ' · ${entry.memo}';
+      text = '${removed ? '已删除 · ' : ''}${_mmdd(entry.day)} · '
+          '$symbol${centsToText(entry.amountCents)}$memo';
+    }
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppRadius.pill),
+        // 永久删除（查不到）就没得看，只剩一句说明。
+        onTap: entry == null ? null : () => showEntryPeek(context, entry),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(8, 3, 6, 3),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(AppRadius.pill),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                  removed || entry == null
+                      ? Icons.link_off
+                      : Icons.receipt_long_outlined,
+                  size: 13,
+                  color: color),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, color: color),
+                ),
+              ),
+              if (entry != null)
+                Icon(Icons.chevron_right, size: 14, color: color),
             ],
           ),
         ),
@@ -304,17 +373,17 @@ class SubscriptionsPage extends ConsumerWidget {
 ///
 /// 独立成一个 StatefulWidget 只为一件事：controller 的创建与释放必须成对，
 /// 且要晚于面板的关闭动画（详见 [SubscriptionsPage._openEditor] 的注释）。
-class _SubscriptionEditor extends StatefulWidget {
+class _SubscriptionEditor extends ConsumerStatefulWidget {
   const _SubscriptionEditor({required this.initial, required this.bookId});
 
   final Subscription? initial;
   final int bookId;
 
   @override
-  State<_SubscriptionEditor> createState() => _SubscriptionEditorState();
+  ConsumerState<_SubscriptionEditor> createState() => _SubscriptionEditorState();
 }
 
-class _SubscriptionEditorState extends State<_SubscriptionEditor> {
+class _SubscriptionEditorState extends ConsumerState<_SubscriptionEditor> {
   late final TextEditingController _nameCtrl;
   late final TextEditingController _monthsCtrl;
   late final TextEditingController _feeCtrl;
@@ -323,6 +392,11 @@ class _SubscriptionEditorState extends State<_SubscriptionEditor> {
   late String _glyph;
   late DateTime _start;
   late bool _autoRenew;
+
+  /// 关联的那笔账。null = 没关联（编辑模式下可能是「关联的账已永久删除」，
+  /// 那种情况保存时会自动解绑，不会把死指针写回库）。
+  Entry? _linked;
+
   String? _error;
 
   @override
@@ -338,6 +412,14 @@ class _SubscriptionEditorState extends State<_SubscriptionEditor> {
     _glyph = s?.glyph ?? kSubsGlyphs.first;
     _start = s?.startDate ?? DateTime.now();
     _autoRenew = s?.autoRenew ?? true;
+    if (s != null && s.linked) _loadLinked(s.entryId);
+  }
+
+  Future<void> _loadLinked(int id) async {
+    final store = await ref.read(storeProvider.future);
+    final map = await store.entriesByIds([id]);
+    if (!mounted) return;
+    setState(() => _linked = map[id]);
   }
 
   @override
@@ -373,10 +455,15 @@ class _SubscriptionEditorState extends State<_SubscriptionEditor> {
         glyph: _glyph,
         startDay: ymdText(_start),
         months: months,
-        feeCents: parseAmountToCents(_feeCtrl.text.trim()) ?? 0,
+        // 关联了账单就以那笔账的金额为准：卡片上只留一个真相，
+        // 两处并存时用户改了一边没改另一边，自己都分不清该信谁。
+        feeCents: _linked?.amountCents ??
+            parseAmountToCents(_feeCtrl.text.trim()) ??
+            0,
         autoRenew: _autoRenew,
         note: _noteCtrl.text.trim(),
         remindDays: (int.tryParse(_remindCtrl.text) ?? 0).clamp(0, 365),
+        entryId: _linked?.id ?? 0,
       ),
     );
   }
@@ -481,6 +568,8 @@ class _SubscriptionEditorState extends State<_SubscriptionEditor> {
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
             inputFormatters: const [AmountInputFormatter()],
           ),
+          const SizedBox(height: 10),
+          _linkField(),
           const SizedBox(height: 6),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
@@ -526,6 +615,112 @@ class _SubscriptionEditorState extends State<_SubscriptionEditor> {
         ],
       ),
     );
+  }
+
+  /// 「关联账单」选择行。
+  ///
+  /// 会员费到底记在哪笔流水上？不关联的话，卡上的金额和账本里的流水分家，
+  /// 对账时只能靠回忆。关联后点卡片上的金额就能看到那笔账。
+  Widget _linkField() {
+    final e = _linked;
+    final brand = Palette.brand(context);
+    final symbol = ref.watch(settingsProvider).symbol;
+    final gone = e != null && e.deletedAt != null;
+    final text = e == null
+        ? '选一笔已有的支出'
+        : '${_mmdd(e.day)} · $symbol${centsToText(e.amountCents)}'
+            '${e.memo.isEmpty ? '' : ' · ${e.memo}'}';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text('关联账单',
+                style:
+                    TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
+            const Spacer(),
+            if (e != null)
+              GestureDetector(
+                onTap: () => setState(() => _linked = null),
+                behavior: HitTestBehavior.opaque,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  child: Text('取消关联',
+                      style: TextStyle(
+                          fontSize: 12, color: Palette.inkSoft(context))),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        InkWell(
+          borderRadius: BorderRadius.circular(AppRadius.control),
+          onTap: _pickEntry,
+          child: Container(
+            height: 44,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            decoration: BoxDecoration(
+              color: Palette.paper(context),
+              borderRadius: BorderRadius.circular(AppRadius.control),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                    gone
+                        ? Icons.link_off
+                        : (e == null
+                            ? Icons.add_link
+                            : Icons.receipt_long_outlined),
+                    size: 15,
+                    color: e == null ? Palette.inkFaint(context) : brand),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    gone ? '关联的账单已删除' : text,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 13,
+                        color: e == null
+                            ? Palette.inkFaint(context)
+                            : Palette.ink(context)),
+                  ),
+                ),
+                Text(e == null ? '选一笔' : '更换',
+                    style: TextStyle(fontSize: 12, color: brand)),
+                Icon(Icons.chevron_right, size: 16, color: brand),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text('关联后，会员卡上的金额就是这笔账的金额',
+            style: TextStyle(fontSize: 11, color: Palette.inkFaint(context))),
+      ],
+    );
+  }
+
+  Future<void> _pickEntry() async {
+    final picked = await showAppSheet<_EntryPick>(
+      context: context,
+      title: '挑一笔账',
+      // 长列表自己管滚动：外层再包一层 SingleChildScrollView 会和外层抢手势，
+      // 而且 fillsHeight 下 Expanded 需要一个能撑满的 ListView。
+      scrollable: false,
+      fillsHeight: true,
+      builder: (_) => _EntryPicker(bookId: widget.bookId),
+    );
+    // ⚠️ null = 划掉面板 / 按返回键，**什么都别改**；
+    // 明确「不关联」走的是 `_EntryPick(null)`。两者混成 null，
+    // 用户划一下面板就会把刚选好的关联悄悄清空。
+    if (picked == null || !mounted) return;
+    setState(() {
+      _linked = picked.entry;
+      if (picked.entry != null) {
+        // 费用框跟着那笔账走：留着旧数字，两个金额在库里就会打架。
+        _feeCtrl.text = centsToText(picked.entry!.amountCents);
+      }
+    });
   }
 
   Widget _dateField(
@@ -594,3 +789,184 @@ class _SubscriptionEditorState extends State<_SubscriptionEditor> {
 /// `yyyy-MM-dd`：存库格式，也是卡片上显示的格式（中国用户对这个写法最熟）。
 String ymdText(DateTime d) =>
     '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+/// `MM-dd`：关联账单那一行只显示月日 —— 年份在「开卡日期」里已经出现过了，
+/// 一行里放两个年份会把备注挤没。
+String _mmdd(DateTime d) =>
+    '${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+/// 选账单的返回值。
+///
+/// 为什么要包一层：`showAppSheet` 被划掉/返回键也返回 null，而「明确选择
+/// 不关联」同样是「没有 Entry」。两者混成一个 null，用户划一下面板就会把
+/// 刚选好的关联悄悄清空（搜索页的筛选弹层踩过这个坑）。
+class _EntryPick {
+  const _EntryPick(this.entry);
+
+  /// null = 明确选择「不关联」。
+  final Entry? entry;
+}
+
+/// 从已有流水里挑一笔来关联。
+///
+/// 只列支出、近 400 天：会员费不会记成收入；400 天能覆盖年付，再往前的
+/// 账单连用户自己都想不起来是哪笔，关联了也核不了账。
+class _EntryPicker extends ConsumerStatefulWidget {
+  const _EntryPicker({required this.bookId});
+
+  final int bookId;
+
+  @override
+  ConsumerState<_EntryPicker> createState() => _EntryPickerState();
+}
+
+class _EntryPickerState extends ConsumerState<_EntryPicker> {
+  late final Future<List<Entry>> _future = _load();
+  final _searchCtrl = TextEditingController();
+  String _kw = '';
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<List<Entry>> _load() async {
+    final store = await ref.read(storeProvider.future);
+    final rows = await store.entriesRecent(widget.bookId, days: 400);
+    final out = [for (final e in rows) if (e.flow == 'out') e];
+    // 新的在前：刚交完的会员费一定在最近，不用翻。
+    out.sort((a, b) {
+      final c = b.day.compareTo(a.day);
+      return c != 0 ? c : b.id.compareTo(a.id);
+    });
+    return out;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final buckets =
+        ref.watch(allBucketsProvider).valueOrNull ?? const <Bucket>[];
+    final pockets =
+        ref.watch(allPocketsProvider).valueOrNull ?? const <Pocket>[];
+    final bucketById = {for (final b in buckets) b.id: b};
+    final pocketById = {for (final p in pockets) p.id: p};
+    final symbol = ref.watch(settingsProvider).symbol;
+    final kw = _kw.trim().toLowerCase();
+
+    return FutureBuilder<List<Entry>>(
+      future: _future,
+      builder: (context, snap) {
+        final all = snap.data ?? const <Entry>[];
+        final list = [
+          for (final e in all)
+            if (kw.isEmpty ||
+                e.memo.toLowerCase().contains(kw) ||
+                (bucketById[e.bucketId]?.title.toLowerCase().contains(kw) ??
+                    false) ||
+                (pocketById[e.pocketId]?.title.toLowerCase().contains(kw) ??
+                    false) ||
+                centsToText(e.amountCents).contains(kw))
+              e
+        ];
+
+        return Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
+              child: TextField(
+                controller: _searchCtrl,
+                onChanged: (v) => setState(() => _kw = v),
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: '搜备注 / 分类 / 账户 / 金额',
+                  prefixIcon: const Icon(Icons.search, size: 18),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(AppRadius.control)),
+                ),
+              ),
+            ),
+            if (snap.connectionState != ConnectionState.done)
+              const Expanded(
+                child: Center(
+                    child: SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2))),
+              )
+            else if (list.isEmpty)
+              Expanded(
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      snap.hasError
+                          ? '读取失败，回去再试一次'
+                          : (all.isEmpty
+                              ? '这个账本还没有支出记录'
+                              : '没找到匹配的账单'),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          fontSize: 13, color: Palette.inkSoft(context)),
+                    ),
+                  ),
+                ),
+              )
+            else
+              Expanded(
+                child: ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(8, 0, 8, 16),
+                  itemCount: list.length + 1,
+                  itemBuilder: (context, i) {
+                    if (i == 0) {
+                      return ListTile(
+                        dense: true,
+                        leading: Icon(Icons.link_off,
+                            size: 18, color: Palette.inkFaint(context)),
+                        title: const Text('不关联账单',
+                            style: TextStyle(fontSize: 13)),
+                        onTap: () =>
+                            Navigator.pop(context, const _EntryPick(null)),
+                      );
+                    }
+                    final e = list[i - 1];
+                    final b = bucketById[e.bucketId];
+                    final p = pocketById[e.pocketId];
+                    final memo = e.memo.isEmpty ? '' : ' · ${e.memo}';
+                    return ListTile(
+                      dense: true,
+                      leading: SizedBox(
+                        width: 30,
+                        child: Center(
+                            child: AppGlyph(b?.glyph ?? '🏷️', size: 17)),
+                      ),
+                      title: Text(b?.title ?? '未分类',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 13)),
+                      subtitle: Text(
+                        '${_mmdd(e.day)} · ${p?.title ?? '已删除账户'}$memo',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontSize: 11, color: Palette.inkFaint(context)),
+                      ),
+                      trailing: Text(
+                        '$symbol${centsToText(e.amountCents)}',
+                        style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Palette.expense),
+                      ),
+                      onTap: () =>
+                          Navigator.pop(context, _EntryPick(e)),
+                    );
+                  },
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
