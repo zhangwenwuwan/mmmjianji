@@ -30,11 +30,11 @@ void main() {
     test('自动建默认账本 + 账户 + 分类', () async {
       expect((await store.books()).length, 1);
       expect((await store.allPockets(includeArchived: false)).length, 2);
-      // 2026-10-26 起默认支出分类只给「衣食住行」四个（原来 8 个）
-      expect((await store.buckets(bookId, 'out')).length, 4);
+      // 1.4.73 起：支出九个（食 行 住 购 玩 医 学 礼 其他），收入五个。
+      // 前八个刚好铺满记账页 4 列网格两行，「其他」独占第三行。
       expect([for (final b in await store.buckets(bookId, 'out')) b.title],
-          ['衣', '食', '住', '行']);
-      expect((await store.buckets(bookId, 'in')).length, 4);
+          ['食', '行', '住', '购', '玩', '医', '学', '礼', '其他']);
+      expect((await store.buckets(bookId, 'in')).length, 5);
     });
 
     test('账户增改归档删除', () async {
@@ -76,15 +76,18 @@ void main() {
     });
 
     test('分类增改归档', () async {
+      // 不写死种子数量：默认分类从 4 个变成 9 个（1.4.73），
+      // 这类「加一个、减一个」的断言按增量算才不会每次改种子就红一片。
+      final before = (await store.buckets(bookId, 'out')).length;
       await store.addBucket(
           bookId: bookId, title: '宠物', glyph: '🐱', flow: 'out');
       var out = await store.buckets(bookId, 'out');
-      expect(out.length, 5);
+      expect(out.length, before + 1);
       final pet = out.firstWhere((b) => b.title == '宠物');
       await store.archiveBucket(pet.id, true);
-      expect((await store.buckets(bookId, 'out')).length, 4);
-      expect(
-          (await store.buckets(bookId, 'out', includeArchived: true)).length, 5);
+      expect((await store.buckets(bookId, 'out')).length, before);
+      expect((await store.buckets(bookId, 'out', includeArchived: true)).length,
+          before + 1);
     });
   });
 

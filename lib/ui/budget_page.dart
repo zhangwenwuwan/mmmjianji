@@ -385,8 +385,9 @@ class _ProportionalSplitButton extends ConsumerWidget {
                 children: [
                   for (final e in plan.entries)
                     ListTile(
-                      leading: Text(glyphOf[e.key] ?? '🧾',
-                          style: const TextStyle(fontSize: 18)),
+                      // 图标可能是内置 PNG（ic:xxx）或老 emoji，一律交给 AppGlyph：
+                      // 直接 Text 会把 'ic:out_food' 原样打出来。
+                      leading: AppGlyph(glyphOf[e.key] ?? '🧾', size: 18),
                       title: Text(titleOf[e.key] ?? '已删除分类'),
                       trailing: Text('¥${centsToText(e.value)}'),
                     ),

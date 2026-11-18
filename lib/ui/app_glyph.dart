@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import '../core/glyphs.dart';
 import '../services/icon_service.dart';
 
 /// 分类 / 账户 / 愿望 / 账本的图标。
@@ -43,6 +44,23 @@ class AppGlyph extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 内置图标（设计师画的 PNG）：保持原始宽高比，**不裁圆角**。
+    //
+    // 这些图是「物体插画」（碗、车、卡），内容只占画布 40%~100%，
+    // 裁圆角会把接近满画布的卡类图标切掉四角；用 contain 让留白自然存在，
+    // 视觉大小由设计时的构图决定（所有图都是居中构图，已核对过）。
+    if (Glyphs.isIcon(glyph)) {
+      final img = Image.asset(
+        Glyphs.assetPath(glyph),
+        width: fill ? null : size,
+        height: fill ? null : size,
+        fit: BoxFit.contain,
+        filterQuality: FilterQuality.medium,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) => _fallbackText(),
+      );
+      return fill ? SizedBox.expand(child: img) : img;
+    }
     if (!IconService.isImage(glyph)) {
       return Text(glyph, style: TextStyle(fontSize: size));
     }
@@ -78,7 +96,11 @@ class AppGlyph extends StatelessWidget {
 /// 把图标字段转成**可以放进文字里**的短标签。
 ///
 /// 有些地方只能放纯字符串（下拉项的 label、统计图的图例、桑基图标签）。
-/// 自定义图片没法用文字表示，直接拼进去会露出 "img:20261025_143012.jpg"
-/// 这种一串文件名 —— 用 📷 占位，至少体面。
-String glyphLabel(String glyph) =>
-    IconService.isImage(glyph) ? '📷' : glyph;
+/// 内置 PNG 图标没法用文字表示，回退成对应的 emoji；自定义图片同理用 📷 占位。
+/// **绝不能把 `ic:out_food` / `img:xxx.jpg` 这种内部标识漏到界面上。**
+String glyphLabel(String glyph) {
+  if (Glyphs.isIcon(glyph)) {
+    return kGlyphEmoji[Glyphs.idOf(glyph)] ?? '•';
+  }
+  return IconService.isImage(glyph) ? '📷' : glyph;
+}

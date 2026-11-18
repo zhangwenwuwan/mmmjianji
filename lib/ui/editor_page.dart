@@ -3744,8 +3744,10 @@ class _BucketTile extends StatelessWidget {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  AppGlyph(bucket.glyph, size: 20),
-                  const SizedBox(height: 4),
+                  // 插画的物体只占画布 88%，同样 20 会比 emoji 看着小一圈，
+                  // 所以格子里的图标给到 25（格高 62，仍放得下）。
+                  AppGlyph(bucket.glyph, size: 25),
+                  const SizedBox(height: 3),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 4),
                     child: Text(

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app_glyph.dart';
 import '../core/bucket_order.dart';
+import '../core/glyphs.dart';
 import '../data/store.dart';
 import '../services/app_log.dart';
 import '../state/ledger_state.dart';
@@ -13,10 +14,9 @@ import 'theme.dart';
 
 /// 新增分类时的默认图标。
 ///
-/// 2026-10-26 用户要求「适当保留四个五个就行」—— 原来 18 个铺了三行，
-/// 找图标比想名字还慢。留下覆盖最常用的五类：食 / 购物 / 住 / 收入 / 其它。
-/// 想用别的图标走图标栏第一个格子的「相册」，自定义图片不受这个清单限制。
-const kBucketGlyphs = ['🍜', '🛍️', '🏠', '💰', '✨'];
+/// 图标清单不再写在这里：1.4.73 起用设计师画的 PNG，支出 / 收入各一套，
+/// 顺序见 `core/glyphs.dart` 的 [kOutGlyphIds] / [kInGlyphIds]。
+/// 想用别的图标走图标栏第一个格子的「相册」，自定义图片不受清单限制。
 
 /// 分类管理：支出 / 收入两组，各自增改归档。
 class BucketManagePage extends ConsumerStatefulWidget {
@@ -67,7 +67,19 @@ class _BucketManagePageState extends ConsumerState<BucketManagePage>
     // 常驻 controller：放在 build 里每帧新建会让光标跳到开头、
     // 敲一半点图标/下拉就丢位置（这个坑在记账备注框踩过，这里不能再犯）。
     final titleCtrl = TextEditingController(text: title);
-    String glyph = bucket?.glyph ?? kBucketGlyphs.first;
+    // 支出 / 收入各一套图标：给支出分类挑「工资」的图标毫无意义。
+    final icons = [
+      for (final id in (flow == 'in' ? kInGlyphIds : kOutGlyphIds))
+        Glyphs.of(id),
+    ];
+    // 老分类存的是 emoji（'🍜'），把它前置一格 —— 否则「当前图标」在列表里
+    // 找不到，选中态一片空白，用户会以为自己没设过图标。
+    final glyphChoices = <String>[
+      if ((bucket?.glyph ?? '').isNotEmpty && !icons.contains(bucket!.glyph))
+        bucket.glyph,
+      ...icons,
+    ];
+    String glyph = bucket?.glyph ?? icons.first;
     int? parentId = bucket?.parentId;
     // 只有一级分类能当父分类；自己不能当自己的父分类
     final allBuckets =
@@ -120,7 +132,7 @@ class _BucketManagePageState extends ConsumerState<BucketManagePage>
               ),
               const SizedBox(height: 14),
               GlyphPicker(
-                glyphs: kBucketGlyphs,
+                glyphs: glyphChoices,
                 value: glyph,
                 onChanged: (g) => setState(() => glyph = g),
               ),
@@ -423,7 +435,7 @@ class _BucketListState extends ConsumerState<_BucketList> {
       {required bool isChild, required int index}) {
     return ListTile(
       contentPadding: EdgeInsets.only(left: isChild ? 34 : 16, right: 4),
-      leading: AppGlyph(b.glyph, size: isChild ? 15 : 18),
+      leading: AppGlyph(b.glyph, size: isChild ? 18 : 22),
       title: Row(
         children: [
           if (isChild) ...[

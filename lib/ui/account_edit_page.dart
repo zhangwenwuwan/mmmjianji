@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/currency.dart';
+import '../core/glyphs.dart';
 import '../core/loan.dart';
 import '../core/pocket_types.dart';
 import '../data/store.dart';
@@ -27,8 +28,13 @@ class AccountEditPage extends ConsumerStatefulWidget {
 
   final Pocket? pocket;
 
-  /// 图标栏默认图标（自定义图片由 GlyphPicker 的相册入口负责）
-  static const glyphs = ['💚', '🅰️', '🏦', '💳'];
+  /// 图标栏可选的图标（设计师画的 PNG）。
+  ///
+  /// 1.4.73 之前这里只有 ['💚','🅰️','🏦','💳'] 四个，而且是「类型默认图标的
+  /// 子集」—— 花呗账户一旦换了图标就再也回不到 🌸，最后所有账户长得一样。
+  /// 现在覆盖「新增账户」里全部 11 个类型的插画，按选择器顺序排。
+  static List<String> get glyphs =>
+      [for (final id in kAccountGlyphIds) Glyphs.of(id)];
 
   @override
   ConsumerState<AccountEditPage> createState() => _AccountEditPageState();
@@ -528,12 +534,21 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
                         child:
                             AppGlyph(_glyph, size: 21, fill: true, radius: 10),
                       )
-                    : TypeBadgeView(
-                        badge ??
-                            TypeBadge(
-                                tint: _kindColorOf(_kind), emoji: _glyph),
-                        size: 38,
-                      ),
+                    // 内置插画：透明底、构图自带留白，按 38 方框 contain 即可，
+                    // 不能走 TypeBadgeView（那是给 emoji 加彩色底徽的，
+                    // 会把 'ic:acc_cash' 这种 id 当文字画出来）。
+                    : Glyphs.isIcon(_glyph)
+                        ? SizedBox(
+                            width: 38,
+                            height: 38,
+                            child: AppGlyph(_glyph, size: 38),
+                          )
+                        : TypeBadgeView(
+                            badge ??
+                                TypeBadge(
+                                    tint: _kindColorOf(_kind), emoji: _glyph),
+                            size: 38,
+                          ),
                 const SizedBox(width: 12),
                 Text(label,
                     style: TextStyle(
@@ -704,13 +719,20 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
   }
 
   Future<void> _pickGlyph() async {
+    final icons = AccountEditPage.glyphs;
+    // 老账户的 glyph 是 emoji（股票 📈、房产 🏠…），这些类型没有专属插画。
+    // 把当前值前置一格，否则一进来选中态空白，用户会以为图标丢了。
+    final choices = <String>[
+      if (_glyph.isNotEmpty && !icons.contains(_glyph)) _glyph,
+      ...icons,
+    ];
     final g = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
       builder: (ctx) => Padding(
         padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
         child: GlyphPicker(
-          glyphs: AccountEditPage.glyphs,
+          glyphs: choices,
           value: _glyph,
           onChanged: (v) => Navigator.of(ctx).pop(v),
         ),
@@ -1122,8 +1144,27 @@ class _AccountTypePage extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          TypeBadgeView(kTypeBadges[id] ?? _fallbackBadge(t),
-              size: 48, selected: selected),
+          // 有插画的类型直接显示插画本身：它是完整彩色图，
+          // 再套一层彩色圆角底会互相打架（深蓝卡片压在深蓝底上看不出边）。
+          if (Glyphs.isIcon(t.glyph))
+            Container(
+              width: 48,
+              height: 48,
+              padding: const EdgeInsets.all(3),
+              decoration: BoxDecoration(
+                color: selected
+                    ? Palette.brand(context).withValues(alpha: 0.10)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(14),
+                border: selected
+                    ? Border.all(color: Palette.brand(context), width: 2)
+                    : null,
+              ),
+              child: AppGlyph(t.glyph, size: 42),
+            )
+          else
+            TypeBadgeView(kTypeBadges[id] ?? _fallbackBadge(t),
+                size: 48, selected: selected),
           const SizedBox(height: 6),
           Text(t.label,
               maxLines: 1,
@@ -1159,8 +1200,12 @@ class TypeBadgeView extends StatelessWidget {
                     fontWeight: FontWeight.w700,
                     color: Colors.white,
                   ))
-              : Text(badge.emoji ?? '🧾',
-                  style: TextStyle(fontSize: size * 0.5))),
+              // emoji 分支也要认插画 id：万一哪个调用点没走上面的判断，
+              // 这里至少画出图，而不是把 'ic:acc_cash' 当文字怼在徽标上。
+              : Glyphs.isIcon(badge.emoji ?? '')
+                  ? AppGlyph(badge.emoji!, size: size * 0.72)
+                  : Text(badge.emoji ?? '🧾',
+                      style: TextStyle(fontSize: size * 0.5))),
     );
     return Container(
       width: size,

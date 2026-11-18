@@ -715,7 +715,10 @@ class GlyphPicker extends StatelessWidget {
             box(
               selected: value == g,
               onTap: () => onChanged(g),
-              child: Text(g, style: const TextStyle(fontSize: 17)),
+              // 候选图标可能是内置 PNG（ic:xxx）、emoji 或自定义图片，
+              // **不能直接 Text(g)** —— 那会把 'ic:out_food' 原样打出来。
+              // AppGlyph 会自己分派：PNG 撑满格子，emoji 仍按字号画。
+              child: AppGlyph(g, size: 17, fill: true, radius: 8),
             ),
         ],
       ),

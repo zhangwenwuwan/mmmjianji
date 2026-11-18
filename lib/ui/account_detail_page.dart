@@ -361,7 +361,8 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
         children: [
           Row(
             children: [
-              const Icon(Icons.credit_card, size: 18, color: Colors.white70),
+              // 账户自己的图标（插画 / emoji / 自定义图片），别再按 kind 画通用图标
+              AppGlyph(p.glyph, size: 20),
               const SizedBox(width: 7),
               Expanded(
                 child: Text(
@@ -504,8 +505,7 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
                   children: [
                     Row(
                       children: [
-                        const Icon(Icons.account_balance,
-                            size: 16, color: Palette.info),
+                        AppGlyph(p.glyph, size: 18),
                         const SizedBox(width: 6),
                         Expanded(
                           child: Text(
@@ -571,7 +571,7 @@ class _AccountDetailPageState extends ConsumerState<AccountDetailPage> {
         children: [
           Row(
             children: [
-              Icon(Icons.trending_down, size: 16, color: Palette.expense),
+              AppGlyph(p.glyph, size: 18),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(p.title,

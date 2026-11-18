@@ -628,18 +628,18 @@ class _AssetsPageState extends ConsumerState<AssetsPage> {
     );
   }
 
-  /// 账户卡上的图标：用户自己换了**图片图标**就显示图片，
-  /// 否则退回该 kind 的特征图标（卡面 / 银行 / 负债各有识别度）。
+  /// 账户卡上的图标：优先用账户自己的 glyph（设计师插画 / emoji / 自定义图片），
+  /// 一个都没有时才退回该 kind 的特征图标（卡面 / 银行 / 负债）。
   ///
-  /// 之前这里是写死的 `Icon(...)`，用户设了自定义图标在资产页根本看不到——
-  /// 只有现金那一支用了 `AppGlyph`，等于「换图只在现金账户生效」。
+  /// 1.4.73 之前这里只认「自定义图片」：emoji 和后来换成的插画在资产页全都
+  /// 被替换成 Material 图标 —— 等于换图标只有现金账户生效，其它账户白换。
   Widget _accountIcon(
     Pocket p, {
     required IconData fallback,
     required double size,
     required Color color,
   }) {
-    if (!IconService.isImage(p.glyph)) {
+    if (p.glyph.isEmpty) {
       return Icon(fallback, size: size, color: color);
     }
     // 按尺寸分两档，别再按比例算：同样的 34 格子在两页里弧度要一样。

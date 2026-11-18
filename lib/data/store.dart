@@ -766,7 +766,7 @@ class LedgerStore {
   /// `allPockets().first` 这样的默认账户，改默认值会让十几处测试同时红。
   final bool withSamplePockets;
 
-  static const _version = 24;
+  static const _version = 26;
 
   static Future<LedgerStore> open({
     String? path,
@@ -1219,6 +1219,22 @@ class LedgerStore {
   await _addColumnIfMissing(
       db, 'subscriptions', 'entry_id', 'INTEGER NOT NULL DEFAULT 0');
 
+  // v25：分类 / 账户图标从 emoji 换成设计师画的 PNG（1.4.73）。
+  //
+  // 只换「还是默认 emoji」的那些：用户自己挑过图标、或直接选了自定义图片的，
+  // 一个都不动 —— 升级不该抹掉别人手动设过的东西。
+  // 匹配条件要求 flow+title（分类）或 type+旧 emoji（账户）一起对得上，
+  // 光比 emoji 会误伤（两个不同分类可能都是 ✨）。
+  //
+  // `from < 26` 让新库跳过：新库的种子本来就是新图标，不用再转一遍。
+  //
+  // 为什么是 26 而不是 25：真机验证时打过一版 v26 的包（迁移逻辑换过一次写法），
+  // 库已经标到 26；版本号只增不减，退回 25 会让 sqflite 直接报降级错误。
+  // 迁移本身幂等（已换成 ic: 的不会再匹配），多跑一次没有副作用。
+  if (from < 26) {
+    await _migrateGlyphsToIcons(db);
+  }
+
   // v8：附件（图片凭证）
     await db.execute('''
       CREATE TABLE IF NOT EXISTS attachments (
@@ -1256,6 +1272,56 @@ class LedgerStore {
     final cols = await db.rawQuery('PRAGMA table_info($table)');
     if (cols.any((c) => c['name'] == column)) return;
     await db.execute('ALTER TABLE $table ADD COLUMN $column $def');
+  }
+
+  /// 老库的默认 emoji 图标 → 设计师插画（v25，1.4.73）。
+  ///
+  /// 幂等：再跑一次也只会匹配到「还是那个 emoji」的行，改完就不匹配了。
+  /// 认不出的（用户自己设过、或类型不在表里）一律原样保留 —— 宁可不换，
+  /// 也不能把人家精心挑的图标冲掉。
+  static Future<void> _migrateGlyphsToIcons(Database db) async {
+    // (flow, title, 老 emoji, 新图标)
+    const bucketMap = <(String, String, String, String)>[
+      ('out', '衣', '👕', 'ic:out_shopping'), // 新体系里并进「购」
+      ('out', '食', '🍜', 'ic:out_food'),
+      ('out', '住', '🏠', 'ic:out_housing'),
+      ('out', '行', '🚌', 'ic:out_transport'),
+      ('out', '其他', '✨', 'ic:out_other'),
+      ('in', '工资', '💰', 'ic:in_salary'),
+      ('in', '兼职', '💼', 'ic:in_sidejob'),
+      ('in', '理财', '📈', 'ic:in_invest'),
+      ('in', '红包', '🧧', 'ic:in_redpacket'),
+      ('in', '其他', '✨', 'ic:in_other'),
+    ];
+    for (final b in bucketMap) {
+      await db.update('buckets', {'glyph': b.$4},
+          where: 'flow = ? AND title = ? AND glyph = ?',
+          whereArgs: [b.$1, b.$2, b.$3]);
+    }
+
+    // (type, 老 emoji, 新图标)
+    const pocketMap = <(String, String, String)>[
+      ('cash', '💵', 'ic:acc_cash'),
+      ('cashWallet', '💵', 'ic:acc_cash'),
+      ('wallet', '👛', 'ic:acc_cash'),
+      ('debit', '🏦', 'ic:acc_bank'),
+      ('bankcard', '🏦', 'ic:acc_bank'),
+      ('alipay', '🅰️', 'ic:acc_alipay'),
+      ('wechat', '💚', 'ic:acc_wechat'),
+      ('wechatWallet', '💚', 'ic:acc_wechat'),
+      ('credit', '💳', 'ic:acc_credit'),
+      ('huabei', '🌸', 'ic:acc_huabei'),
+      ('baitiao', '🧾', 'ic:acc_baitiao'),
+      ('baitiaoPlain', '🧾', 'ic:acc_baitiao'),
+      ('qq', '🐧', 'ic:acc_qq'),
+      ('jd', '🐶', 'ic:acc_jd'),
+      ('custom', '⭐', 'ic:acc_custom'),
+      ('customCredit', '⭐', 'ic:acc_custom_credit'),
+    ];
+    for (final p in pocketMap) {
+      await db.update('pockets', {'glyph': p.$3},
+          where: 'type = ? AND glyph = ?', whereArgs: [p.$1, p.$2]);
+    }
   }
 
   Future<void> _seedIfEmpty() async {
@@ -1299,15 +1365,28 @@ class LedgerStore {
             await _db.rawQuery('SELECT COUNT(*) FROM buckets')) ??
         0;
     if (bucketCount == 0) {
-      // 2026-10-26 用户要求：默认支出分类只给「衣食住行」四个，其余自己加。
-      // 预置 8 个的结果是，大部分人装上 App 的头几步都在删分类。
+      // 1.4.73：图标从 emoji 换成设计师画的 PNG（`ic:` 前缀，见 core/glyphs.dart）。
+      // 支出仍是九个一级：前八个铺满记账页 4 列网格的两行，「其他」独占第三行；
+      // 收入五个。**不预置二级** —— 记账是「点分类即选中」的一屏流程，
+      // 预置二级等于每笔多按一次。想要细分的人自己加。
       const outBuckets = [
-        ('衣', '👕'),
-        ('食', '🍜'),
-        ('住', '🏠'),
-        ('行', '🚌'),
+        ('食', 'ic:out_food'),
+        ('行', 'ic:out_transport'),
+        ('住', 'ic:out_housing'),
+        ('购', 'ic:out_shopping'),
+        ('玩', 'ic:out_fun'),
+        ('医', 'ic:out_medical'),
+        ('学', 'ic:out_education'),
+        ('礼', 'ic:out_gift'),
+        ('其他', 'ic:out_other'),
       ];
-      const inBuckets = [('工资', '💰'), ('兼职', '💼'), ('红包', '🧧'), ('其他', '✨')];
+      const inBuckets = [
+        ('工资', 'ic:in_salary'),
+        ('副业', 'ic:in_sidejob'),
+        ('理财', 'ic:in_invest'),
+        ('红包', 'ic:in_redpacket'),
+        ('其他', 'ic:in_other'),
+      ];
       var rank = 0;
       for (final b in outBuckets) {
         await _db.insert('buckets', {

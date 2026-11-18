@@ -31,7 +31,7 @@ void main() {
     bookId = book.id;
     final out = await store.buckets(bookId, 'out');
     food = out.firstWhere((b) => b.title == '食');
-    clothes = out.firstWhere((b) => b.title == '衣');
+    clothes = out.firstWhere((b) => b.title == '购');
   });
 
   tearDown(() async {
@@ -56,7 +56,7 @@ void main() {
   test('设了预算的分类才出现在清单里，金额对得上', () async {
     await store.setBucketBudget(bookId, month, food.id, 50000);
     await spend(60000, food);
-    // 衣没设预算，花了也不该出现
+    // 购没设预算，花了也不该出现
     await spend(9999, clothes);
 
     final s = await bucketBudgetStatusOf(store, book, month);
@@ -94,7 +94,7 @@ void main() {
     await spend(15000, food); // 超 5000
     await spend(40000, clothes); // 超 30000
     final s = await bucketBudgetStatusOf(store, book, month);
-    expect(s.map((e) => e.title).toList(), ['衣', '食']);
+    expect(s.map((e) => e.title).toList(), ['购', '食']);
   });
 
   test('没设任何分类预算时不返回清单（不白算一遍）', () async {

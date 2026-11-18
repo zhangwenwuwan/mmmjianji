@@ -20,12 +20,19 @@ class PocketType {
     required this.kind,
     required this.group,
     this.nameHint,
+    this.legacyGlyph,
   });
 
   /// 存库用的稳定标识（不要改，改了老数据就对不上了）
   final String id;
   final String label;
   final String glyph;
+
+  /// 1.4.73 之前用的 emoji 图标。
+  ///
+  /// 换成插画后，老账户（1.3.1 之前建的、没有 type 字段）身上存的还是 emoji，
+  /// [guessPocketType] 靠它反推类型。同时也说明「这个类型是有插画的」。
+  final String? legacyGlyph;
   final PocketKind kind;
 
   /// 选择器里的分组标题
@@ -56,7 +63,8 @@ const List<PocketType> kPocketTypes = [
   PocketType(
       id: 'cash',
       label: '现金',
-      glyph: '💵',
+      glyph: 'ic:acc_cash',
+      legacyGlyph: '💵',
       kind: PocketKind.cash,
       group: '现金与储值',
       nameHint: '例如 钱包、零钱'),
@@ -64,14 +72,16 @@ const List<PocketType> kPocketTypes = [
   PocketType(
       id: 'cashWallet',
       label: '现金钱包',
-      glyph: '💵',
+      glyph: 'ic:acc_cash',
+      legacyGlyph: '💵',
       kind: PocketKind.cash,
       group: '现金与储值',
       nameHint: '例如 钱包、零钱'),
   PocketType(
       id: 'wallet',
       label: '钱包',
-      glyph: '👛',
+      glyph: 'ic:acc_cash',
+      legacyGlyph: '👛',
       kind: PocketKind.cash,
       group: '现金与储值',
       nameHint: '例如 随身钱包'),
@@ -108,21 +118,24 @@ const List<PocketType> kPocketTypes = [
   PocketType(
       id: 'debit',
       label: '储蓄卡',
-      glyph: '🏦',
+      glyph: 'ic:acc_bank',
+      legacyGlyph: '🏦',
       kind: PocketKind.bank,
       group: '银行与支付',
       nameHint: '例如 招行储蓄卡'),
   PocketType(
       id: 'alipay',
       label: '支付宝',
-      glyph: '🅰️',
+      glyph: 'ic:acc_alipay',
+      legacyGlyph: '🅰️',
       kind: PocketKind.bank,
       group: '银行与支付',
       nameHint: '例如 支付宝余额'),
   PocketType(
       id: 'wechat',
       label: '微信零钱',
-      glyph: '💚',
+      glyph: 'ic:acc_wechat',
+      legacyGlyph: '💚',
       kind: PocketKind.bank,
       group: '银行与支付',
       nameHint: '例如 微信零钱'),
@@ -130,7 +143,8 @@ const List<PocketType> kPocketTypes = [
   PocketType(
       id: 'wechatWallet',
       label: '微信钱包',
-      glyph: '💚',
+      glyph: 'ic:acc_wechat',
+      legacyGlyph: '💚',
       kind: PocketKind.bank,
       group: '银行与支付',
       nameHint: '例如 微信钱包'),
@@ -160,21 +174,24 @@ const List<PocketType> kPocketTypes = [
   PocketType(
       id: 'credit',
       label: '信用卡',
-      glyph: '💳',
+      glyph: 'ic:acc_credit',
+      legacyGlyph: '💳',
       kind: PocketKind.credit,
       group: '信用与分期',
       nameHint: '例如 招行信用卡'),
   PocketType(
       id: 'huabei',
       label: '花呗',
-      glyph: '🌸',
+      glyph: 'ic:acc_huabei',
+      legacyGlyph: '🌸',
       kind: PocketKind.credit,
       group: '信用与分期',
       nameHint: '例如 花呗'),
   PocketType(
       id: 'baitiao',
       label: '京东白条',
-      glyph: '🐶',
+      glyph: 'ic:acc_baitiao',
+      legacyGlyph: '🧾',
       kind: PocketKind.credit,
       group: '信用与分期',
       nameHint: '例如 京东白条'),
@@ -319,28 +336,32 @@ const List<PocketType> kPocketTypes = [
   PocketType(
       id: 'bankcard',
       label: '银行卡',
-      glyph: '🏦',
+      glyph: 'ic:acc_bank',
+      legacyGlyph: '🏦',
       kind: PocketKind.bank,
       group: '银行与支付',
       nameHint: '例如 招行借记卡'),
   PocketType(
       id: 'qq',
       label: 'QQ钱包',
-      glyph: '🐧',
+      glyph: 'ic:acc_qq',
+      legacyGlyph: '🐧',
       kind: PocketKind.bank,
       group: '银行与支付',
       nameHint: '例如 QQ钱包'),
   PocketType(
       id: 'jd',
       label: '京东金融',
-      glyph: '🐶',
+      glyph: 'ic:acc_jd',
+      legacyGlyph: '🐶',
       kind: PocketKind.bank,
       group: '银行与支付',
       nameHint: '例如 京东金融'),
   PocketType(
       id: 'baitiaoPlain',
       label: '白条',
-      glyph: '🧾',
+      glyph: 'ic:acc_baitiao',
+      legacyGlyph: '🧾',
       kind: PocketKind.credit,
       group: '信用与分期',
       nameHint: '例如 京东白条'),
@@ -405,7 +426,8 @@ const List<PocketType> kPocketTypes = [
   PocketType(
       id: 'custom',
       label: '自定义',
-      glyph: '⭐',
+      glyph: 'ic:acc_custom',
+      legacyGlyph: '⭐',
       kind: PocketKind.cash,
       group: '现金与储值',
       nameHint: '自定义账户'),
@@ -414,7 +436,8 @@ const List<PocketType> kPocketTypes = [
   PocketType(
       id: 'customCredit',
       label: '自定义',
-      glyph: '⭐',
+      glyph: 'ic:acc_custom_credit',
+      legacyGlyph: '⭐',
       kind: PocketKind.credit,
       group: '信用与分期',
       nameHint: '自定义信用卡'),
@@ -447,7 +470,9 @@ PocketType? pocketTypeOf(String? id) {
 /// 只为让编辑页显示「现金 / 储蓄卡」而不是空着。
 PocketType? guessPocketType(PocketKind kind, String glyph) {
   for (final t in kPocketTypes) {
-    if (t.kind == kind && t.glyph == glyph) return t;
+    if (t.kind == kind && (t.glyph == glyph || t.legacyGlyph == glyph)) {
+      return t;
+    }
   }
   for (final t in kPocketTypes) {
     if (t.kind == kind && t.id == kind.name) return t;

@@ -77,7 +77,7 @@ void main() {
 
     final buckets = await store.buckets(bookId, 'out');
     foodId = buckets.firstWhere((b) => b.title == '食').id;
-    clothesId = buckets.firstWhere((b) => b.title == '衣').id;
+    clothesId = buckets.firstWhere((b) => b.title == '购').id;
     liveId = buckets.firstWhere((b) => b.title == '住').id;
     moveId = buckets.firstWhere((b) => b.title == '行').id;
 
@@ -215,7 +215,7 @@ void main() {
     expect(food.spentCents, 24000);
     expect(food.budgetCents, 50000);
 
-    final clothes = status.firstWhere((s) => s.title == '衣');
+    final clothes = status.firstWhere((s) => s.title == '购');
     expect(clothes.spentCents, 36000, reason: '外币要折算成主币种再比预算');
     expect(clothes.spentCents > clothes.budgetCents, isTrue);
   });
