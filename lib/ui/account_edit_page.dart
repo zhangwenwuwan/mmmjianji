@@ -108,7 +108,10 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
       _typeId = p.typeId;
     } else {
       // 老账户 typeId 是空串（不是 null），得显式判 isNotEmpty 才会走到反推
-      _typeId = guessPocketType(p.kind, p.glyph)?.id ?? 'cash';
+      // 反推不出来就留空：`_typeRow` 会退回 kind 的叫法（负债/储蓄卡…）。
+      // ⚠️ 别兜底成 'cash' —— 负债类账户没有可选类型了，硬塞「现金」会让
+      // 一个房贷账户在编辑页顶着「现金 · 现金与储值」，保存时还会把 type 写成 cash。
+      _typeId = guessPocketType(p.kind, p.glyph)?.id ?? '';
     }
     // 新建账户的默认图标必须**跟着默认类型走**。
     // 以前这里写死 '💵'：一进「添加账户」左上角大徽标就是旧 emoji，
