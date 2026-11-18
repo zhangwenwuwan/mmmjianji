@@ -75,7 +75,7 @@ class AmountKeypadController extends ChangeNotifier {
     }
     if (!RegExp(r'^[\d.]$').hasMatch(key)) return;
     final next = _amount + key;
-    if (!RegExp(r'^\d{0,7}(\.\d{0,2})?$').hasMatch(next)) return;
+    if (!RegExp(r'^\d{0,9}(\.\d{0,2})?$').hasMatch(next)) return;
     _amount = next;
     notifyListeners();
   }

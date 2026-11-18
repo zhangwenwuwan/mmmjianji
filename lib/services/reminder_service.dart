@@ -213,10 +213,12 @@ class ReminderService {
       iOS: DarwinNotificationDetails(),
     );
     for (final r in reminders) {
-      // 提前 leadDays 天
-      final leadDate = r.occurrence.subtract(Duration(days: leadDays));
+      // 每条可以带自己的提前天数（会员订阅按项设置），没有就用全局的。
+      final lead = r.leadDays ?? leadDays;
+      // 提前 lead 天
+      final leadDate = r.occurrence.subtract(Duration(days: lead));
       if (!leadDate.isBefore(now)) {
-        await _scheduleOne(id++, details, r, leadDate, pre: '还有 $leadDays 天 · ');
+        await _scheduleOne(id++, details, r, leadDate, pre: '还有 $lead 天 · ');
       }
       // 当天
       if (!r.occurrence.isBefore(now)) {

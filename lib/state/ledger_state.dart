@@ -910,6 +910,17 @@ final goalsProvider = FutureProvider<List<Goal>>((ref) async {
   return store.goals(book.id);
 });
 
+/// 会员订阅：到期日现算，列表已按到期升序（store 侧排好）。
+///
+/// 跟着 [revisionProvider] 重算 —— 增删改订阅后，洞察页入口卡的
+/// 「N 个即将到期」和到期提醒的排程都要立刻跟着变。
+final subscriptionsProvider = FutureProvider<List<Subscription>>((ref) async {
+  final store = await ref.watch(storeProvider.future);
+  final book = await ref.watch(activeBookProvider.future);
+  ref.watch(revisionProvider);
+  return store.subscriptions(book.id);
+});
+
 /// 到期提醒聚合：把本账本里账户的还款日/账单日、目标截止日、借还款到期日，
 /// 转成一组 [DueReminder]（纯计算在 core/due_reminders.dart）。
 ///
@@ -921,6 +932,7 @@ final dueRemindersProvider = FutureProvider<List<DueReminder>>((ref) async {
   final pockets = await ref.watch(pocketsProvider.future);
   final goals = await ref.watch(goalsProvider.future);
   final debts = await ref.watch(debtsProvider.future);
+  final subscriptions = await ref.watch(subscriptionsProvider.future);
   final settings = ref.watch(settingsProvider);
   ref.watch(revisionProvider);
   return buildDueReminders(
@@ -930,6 +942,7 @@ final dueRemindersProvider = FutureProvider<List<DueReminder>>((ref) async {
     now: DateTime.now(),
     leadDays: settings.dueReminderLeadDays,
     symbol: settings.symbol,
+    subscriptions: subscriptions,
   );
 });
 

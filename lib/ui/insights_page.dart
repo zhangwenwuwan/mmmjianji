@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app_glyph.dart';
 import '../core/aggregate.dart';
+import '../core/subscription.dart';
 import '../data/store.dart';
 import '../core/rules.dart';
 import '../state/ledger_state.dart';
@@ -15,6 +16,7 @@ import 'glass.dart';
 import 'liquid_surface.dart' show LiquidTokens;
 import 'motion.dart';
 import 'sankey.dart';
+import 'subscriptions_page.dart';
 import 'tab_header.dart';
 import 'theme.dart';
 import 'wheel_date_picker.dart';
@@ -210,6 +212,12 @@ class _InsightsPageState extends ConsumerState<InsightsPage> {
                       ],
                     ),
                   ),
+                  const SizedBox(height: 10),
+
+                  // 会员订阅倒计时入口：放在收支总览正下方。
+                  // 「这个月钱去哪了」之后紧跟着「哪些钱已经预先花掉了」，
+                  // 位置靠上才不会被当成页面底部的设置项。
+                  const _SubscriptionEntry(),
                   const SizedBox(height: 10),
 
                   // 分类占比 / 净额
@@ -2134,5 +2142,85 @@ class _MonthNoteCard extends ConsumerWidget {
     ref.invalidate(monthNoteProvider);
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).toast(saved.trim().isEmpty ? '已清除本月总结' : '已保存本月总结');
+  }
+}
+
+/// 会员订阅入口卡：一眼能看到「最近哪个会员要到期」。
+///
+/// 不在这里做任何增删改：卡片只负责「提示 + 进页面」。
+/// 详情（差额、自动续费、提前几天提醒）进去再说，统计页不该变成管理后台。
+class _SubscriptionEntry extends ConsumerWidget {
+  const _SubscriptionEntry();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final list = ref.watch(subscriptionsProvider).valueOrNull;
+    final today = DateTime.now();
+    final brand = Palette.brand(context);
+
+    var subtitle = '记录会员订阅，到期前提醒你';
+    Color subtitleColor = Palette.inkFaint(context);
+    if (list != null && list.isNotEmpty) {
+      final sorted = [...list]..sort(compareSubscriptions);
+      final first = sorted.first;
+      final cd = countdownOf(first, today);
+      final expired =
+          list.where((s) => daysUntil(s.dueDate, today) < 0).length;
+      if (expired > 0) {
+        subtitle = '$expired 个已过期 · ${first.name}';
+        subtitleColor = Palette.expense;
+      } else {
+        final soon = expiringSoonCount(list, today, days: 30);
+        subtitle = soon > 0
+            ? '${list.length} 个会员 · ${first.name} 还有 ${cd.days} 天到期'
+            : '${list.length} 个会员 · 最近的是 ${first.name}（还有 ${cd.days} 天）';
+      }
+    }
+
+    return Panel(
+      padding: EdgeInsets.zero,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        onTap: () => Navigator.of(context)
+            .push(AppPageRoute(page: const SubscriptionsPage())),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+          child: Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: brand.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(Icons.event_note_outlined, size: 18, color: brand),
+              ),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('会员订阅',
+                        style: TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 12, color: subtitleColor),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right,
+                  size: 18, color: Palette.inkFaint(context)),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

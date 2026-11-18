@@ -981,7 +981,7 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
       }
       if (!RegExp(r'^[\d.]$').hasMatch(key)) return;
       final next = _amount + key;
-      if (!RegExp(r'^\d{0,7}(\.\d{0,2})?$').hasMatch(next)) return;
+      if (!RegExp(r'^\d{0,9}(\.\d{0,2})?$').hasMatch(next)) return;
       _amount = next;
     });
   }
@@ -2534,7 +2534,7 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
       }
       if (!RegExp(r'^[\d.]$').hasMatch(key)) return;
       final next = _amount + key;
-      if (!RegExp(r'^\d{0,7}(\.\d{0,2})?$').hasMatch(next)) return;
+      if (!RegExp(r'^\d{0,9}(\.\d{0,2})?$').hasMatch(next)) return;
       _amount = next;
     });
   }

@@ -593,6 +593,57 @@ class Wish {
 ///
 /// 与 recurring（周期记账）的区别：模板是**手动触发**的快捷方式，
 /// 不产生定时任务；recurring 是每月自动生成。两者互不替代。
+/// 一项会员订阅（视频 / 音乐 / 云盘 / 软件年费这类「到期还会续」的支出）。
+///
+/// 到期日**不落库**，每次由 [startDay] + [months] 算出来：改时长只需改一处，
+/// 也不会出现「日期和时长对不上」的脏数据（改 12 → 15 个月时最容易出错）。
+class Subscription {
+  const Subscription({
+    required this.id,
+    required this.bookId,
+    required this.name,
+    required this.glyph,
+    required this.startDay,
+    required this.months,
+    required this.feeCents,
+    required this.autoRenew,
+    required this.note,
+    required this.remindDays,
+  });
+
+  final int id;
+  final int bookId;
+
+  /// 会员名（如「Netflix」「网易云音乐」）。
+  final String name;
+
+  /// 图标（emoji 或 `img:` 自定义图片，走 AppGlyph 那一套）。
+  final String glyph;
+
+  /// 开卡日期，'yyyy-MM-dd'。
+  final String startDay;
+
+  /// 订阅时长（月）。任意正整数：12、15、24 都可以。
+  final int months;
+
+  /// 本期费用（分）。0 = 没填。
+  final int feeCents;
+
+  final bool autoRenew;
+
+  final String note;
+
+  /// 到期前多少天提醒。0 = 不提醒。
+  final int remindDays;
+
+  DateTime get startDate => LedgerStore.parseDay(startDay);
+
+  /// 到期日。月末对齐：1 月 31 日开 1 个月 → 2 月 28/29 日，不是 3 月 3 日。
+  DateTime get dueDate => LedgerStore.addMonths(startDate, months);
+
+  bool get reminds => remindDays > 0;
+}
+
 class Template {
   const Template({
     required this.id,
@@ -688,7 +739,7 @@ class LedgerStore {
   /// `allPockets().first` 这样的默认账户，改默认值会让十几处测试同时红。
   final bool withSamplePockets;
 
-  static const _version = 22;
+  static const _version = 23;
 
   static Future<LedgerStore> open({
     String? path,
@@ -721,6 +772,22 @@ class LedgerStore {
   static DateTime parseDay(String raw) {
     final s = raw.length >= 10 ? raw.substring(0, 10) : raw;
     return DateTime.parse(s);
+  }
+
+  /// 加 [months] 个月，**月末对齐**。
+  ///
+  /// Dart 的 `DateTime(2026, 2, 31)` 会自动顺延成 3 月 3 日 —— 那样 1 月 31 日
+  /// 开的年卡到期日会跑偏 3 天。这里先算出目标年月，再把「日」夹到当月最后一天：
+  /// 1/31 + 1 个月 = 2/28（闰年 2/29），和用户对「一个月后」的直觉一致。
+  ///
+  /// [months] 小于 1 时按 1 处理：表单里 0 或负数没有意义，不该让到期日等于开卡日。
+  static DateTime addMonths(DateTime start, int months) {
+    final n = months < 1 ? 1 : months;
+    final total = start.month - 1 + n;
+    final year = start.year + total ~/ 12;
+    final month = total % 12 + 1;
+    final dayInMonth = DateTime(year, month + 1, 0).day;
+    return DateTime(year, month, start.day > dayInMonth ? dayInMonth : start.day);
   }
 
   /// 分钟数 → 存库用的 'HH:mm'；null 原样返回（= 不知道）。
@@ -1089,6 +1156,31 @@ class LedgerStore {
   // - 老数据的时分无从得知，只能留 NULL。新记账默认写当前时间，老账显示 --:--。
   //   **不给历史数据编时间**：假时间比空白更容易让人误判。
   await _addColumnIfMissing(db, 'entries', 'day_time', 'TEXT');
+
+  // v23：会员订阅（订阅制服务/软件，按「开卡日期 + 时长」算到期日）。
+  //
+  // 为什么不塞进 goals / recurring：
+  // - goals 是一次性攒钱目标，攒到就结束；订阅是到期还会续的周期支出；
+  // - recurring 是「每月几号自动记一笔」，而订阅常是年付/季付，用户要的是
+  //   「还有几天到期」这个倒计时，不是自动落账。
+  //
+  // 时长存「月数」而不是枚举：用户明确要 12 个月、15 个月这种任意值。
+  // 到期日不落库、每次由 start_day + months 算出来 —— 改时长时不用回写，
+  // 也不会出现「日期和时长对不上」的脏数据。
+  await db.execute('''
+    CREATE TABLE IF NOT EXISTS subscriptions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      book_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      glyph TEXT NOT NULL DEFAULT '📺',
+      start_day TEXT NOT NULL,
+      months INTEGER NOT NULL DEFAULT 12,
+      fee_cents INTEGER NOT NULL DEFAULT 0,
+      auto_renew INTEGER NOT NULL DEFAULT 0,
+      note TEXT NOT NULL DEFAULT '',
+      remind_days INTEGER NOT NULL DEFAULT 7
+    )
+  ''');
 
   // v8：附件（图片凭证）
     await db.execute('''
@@ -1468,6 +1560,9 @@ class LedgerStore {
         // 月记按 book_id 存，跟着账本一起走；漏了它就是一堆指向
         // 已删账本的孤儿（导出时还会被带出去）。
         'month_notes',
+        // 会员订阅同理：不收尾的话，「数据管理」里会一直数着几张
+        // 谁也看不见的订阅，备份里也会跟着导出。
+        'subscriptions',
       ]) {
         await txn.delete(t, where: 'book_id = ?', whereArgs: [id]);
       }
@@ -1729,6 +1824,34 @@ class LedgerStore {
       _db.update('buckets', {'archived': archived ? 1 : 0},
           where: 'id = ?', whereArgs: [id]);
 
+  /// 仅测试用：把某个分类的 rank 直接写成指定值。
+  ///
+  /// 用来复现历史遗留的「rank 撞车」场景 —— 老版本用 `COUNT(*)` 生成 rank，
+  /// 删过分类之后会出现 0,0,2,2 这类重复值。生产代码不要调。
+  Future<void> debugSetBucketRank(int id, int rank) =>
+      _db.update('buckets', {'rank': rank},
+          where: 'id = ?', whereArgs: [id]);
+
+  /// 按给定顺序重写分类的 `rank`（拖拽排序落库）。
+  ///
+  /// 传进来的 [orderedIds] 是**展开后的整棵树**：每个一级分类后面紧跟它自己的
+  /// 二级分类。这样只用一个连续 rank 空间就能同时表达两层顺序——
+  /// [buckets] 的 `orderBy: 'rank, id'` 会让同层之间按 rank 相对顺序排列。
+  ///
+  /// 为什么是「整体重写」而不是只改被动的那两个：
+  /// 老数据的 rank 由 `COUNT(*)` 生成，删过分类之后会有大量重复值（0,0,2,2…）。
+  /// 只交换两项的 rank 在重复值上根本不生效（交换完还是 0,0）。整体重编号
+  /// 一次就干净了，分类数量是几十个量级，代价可以忽略。
+  Future<void> reorderBuckets(List<int> orderedIds) async {
+    if (orderedIds.isEmpty) return;
+    await _db.transaction((txn) async {
+      for (var i = 0; i < orderedIds.length; i++) {
+        await txn.update('buckets', {'rank': i},
+            where: 'id = ?', whereArgs: [orderedIds[i]]);
+      }
+    });
+  }
+
   /// 删除分类前的「影响面」。
   ///
   /// 分类是历史流水的一个**维度**（`entries.bucket_id`）：删掉它，那些流水
@@ -1775,6 +1898,62 @@ class LedgerStore {
       await txn.delete('buckets', where: 'id = ?', whereArgs: [id]);
     });
   }
+
+  // ------------------------------------------------------------ 会员订阅
+
+  /// 某账本下的全部订阅，**按到期日升序**（快到期的排最上面）。
+  ///
+  /// 排序放在 Dart 侧：到期日是 `start_day + months` 现算的，库里没有这一列，
+  /// 想在 SQL 里排就得写跨月加法，既难读又容易在月末算错。订阅量级是几条到几十条，
+  /// 全部读出来排一遍的代价可以忽略。
+  Future<List<Subscription>> subscriptions(int bookId) async {
+    final rows = await _db.query('subscriptions',
+        where: 'book_id = ?', whereArgs: [bookId]);
+    final out = [for (final r in rows) _subscriptionOf(r)];
+    out.sort((a, b) {
+      final c = a.dueDate.compareTo(b.dueDate);
+      return c != 0 ? c : a.id.compareTo(b.id);
+    });
+    return out;
+  }
+
+  Subscription _subscriptionOf(Map<String, Object?> r) => Subscription(
+        id: r['id'] as int,
+        bookId: (r['book_id'] as num).toInt(),
+        name: (r['name'] as String?) ?? '',
+        glyph: (r['glyph'] as String?) ?? '📺',
+        startDay: (r['start_day'] as String?) ?? '1970-01-01',
+        months: (r['months'] as num?)?.toInt() ?? 12,
+        feeCents: (r['fee_cents'] as num?)?.toInt() ?? 0,
+        autoRenew: ((r['auto_renew'] as num?)?.toInt() ?? 0) == 1,
+        note: (r['note'] as String?) ?? '',
+        remindDays: (r['remind_days'] as num?)?.toInt() ?? 7,
+      );
+
+  Map<String, Object?> _subscriptionMap(Subscription s) => {
+        'book_id': s.bookId,
+        'name': s.name,
+        'glyph': s.glyph,
+        'start_day': s.startDay,
+        'months': s.months,
+        'fee_cents': s.feeCents,
+        'auto_renew': s.autoRenew ? 1 : 0,
+        'note': s.note,
+        'remind_days': s.remindDays,
+      };
+
+  Future<int> addSubscription(Subscription s) =>
+      _db.insert('subscriptions', _subscriptionMap(s));
+
+  Future<void> updateSubscription(Subscription s) => _db.update(
+        'subscriptions',
+        _subscriptionMap(s),
+        where: 'id = ?',
+        whereArgs: [s.id],
+      );
+
+  Future<void> deleteSubscription(int id) =>
+      _db.delete('subscriptions', where: 'id = ?', whereArgs: [id]);
 
   /// 分类迁移：把 [fromId] 下的所有流水批量改到 [toId]（对齐原版分类迁移页）。
   /// 返回受影响的流水条数。
@@ -4052,6 +4231,7 @@ class LedgerStore {
       'templates',
       'month_notes',
       'attachments',
+      'subscriptions',
     ];
     final out = <String, int>{};
     for (final t in tables) {
@@ -4196,6 +4376,8 @@ class LedgerStore {
       // 凭证关联行要跟着备份走。文件本身存在应用私有目录、不塞进 JSON
       // （一张图 100~300KB，整库备份会涨到几十 MB）；恢复时用 path 校验文件还在。
       'attachments': await _db.query('attachments'),
+      // 会员订阅：和流水一样是用户自己录的数据，换手机必须跟着走。
+      'subscriptions': await _db.query('subscriptions'),
     };
     // ⚠️ 带缩进的整库 JSON 编码是纯 CPU 密集活：函数标了 async 并不会让它
     // 让出主 isolate（await 已经在上面全部结束）。几万条流水时这行会冻住
@@ -4224,6 +4406,7 @@ class LedgerStore {
       'recurring': 'recurring',
       'templates': 'templates',
       'monthNotes': 'month_notes',
+      'subscriptions': 'subscriptions',
     };
     await _db.transaction((txn) async {
       for (final t in tables.values) {

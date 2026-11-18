@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app_glyph.dart';
+import '../core/bucket_order.dart';
 import '../data/store.dart';
+import '../services/app_log.dart';
 import '../state/ledger_state.dart';
 import 'category_detail_page.dart';
 import 'common.dart';
@@ -161,16 +163,115 @@ class _BucketManagePageState extends ConsumerState<BucketManagePage>
   }
 }
 
-class _BucketList extends ConsumerWidget {
+class _BucketList extends ConsumerStatefulWidget {
   const _BucketList({required this.flow, required this.onEdit});
 
   final String flow;
   final ValueChanged<Bucket> onEdit;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final async = ref.watch(bucketsProvider(flow));
-    final archived = ref.watch(archivedBucketsProvider(flow)).valueOrNull ??
+  ConsumerState<_BucketList> createState() => _BucketListState();
+}
+
+class _BucketListState extends ConsumerState<_BucketList> {
+  /// 用户刚拖出来的顺序（只存 id）。null = 没拖过，按数据库 rank 来。
+  ///
+  /// 为什么要在本地留一份：拖完要落库、再 `bumpRevision` 让 provider 重查，
+  /// 中间有几十毫秒。若这期间还按旧 rank 渲染，松手的动画会先弹回原位再跳过去。
+  /// 本地顺序顶上这两帧，provider 回来时两边已经一致。
+  List<int>? _topOrder;
+
+  /// 每个一级分类下的二级分类顺序（key = 一级分类 id）。
+  final Map<int, List<int>> _childOrder = {};
+
+  ({List<Bucket> tops, Map<int, List<Bucket>> childrenOf}) _tree(
+      List<Bucket> all) {
+    final childrenOf = <int, List<Bucket>>{};
+    for (final b in all.where((b) => !b.isTop)) {
+      childrenOf.putIfAbsent(b.parentId!, () => []).add(b);
+    }
+    return (tops: all.where((b) => b.isTop).toList(), childrenOf: childrenOf);
+  }
+
+  /// 按本地记录的顺序排；本地没记录的（刚新增的）排到末尾。
+  List<Bucket> _applyOrder(List<Bucket> items, List<int>? order) {
+    if (order == null || order.isEmpty) return items;
+    final pos = <int, int>{for (var i = 0; i < order.length; i++) order[i]: i};
+    final out = [...items];
+    out.sort((a, b) {
+      final ia = pos[a.id], ib = pos[b.id];
+      if (ia == null && ib == null) return a.id.compareTo(b.id);
+      if (ia == null) return 1;
+      if (ib == null) return -1;
+      return ia.compareTo(ib);
+    });
+    return out;
+  }
+
+  /// 一级分类拖动：组整体移动，其下的二级分类跟着走。
+  ///
+  /// 用的是 `onReorderItem`（不是已废弃的 `onReorder`）：它传进来的 newIndex
+  /// 已经按「先移除 oldIndex 再插入」调整过，这里不能再自己 `-1`，
+  /// 否则往下拖一格会少走一格（[moveId] 里也写了同一句话）。
+  void _onReorderTop(int oldIndex, int newIndex) {
+    final raw = ref.read(bucketsProvider(widget.flow)).valueOrNull;
+    if (raw == null) return;
+    final tree = _tree(raw);
+    final tops = _applyOrder(tree.tops, _topOrder);
+    if (oldIndex < 0 || oldIndex >= tops.length) return;
+    final byId = {for (final t in tops) t.id: t};
+    final ids = moveId(tops.map((e) => e.id).toList(), oldIndex, newIndex);
+    setState(() => _topOrder = ids);
+    _persistOrder([for (final id in ids) byId[id]!], tree.childrenOf);
+  }
+
+  /// 二级分类拖动：只在本组内换位置，不会跑到别的父分类下面。
+  void _onReorderChild(int parentId, int oldIndex, int newIndex) {
+    final raw = ref.read(bucketsProvider(widget.flow)).valueOrNull;
+    if (raw == null) return;
+    final tree = _tree(raw);
+    final kids = _applyOrder(
+        tree.childrenOf[parentId] ?? const <Bucket>[], _childOrder[parentId]);
+    if (oldIndex < 0 || oldIndex >= kids.length) return;
+    final ids = moveId(kids.map((e) => e.id).toList(), oldIndex, newIndex);
+    setState(() => _childOrder[parentId] = ids);
+    _persistOrder(_applyOrder(tree.tops, _topOrder), tree.childrenOf);
+  }
+
+  /// 把整棵树的顺序压平成一串 id 交给 store：一级后面紧跟它的二级，
+  /// 一个连续 rank 空间就能同时表达两层顺序（同层之间按 rank 比较）。
+  Future<void> _persistOrder(
+      List<Bucket> tops, Map<int, List<Bucket>> childrenOf) async {
+    final ids = <int>[];
+    for (final t in tops) {
+      ids.add(t.id);
+      for (final c
+          in _applyOrder(childrenOf[t.id] ?? const <Bucket>[], _childOrder[t.id])) {
+        ids.add(c.id);
+      }
+    }
+    if (ids.isEmpty) return;
+    try {
+      final store = await ref.read(storeProvider.future);
+      await store.reorderBuckets(ids);
+      bumpRevision(ref);
+    } catch (e) {
+      AppLog.warn('bucket', '保存分类顺序失败: $e');
+      // 落库失败就把本地顺序扔掉，回落到数据库里真实的那一份，
+      // 不然列表会一直显示一个只有这一屏才存在的假顺序。
+      if (mounted) {
+        setState(() {
+          _topOrder = null;
+          _childOrder.clear();
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final async = ref.watch(bucketsProvider(widget.flow));
+    final archived = ref.watch(archivedBucketsProvider(widget.flow)).valueOrNull ??
         const <Bucket>[];
     return async.when(
       skipLoadingOnReload: true,
@@ -178,115 +279,150 @@ class _BucketList extends ConsumerWidget {
       error: (e, _) => ErrorRetryView(
         message: '读取失败',
         detail: '$e',
-        onRetry: () async => ref.invalidate(bucketsProvider(flow)),
+        onRetry: () async => ref.invalidate(bucketsProvider(widget.flow)),
       ),
-      data: (buckets) {
-        // 按层级展开：一级分类下面紧跟它自己的二级分类（缩进 + 小字）
-        final tops = buckets.where((b) => b.isTop).toList();
-        final childrenOf = <int, List<Bucket>>{};
-        for (final b in buckets.where((b) => !b.isTop)) {
-          childrenOf.putIfAbsent(b.parentId!, () => []).add(b);
-        }
-        final ordered = <({Bucket bucket, bool isChild})>[
-          for (final t in tops) ...[
-            (bucket: t, isChild: false),
-            for (final c in childrenOf[t.id] ?? const <Bucket>[])
-              (bucket: c, isChild: true),
-          ],
+      data: (raw) {
+        final tree = _tree(raw);
+        final tops = _applyOrder(tree.tops, _topOrder);
+        final groups = [
+          for (final t in tops)
+            (
+              top: t,
+              kids: _applyOrder(tree.childrenOf[t.id] ?? const <Bucket>[],
+                  _childOrder[t.id]),
+            ),
         ];
 
-        return ListView(
+        // 一级分类 = 一个可拖拽的「组」，二级分类在组内单独可拖拽。
+        // 嵌套的 ReorderableListView 都关了自身的滚动（外层才是唯一滚动区），
+        // 拖拽走显式手柄（buildDefaultDragHandles: false），
+        // 这样点分类进详情、点菜单改分类都不会误触拖动。
+        return ReorderableListView.builder(
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
-          children: [
-            Panel(
-              padding: EdgeInsets.zero,
-              child: Column(
-                children: [
-                  for (var i = 0; i < ordered.length; i++) ...[
-                    if (i > 0) const Divider(height: 1, indent: 56),
-                    _tile(context, ref, ordered[i].bucket,
-                        isChild: ordered[i].isChild),
-                  ],
-                  if (ordered.isEmpty)
-                    const Padding(
-                        padding: EdgeInsets.all(20),
-                        child: Text('还没有分类，点右下角 + 新增一个')),
-                ],
-              ),
-            ),
-            if (tops.isEmpty)
-              const SizedBox.shrink()
-            else
-              Padding(
-                padding: const EdgeInsets.only(top: 12),
-                child: Text(
-                  '想把分类归到某个大类下？编辑时选「上级分类」即可变成二级分类。',
-                  style:
-                      TextStyle(fontSize: 12, color: Palette.inkFaint(context)),
-                ),
-              ),
-            // 归档曾是单向的：一旦归档就从列表消失，且没有任何反向入口。
-            // 这里列出已归档分类并给「恢复」，不让用户把自己锁死。
-            if (archived.isNotEmpty) ...[
-              const SizedBox(height: 18),
-              Text('已归档 ${archived.length} 个',
-                  style: TextStyle(
-                      fontSize: 12, color: Palette.inkFaint(context))),
-              const SizedBox(height: 8),
-              Panel(
+          buildDefaultDragHandles: false,
+          itemCount: groups.length + 1,
+          onReorderItem: _onReorderTop,
+          itemBuilder: (context, i) {
+            if (i == groups.length) {
+              return _footer(context, archived, isEmpty: groups.isEmpty);
+            }
+            final g = groups[i];
+            return Padding(
+              key: ValueKey('bucket-group-${g.top.id}'),
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Panel(
                 padding: EdgeInsets.zero,
                 child: Column(
                   children: [
-                    for (var i = 0; i < archived.length; i++) ...[
-                      if (i > 0) const Divider(height: 1, indent: 56),
-                      ListTile(
-                        leading: AppGlyph(archived[i].glyph, size: 16),
-                        title: Text(archived[i].title,
-                            style: TextStyle(
-                                fontSize: 14, color: Palette.inkSoft(context))),
-                        subtitle:
-                            const Text('已归档', style: TextStyle(fontSize: 12)),
-                        // 归档区也能删：归档只是「暂时不用」，误建的分类
-                        // 不该逼用户先恢复再去主列表里找删除。
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
+                    _tile(context, g.top, isChild: false, index: i),
+                    if (g.kids.isNotEmpty)
+                      ReorderableListView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        buildDefaultDragHandles: false,
+                        itemCount: g.kids.length,
+                        onReorderItem: (o, n) =>
+                            _onReorderChild(g.top.id, o, n),
+                        itemBuilder: (context, j) => Column(
+                          key: ValueKey('bucket-child-${g.kids[j].id}'),
                           children: [
-                            TextButton(
-                              onPressed: () async {
-                                final store =
-                                    await ref.read(storeProvider.future);
-                                await store.archiveBucket(
-                                    archived[i].id, false);
-                                bumpRevision(ref);
-                              },
-                              child: const Text('恢复'),
-                            ),
-                            IconButton(
-                              tooltip: '删除',
-                              visualDensity: VisualDensity.compact,
-                              onPressed: () =>
-                                  _delete(context, ref, archived[i]),
-                              icon: Icon(Icons.delete_outline,
-                                  size: 18, color: Palette.expense),
-                            ),
+                            const Divider(height: 1, indent: 56),
+                            _tile(context, g.kids[j],
+                                isChild: true, index: j),
                           ],
                         ),
                       ),
-                    ],
                   ],
                 ),
               ),
-            ],
-          ],
+            );
+          },
         );
       },
     );
   }
 
-  Widget _tile(BuildContext context, WidgetRef ref, Bucket b,
-      {required bool isChild}) {
+  Widget _footer(BuildContext context, List<Bucket> archived,
+      {required bool isEmpty}) {
+    return Column(
+      key: const ValueKey('bucket-footer'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 20),
+            child: Center(
+              child: Text('还没有分类，点右下角 + 新增一个',
+                  style: TextStyle(
+                      fontSize: 13, color: Palette.inkFaint(context))),
+            ),
+          ),
+        Padding(
+          padding: const EdgeInsets.only(top: 6, left: 2, right: 2),
+          child: Text(
+            '拖右侧的手柄可以调整顺序（一级、二级都能拖）。想把分类归到某个大类下？'
+            '编辑时选「上级分类」即可变成二级分类。',
+            style: TextStyle(fontSize: 12, color: Palette.inkFaint(context)),
+          ),
+        ),
+        // 归档曾是单向的：一旦归档就从列表消失，且没有任何反向入口。
+        // 这里列出已归档分类并给「恢复」，不让用户把自己锁死。
+        if (archived.isNotEmpty) ...[
+          const SizedBox(height: 18),
+          Text('已归档 ${archived.length} 个',
+              style:
+                  TextStyle(fontSize: 12, color: Palette.inkFaint(context))),
+          const SizedBox(height: 8),
+          Panel(
+            padding: EdgeInsets.zero,
+            child: Column(
+              children: [
+                for (var i = 0; i < archived.length; i++) ...[
+                  if (i > 0) const Divider(height: 1, indent: 56),
+                  ListTile(
+                    leading: AppGlyph(archived[i].glyph, size: 16),
+                    title: Text(archived[i].title,
+                        style: TextStyle(
+                            fontSize: 14, color: Palette.inkSoft(context))),
+                    subtitle:
+                        const Text('已归档', style: TextStyle(fontSize: 12)),
+                    // 归档区也能删：归档只是「暂时不用」，误建的分类
+                    // 不该逼用户先恢复再去主列表里找删除。
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        TextButton(
+                          onPressed: () async {
+                            final store =
+                                await ref.read(storeProvider.future);
+                            await store.archiveBucket(archived[i].id, false);
+                            bumpRevision(ref);
+                          },
+                          child: const Text('恢复'),
+                        ),
+                        IconButton(
+                          tooltip: '删除',
+                          visualDensity: VisualDensity.compact,
+                          onPressed: () => _delete(context, archived[i]),
+                          icon: Icon(Icons.delete_outline,
+                              size: 18, color: Palette.expense),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _tile(BuildContext context, Bucket b,
+      {required bool isChild, required int index}) {
     return ListTile(
-      contentPadding: EdgeInsets.only(left: isChild ? 34 : 16, right: 8),
+      contentPadding: EdgeInsets.only(left: isChild ? 34 : 16, right: 4),
       leading: AppGlyph(b.glyph, size: isChild ? 15 : 18),
       title: Row(
         children: [
@@ -309,31 +445,47 @@ class _BucketList extends ConsumerWidget {
       ),
       onTap: () => Navigator.of(context)
           .push(AppPageRoute(page: CategoryDetailPage(bucket: b))),
-      trailing: PopupMenuButton<String>(
-        icon: const Icon(Icons.more_horiz, size: 18),
-        onSelected: (v) async {
-          if (v == 'edit') {
-            onEdit(b);
-            return;
-          }
-          if (v == 'archive') {
-            final store = await ref.read(storeProvider.future);
-            await store.archiveBucket(b.id, true);
-            bumpRevision(ref);
-            return;
-          }
-          if (v == 'delete') {
-            await _delete(context, ref, b);
-          }
-        },
-        itemBuilder: (_) => const [
-          PopupMenuItem(value: 'edit', child: Text('编辑')),
-          PopupMenuItem(value: 'archive', child: Text('归档')),
-          // 和账户管理同一套口径：有流水 / 子分类 / 周期记账就不让删，
-          // 只让归档 —— 删掉会把历史流水变成「未分类」，统计口径全变。
-          PopupMenuItem(
-              value: 'delete',
-              child: Text('删除', style: TextStyle(color: Palette.expense))),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_horiz, size: 18),
+            onSelected: (v) async {
+              if (v == 'edit') {
+                widget.onEdit(b);
+                return;
+              }
+              if (v == 'archive') {
+                final store = await ref.read(storeProvider.future);
+                await store.archiveBucket(b.id, true);
+                bumpRevision(ref);
+                return;
+              }
+              if (v == 'delete') {
+                await _delete(context, b);
+              }
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'edit', child: Text('编辑')),
+              PopupMenuItem(value: 'archive', child: Text('归档')),
+              // 和账户管理同一套口径：有流水 / 子分类 / 周期记账就不让删，
+              // 只让归档 —— 删掉会把历史流水变成「未分类」，统计口径全变。
+              PopupMenuItem(
+                  value: 'delete',
+                  child: Text('删除', style: TextStyle(color: Palette.expense))),
+            ],
+          ),
+          // 手柄是**唯一**的拖动入口：整行长按拖动会和「点进详情」抢手势，
+          // 而且二级分类在内层列表里，长按会分不清拖的是哪一层。
+          ReorderableDragStartListener(
+            index: index,
+            child: SizedBox(
+              width: 34,
+              height: 48,
+              child: Icon(Icons.drag_handle,
+                  size: 18, color: Palette.inkFaint(context)),
+            ),
+          ),
         ],
       ),
     );
@@ -341,7 +493,7 @@ class _BucketList extends ConsumerWidget {
 
   /// 删除分类。和 [PocketManagePage] 的删除同一套流程：
   /// 先算影响面 → 有引用就拦下并说明 → 没有才二次确认。
-  Future<void> _delete(BuildContext context, WidgetRef ref, Bucket b) async {
+  Future<void> _delete(BuildContext context, Bucket b) async {
     final store = await ref.read(storeProvider.future);
     final impact = await store.bucketDeleteImpact(b.id);
     if (!context.mounted) return;

@@ -15,9 +15,11 @@ class DueReminder {
     required this.title,
     required this.body,
     required this.occurrence,
+    this.leadDays,
   });
 
-  /// 类型：'card_pay' 信用卡还款 / 'card_bill' 账单日 / 'debt' 借还款 / 'goal' 目标
+  /// 类型：'card_pay' 信用卡还款 / 'card_bill' 账单日 / 'debt' 借还款 /
+  /// 'goal' 目标 / 'subscription' 会员订阅
   final String kind;
 
   /// 实体 id（账户 / 借还款 / 目标的 id）。
@@ -31,6 +33,12 @@ class DueReminder {
 
   /// 到期那一天（已归一化到零点）。
   final DateTime occurrence;
+
+  /// 这一条自己的提前天数。null = 用全局设置。
+  ///
+  /// 会员订阅每项可以单独设「提前 3 天 / 7 天 / 30 天」，
+  /// 全 App 共用一个数会让「视频会员想提前 3 天、云盘想提前 30 天」打架。
+  final int? leadDays;
 }
 
 DateTime _zeroOf(DateTime d) => DateTime(d.year, d.month, d.day);
@@ -92,6 +100,7 @@ List<DueReminder> buildDueReminders(
   required DateTime now,
   required int leadDays,
   required String symbol,
+  List<Subscription> subscriptions = const [],
 }) {
   final out = <DueReminder>[];
 
@@ -149,6 +158,26 @@ List<DueReminder> buildDueReminders(
         occurrence: occ,
       ));
     }
+  }
+
+  // 会员订阅：到期日可能远在一年以后（年付），不能套用上面 45 天的窗口，
+  // 否则「12 个月后到期」的订阅永远排不进通知队列，用户在到期前收不到提醒。
+  // 订阅数量是个位数，多排几条远期通知没有负担。
+  for (final s in subscriptions) {
+    if (!s.reminds) continue; // 用户把「提前提醒」设成 0 = 明确不想被提醒
+    final occ = nextOneTimeOccurrence(s.dueDate, now, withinDays: 800);
+    if (occ == null) continue;
+    out.add(DueReminder(
+      kind: 'subscription',
+      entityId: s.id,
+      title: '会员快到期了',
+      body: s.feeCents > 0
+          ? '${s.name}（${_money(s.feeCents, symbol)} / ${s.months} 个月）'
+          : '${s.name}（${s.months} 个月）',
+      occurrence: occ,
+      // 每条订阅用自己的提前天数；全局那个值只当兜底。
+      leadDays: s.remindDays,
+    ));
   }
 
   return out;
