@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app_glyph.dart';
+import '../core/glyphs.dart';
 import '../core/rules.dart';
 import '../data/store.dart';
 import '../state/ledger_state.dart';
@@ -216,11 +217,12 @@ class WishlistPage extends ConsumerWidget {
     // 常驻 controller：放在 build 里每帧新建会让光标跳到开头、
     // 敲一半点图标/下拉就丢位置（这个坑在记账备注框踩过，这里不能再犯）。
     final titleCtrl = TextEditingController(text: title);
-    String glyph = wish?.glyph ?? '🎁';
+    String glyph = wish?.glyph ?? Glyphs.of(kWishGlyphIds.first);
     int coolDays = wish?.coolDays ?? 7;
     int priceCents = wish?.priceCents ?? 0;
     final noteCtrl = TextEditingController(text: wish?.note ?? '');
-    const glyphs = ['🎁', '👟', '📱', '💻', '🎧', '⌚️', '👜', '🎮', '✈️', '🪑'];
+    // 心愿单图标：设计师画的 PNG（见 core/glyphs.dart 的 kWishGlyphIds）。
+    final glyphs = glyphListOf(kWishGlyphIds);
 
     if (!context.mounted) return;
     final ok = await showDialog<bool>(

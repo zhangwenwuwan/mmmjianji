@@ -794,7 +794,7 @@ class LedgerStore {
   /// `allPockets().first` 这样的默认账户，改默认值会让十几处测试同时红。
   final bool withSamplePockets;
 
-  static const _version = 26;
+  static const _version = 27;
 
   static Future<LedgerStore> open({
     String? path,
@@ -1002,7 +1002,7 @@ class LedgerStore {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         book_id INTEGER NOT NULL,
         title TEXT NOT NULL,
-        glyph TEXT NOT NULL DEFAULT '🎁',
+        glyph TEXT NOT NULL DEFAULT 'ic:out_gift',
         price_cents INTEGER NOT NULL,
         note TEXT NOT NULL DEFAULT '',
         cool_days INTEGER NOT NULL DEFAULT 7,
@@ -1041,7 +1041,7 @@ class LedgerStore {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         book_id INTEGER NOT NULL,
         title TEXT NOT NULL,
-        glyph TEXT NOT NULL DEFAULT '📋',
+        glyph TEXT NOT NULL DEFAULT 'ic:obj_clipboard',
         flow TEXT NOT NULL,
         pocket_id INTEGER NOT NULL,
         to_pocket_id INTEGER,
@@ -1062,7 +1062,7 @@ class LedgerStore {
       if (bookCount == 0) {
         await db.insert('books', {
           'title': '默认账本',
-          'glyph': '📒',
+          'glyph': 'ic:obj_notebook',
           'base_currency': 'CNY',
           'rank': 0
         });
@@ -1227,7 +1227,7 @@ class LedgerStore {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       book_id INTEGER NOT NULL,
       name TEXT NOT NULL,
-      glyph TEXT NOT NULL DEFAULT '📺',
+      glyph TEXT NOT NULL DEFAULT 'ic:obj_tv',
       start_day TEXT NOT NULL,
       months INTEGER NOT NULL DEFAULT 12,
       fee_cents INTEGER NOT NULL DEFAULT 0,
@@ -1261,6 +1261,18 @@ class LedgerStore {
   // 迁移本身幂等（已换成 ic: 的不会再匹配），多跑一次没有副作用。
   if (from < 26) {
     await _migrateGlyphsToIcons(db);
+  }
+
+  // v27：类型表从 49 个砍到 11 个（只留「选择类型」里点得到的），
+  // 顺带把账本 / 订阅 / 模板 / 心愿单的旧 emoji 换成第二批插画。
+  //
+  // 为什么删：那 38 个类型既选不到，又各自挂着一个 emoji，只在老账户的
+  // 编辑页偶尔露一眼。留着就是让 emoji 在 App 里阴魂不散。
+  // 老账户按下面的规则归一，不丢任何账户、不改余额/口径：
+  //   · 有同义类型的并过去（wechat → wechatWallet、baitiao → baitiaoPlain…）；
+  //   · 没有的清掉 type，图标换成「自定义」插画（负债类清空 type，保留 kind）。
+  if (from < 27) {
+    await _migrateGlyphsV27(db);
   }
 
   // v8：附件（图片凭证）
@@ -1352,13 +1364,156 @@ class LedgerStore {
     }
   }
 
+  /// 老账户的 emoji → 插画（v27 用它给「不是 ic: 也不是 img:」的图标兜底）。
+  static const _pocketIconOfEmoji = <String, String>{
+    '💵': 'ic:acc_cash',
+    '👛': 'ic:acc_cash',
+    '🏦': 'ic:acc_bank',
+    '💳': 'ic:acc_credit',
+    '🅰️': 'ic:acc_alipay',
+    '💚': 'ic:acc_wechat',
+    '🐧': 'ic:acc_qq',
+    '🐶': 'ic:acc_jd',
+    '🌸': 'ic:acc_huabei',
+    '🧾': 'ic:acc_baitiao',
+    '⭐': 'ic:acc_custom',
+  };
+
+  /// v27：类型表精简到 11 个 + 四组功能换成第二批插画。
+  ///
+  /// ⚠️ 这里的 id 清单和 emoji 映射都是**字面量快照**，不要改成引用
+  /// `kPocketTypes` / `kBookGlyphIds` —— 迁移是历史，以后往类型表里加东西
+  /// 不能让这次迁移的行为悄悄变掉。
+  static Future<void> _migrateGlyphsV27(Database db) async {
+    // ---- 1) 有同义类型的直接并过去（只改 type，图标交给下一步按 emoji 映射）
+    const aliases = <String, String>{
+      'wechat': 'wechatWallet',
+      'debit': 'bankcard',
+      'baitiao': 'baitiaoPlain',
+      'wallet': 'cash',
+      'cashWallet': 'cash',
+    };
+    for (final e in aliases.entries) {
+      await db.update('pockets', {'type': e.value},
+          where: 'type = ?', whereArgs: [e.key]);
+    }
+
+    // ---- 2) 指向已删类型的账户：降级成「自定义」，账户本身一个都不动
+    // 保留清单 = 精简后仍在「选择类型」里的那 11 个。
+    const kept = {
+      'cash', 'alipay', 'wechatWallet', 'bankcard', 'qq', 'jd', 'custom',
+      'credit', 'huabei', 'baitiaoPlain', 'customCredit',
+    };
+    final pockets =
+        await db.query('pockets', columns: ['id', 'type', 'kind', 'glyph']);
+    for (final r in pockets) {
+      final id = r['id'] as int;
+      final type = (r['type'] as String?) ?? '';
+      final kind = (r['kind'] as String?) ?? 'cash';
+      final glyph = (r['glyph'] as String?) ?? '';
+      final creditLike = kind == 'credit' || kind == 'debt';
+      final pruned = type.isNotEmpty && !kept.contains(type);
+      var newType = type;
+      var newGlyph = glyph;
+
+      if (pruned) {
+        if (kind == 'debt') {
+          // 负债口径没有对应的可选项了，清空 type 让 UI 退回 kind 的叫法，
+          // **不要**塞 customCredit —— 那会把 kind 悄悄改成 credit。
+          newType = '';
+        } else {
+          newType = creditLike ? 'customCredit' : 'custom';
+        }
+        // 类型都没了，它的默认 emoji 留着只会变成一个点不出来的旧图标。
+        // 相册图片（img:）永远不动 —— 那是用户自己拍/选的。
+        if (!glyph.startsWith('img:')) {
+          newGlyph = creditLike ? 'ic:acc_custom_credit' : 'ic:acc_custom';
+        }
+      } else if (!glyph.startsWith('ic:') && !glyph.startsWith('img:')) {
+        // 类型还在：只换「它自己的默认 emoji」，用户手挑的（🐳 之类）不动。
+        final mapped = _pocketIconOfEmoji[glyph];
+        if (mapped != null) newGlyph = mapped;
+      }
+
+      if (newType != type || newGlyph != glyph) {
+        await db.update('pockets', {'type': newType, 'glyph': newGlyph},
+            where: 'id = ?', whereArgs: [id]);
+      }
+    }
+
+    // ---- 4) 账本 / 订阅 / 模板 / 心愿单：旧 emoji → 第二批插画
+    // 只换「旧的默认值」，用户从相册挑的图片（img:）和换过的图标都不动。
+    await _remapGlyphColumn(db, 'books', const {
+      '📒': 'ic:obj_notebook',
+      '🏠': 'ic:obj_house',
+      '🧳': 'ic:obj_luggage',
+      '💼': 'ic:obj_office',
+      '🎓': 'ic:obj_graduation',
+      '🐱': 'ic:obj_pet',
+      '🚗': 'ic:obj_car',
+      '✈️': 'ic:obj_plane',
+    });
+    await _remapGlyphColumn(db, 'subscriptions', const {
+      '📺': 'ic:obj_tv',
+      '🎬': 'ic:obj_movie',
+      '🎵': 'ic:obj_music',
+      '☁️': 'ic:obj_cloud',
+      '📦': 'ic:obj_box',
+      '🎮': 'ic:obj_game',
+      '📚': 'ic:obj_book',
+      '💼': 'ic:obj_office',
+      '🛒': 'ic:obj_cart',
+      '🤖': 'ic:obj_ai',
+    });
+    await _remapGlyphColumn(db, 'templates', const {
+      '📋': 'ic:obj_clipboard',
+      '🍜': 'ic:out_food',
+      '🚌': 'ic:out_transport',
+      '☕': 'ic:obj_coffee',
+      '🛒': 'ic:obj_cart',
+      '💡': 'ic:obj_bulb',
+      '📱': 'ic:obj_phone',
+      '🏠': 'ic:obj_house',
+      '⛽': 'ic:obj_fuel',
+      '🎬': 'ic:obj_movie',
+      '💊': 'ic:out_medical',
+      '🐱': 'ic:obj_pet',
+    });
+    await _remapGlyphColumn(db, 'wishes', const {
+      '🎁': 'ic:out_gift',
+      '👟': 'ic:obj_sneaker',
+      '📱': 'ic:obj_phone',
+      '💻': 'ic:obj_laptop',
+      '🎧': 'ic:obj_headphone',
+      '⌚': 'ic:obj_watch',
+      '⌚️': 'ic:obj_watch',
+      '👜': 'ic:obj_bag',
+      '🎮': 'ic:obj_game',
+      '✈️': 'ic:obj_plane',
+      '🪑': 'ic:obj_chair',
+    });
+  }
+
+  /// 按「旧值 → 新值」逐行换某张表的 glyph（只认表里列出的旧值）。
+  static Future<void> _remapGlyphColumn(
+      Database db, String table, Map<String, String> map) async {
+    final rows = await db.query(table, columns: ['id', 'glyph']);
+    for (final r in rows) {
+      final g = (r['glyph'] as String?) ?? '';
+      final to = map[g];
+      if (to == null) continue;
+      await db
+          .update(table, {'glyph': to}, where: 'id = ?', whereArgs: [r['id']]);
+    }
+  }
+
   Future<void> _seedIfEmpty() async {
     final bookCount = Sqflite.firstIntValue(
             await _db.rawQuery('SELECT COUNT(*) FROM books')) ??
         0;
     if (bookCount == 0) {
       await _db.insert('books',
-          {'title': '默认账本', 'glyph': '📒', 'base_currency': 'CNY', 'rank': 0});
+          {'title': '默认账本', 'glyph': 'ic:obj_notebook', 'base_currency': 'CNY', 'rank': 0});
     }
     final bookId = Sqflite.firstIntValue(
             await _db.rawQuery('SELECT MIN(id) FROM books')) ??
@@ -1461,7 +1616,7 @@ class LedgerStore {
         id: r['id'] as int,
         bookId: r['book_id'] as int,
         title: (r['title'] as String?) ?? '',
-        glyph: (r['glyph'] as String?) ?? '📋',
+        glyph: (r['glyph'] as String?) ?? 'ic:obj_clipboard',
         flow: (r['flow'] as String?) ?? 'out',
         pocketId: (r['pocket_id'] as int?) ?? 0,
         toPocketId: r['to_pocket_id'] as int?,
@@ -2040,7 +2195,7 @@ class LedgerStore {
         id: r['id'] as int,
         bookId: (r['book_id'] as num).toInt(),
         name: (r['name'] as String?) ?? '',
-        glyph: (r['glyph'] as String?) ?? '📺',
+        glyph: (r['glyph'] as String?) ?? 'ic:obj_tv',
         startDay: (r['start_day'] as String?) ?? '1970-01-01',
         months: (r['months'] as num?)?.toInt() ?? 12,
         feeCents: (r['fee_cents'] as num?)?.toInt() ?? 0,

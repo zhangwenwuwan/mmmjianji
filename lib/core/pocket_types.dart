@@ -44,22 +44,30 @@ class PocketType {
   String get hint => nameHint ?? '例如 $label';
 }
 
-/// 全部分组（顺序就是选择器里的顺序）。
+/// 全部分组（决定账户编辑页「所属分组」那行显示的文案）。
+///
+/// 1.4.73 精简类型表后只剩这三组 —— 原来还有「投资与保障」「负债与借款」，
+/// 那两组下面的类型全删了（原因见 [kPocketTypes]）。
 const List<String> kPocketTypeGroups = [
   '现金与储值',
   '银行与支付',
   '信用与分期',
-  '投资与保障',
-  '负债与借款',
 ];
 
-/// 预设类型表。
+/// 预设类型表：**只留「选择类型」里点得到的 11 个**（顺序与 [kAccountChooserGroups] 一致）。
 ///
-/// 取舍：只收「真的会有人单独建账户」的。像「微信零钱」和「微信零钱通」
-/// 这种不拆——一个账户记两笔更容易对账。图标一律用 emoji：不额外打包
-/// 字体，Android / iOS 都能渲染。
+/// 历史：这里一度有 49 个类型（储值卡 / 公交卡 / 股票 / 基金 / 房贷 / 黄金…），
+/// 但「选择类型」只露两列 11 个，剩下 38 个既选不到、又各自挂着一个 emoji 图标，
+/// 只在老账户的编辑页偶尔露一眼。1.4.73 换插画时把它们全删了 ——
+/// 少一套 emoji，也少一张「有类型却选不到」的隐形表。
+///
+/// ⚠️ 加新类型的唯一前置条件：**先画好插画**（`ic:` 前缀，见 core/glyphs.dart），
+/// 否则又是一个选不到、只能靠 emoji 撑着的孤儿。
+///
+/// `legacyGlyph` 必须留着：老账户没存 type，升级后靠「kind + 旧 emoji」反推类型，
+/// 少了它认不出老账户是什么（桑基图会当场变红）。
 const List<PocketType> kPocketTypes = [
-  // ---- 现金与储值
+  // ---- 资金账户（PocketKind.cash / bank）
   PocketType(
       id: 'cash',
       label: '现金',
@@ -68,61 +76,6 @@ const List<PocketType> kPocketTypes = [
       kind: PocketKind.cash,
       group: '现金与储值',
       nameHint: '例如 钱包、零钱'),
-  // 2026-10-26 按 iCost 重构选择器后新增：和 cash 同口径，只是叫法更贴 iCost。
-  PocketType(
-      id: 'cashWallet',
-      label: '现金钱包',
-      glyph: 'ic:acc_cash',
-      legacyGlyph: '💵',
-      kind: PocketKind.cash,
-      group: '现金与储值',
-      nameHint: '例如 钱包、零钱'),
-  PocketType(
-      id: 'wallet',
-      label: '钱包',
-      glyph: 'ic:acc_cash',
-      legacyGlyph: '👛',
-      kind: PocketKind.cash,
-      group: '现金与储值',
-      nameHint: '例如 随身钱包'),
-  PocketType(
-      id: 'stored',
-      label: '储值卡',
-      glyph: '🎫',
-      kind: PocketKind.cash,
-      group: '现金与储值',
-      nameHint: '例如 星巴克卡、理发卡'),
-  PocketType(
-      id: 'transit',
-      label: '公交卡',
-      glyph: '🚌',
-      kind: PocketKind.cash,
-      group: '现金与储值',
-      nameHint: '例如 交通卡'),
-  PocketType(
-      id: 'meal',
-      label: '饭卡',
-      glyph: '🍱',
-      kind: PocketKind.cash,
-      group: '现金与储值',
-      nameHint: '例如 公司饭卡、校园卡'),
-  PocketType(
-      id: 'gift',
-      label: '购物卡',
-      glyph: '🎁',
-      kind: PocketKind.cash,
-      group: '现金与储值',
-      nameHint: '例如 京东卡、超市卡'),
-
-  // ---- 银行与支付
-  PocketType(
-      id: 'debit',
-      label: '储蓄卡',
-      glyph: 'ic:acc_bank',
-      legacyGlyph: '🏦',
-      kind: PocketKind.bank,
-      group: '银行与支付',
-      nameHint: '例如 招行储蓄卡'),
   PocketType(
       id: 'alipay',
       label: '支付宝',
@@ -132,15 +85,6 @@ const List<PocketType> kPocketTypes = [
       group: '银行与支付',
       nameHint: '例如 支付宝余额'),
   PocketType(
-      id: 'wechat',
-      label: '微信零钱',
-      glyph: 'ic:acc_wechat',
-      legacyGlyph: '💚',
-      kind: PocketKind.bank,
-      group: '银行与支付',
-      nameHint: '例如 微信零钱'),
-  // iCost 用的是「微信钱包」这个叫法
-  PocketType(
       id: 'wechatWallet',
       label: '微信钱包',
       glyph: 'ic:acc_wechat',
@@ -148,191 +92,6 @@ const List<PocketType> kPocketTypes = [
       kind: PocketKind.bank,
       group: '银行与支付',
       nameHint: '例如 微信钱包'),
-  PocketType(
-      id: 'unionpay',
-      label: '云闪付',
-      glyph: '☁️',
-      kind: PocketKind.bank,
-      group: '银行与支付',
-      nameHint: '例如 云闪付'),
-  PocketType(
-      id: 'paypal',
-      label: 'PayPal',
-      glyph: '🌐',
-      kind: PocketKind.bank,
-      group: '银行与支付',
-      nameHint: '例如 PayPal'),
-  PocketType(
-      id: 'foreign',
-      label: '外币账户',
-      glyph: '💱',
-      kind: PocketKind.bank,
-      group: '银行与支付',
-      nameHint: '例如 美元账户（记得改币种）'),
-
-  // ---- 信用与分期（都是「先花后还」，有额度）
-  PocketType(
-      id: 'credit',
-      label: '信用卡',
-      glyph: 'ic:acc_credit',
-      legacyGlyph: '💳',
-      kind: PocketKind.credit,
-      group: '信用与分期',
-      nameHint: '例如 招行信用卡'),
-  PocketType(
-      id: 'huabei',
-      label: '花呗',
-      glyph: 'ic:acc_huabei',
-      legacyGlyph: '🌸',
-      kind: PocketKind.credit,
-      group: '信用与分期',
-      nameHint: '例如 花呗'),
-  PocketType(
-      id: 'baitiao',
-      label: '京东白条',
-      glyph: 'ic:acc_baitiao',
-      legacyGlyph: '🧾',
-      kind: PocketKind.credit,
-      group: '信用与分期',
-      nameHint: '例如 京东白条'),
-  PocketType(
-      id: 'meituan',
-      label: '美团月付',
-      glyph: '🍊',
-      kind: PocketKind.credit,
-      group: '信用与分期',
-      nameHint: '例如 美团月付'),
-  PocketType(
-      id: 'douyin',
-      label: '抖音月付',
-      glyph: '🎵',
-      kind: PocketKind.credit,
-      group: '信用与分期',
-      nameHint: '例如 抖音月付'),
-  PocketType(
-      id: 'fenqi',
-      label: '分期平台',
-      glyph: '🧾',
-      kind: PocketKind.credit,
-      group: '信用与分期',
-      nameHint: '例如 分期乐、任性付'),
-
-  // ---- 投资与保障（余额 = 现在值多少，不参与收支）
-  PocketType(
-      id: 'stock',
-      label: '股票',
-      glyph: '📈',
-      kind: PocketKind.bank,
-      group: '投资与保障',
-      nameHint: '例如 证券账户'),
-  PocketType(
-      id: 'fund',
-      label: '基金',
-      glyph: '📊',
-      kind: PocketKind.bank,
-      group: '投资与保障',
-      nameHint: '例如 天天基金'),
-  PocketType(
-      id: 'wealth',
-      label: '理财',
-      glyph: '💹',
-      kind: PocketKind.bank,
-      group: '投资与保障',
-      nameHint: '例如 余额宝、理财通'),
-  // iCost 的「其他理财」：一个通用理财账户兜底
-  PocketType(
-      id: 'otherWealth',
-      label: '其他理财',
-      glyph: '💹',
-      kind: PocketKind.bank,
-      group: '投资与保障',
-      nameHint: '例如 银行理财、券商理财'),
-  PocketType(
-      id: 'deposit',
-      label: '定期',
-      glyph: '📜',
-      kind: PocketKind.bank,
-      group: '投资与保障',
-      nameHint: '例如 三年定期'),
-  PocketType(
-      id: 'gold',
-      label: '黄金',
-      glyph: '🥇',
-      kind: PocketKind.bank,
-      group: '投资与保障',
-      nameHint: '例如 纸黄金、金条'),
-  PocketType(
-      id: 'provident',
-      label: '公积金',
-      glyph: '🏛️',
-      kind: PocketKind.bank,
-      group: '投资与保障',
-      nameHint: '例如 住房公积金'),
-  PocketType(
-      id: 'medical',
-      label: '医保',
-      glyph: '🏥',
-      kind: PocketKind.bank,
-      group: '投资与保障',
-      nameHint: '例如 医保个人账户'),
-  PocketType(
-      id: 'insurance',
-      label: '保险',
-      glyph: '🛡️',
-      kind: PocketKind.bank,
-      group: '投资与保障',
-      nameHint: '例如 增额终身寿'),
-
-  // ---- 负债与借款（余额 = 还欠多少）
-  // iCost 的「贷款」：房贷/车贷/网贷都往这里放，余额记「还欠多少」
-  PocketType(
-      id: 'loan',
-      label: '贷款',
-      glyph: '💸',
-      kind: PocketKind.debt,
-      group: '负债与借款',
-      nameHint: '例如 房贷、车贷、网贷'),
-  PocketType(
-      id: 'mortgage',
-      label: '房贷',
-      glyph: '🏠',
-      kind: PocketKind.debt,
-      group: '负债与借款',
-      nameHint: '例如 招行房贷'),
-  PocketType(
-      id: 'carloan',
-      label: '车贷',
-      glyph: '🚗',
-      kind: PocketKind.debt,
-      group: '负债与借款',
-      nameHint: '例如 车贷'),
-  PocketType(
-      id: 'jiebei',
-      label: '借呗',
-      glyph: '💰',
-      kind: PocketKind.debt,
-      group: '负债与借款',
-      nameHint: '例如 借呗、网商贷'),
-  PocketType(
-      id: 'borrow',
-      label: '借款',
-      glyph: '🤝',
-      kind: PocketKind.debt,
-      group: '负债与借款',
-      nameHint: '例如 欠小王 3000'),
-  PocketType(
-      id: 'payable',
-      label: '应付账款',
-      glyph: '📮',
-      kind: PocketKind.debt,
-      group: '负债与借款',
-      nameHint: '例如 待付货款'),
-
-  // ---- 以下为「选择类型」页（对照参考 App）扩展的常用类型 ----
-  // 注意：group 仍须落在 kPocketTypeGroups 内（sankey 测试约束）；
-  // 选择器里的「展示分组」由 kAccountChooserGroups 单独控制，互不影响。
-  // 口径（铁律）：应收/借出/报销是「别人欠我」，算资产 → bank；
-  // 借入/应付是「我欠别人」，算负债 → debt。
   PocketType(
       id: 'bankcard',
       label: '银行卡',
@@ -357,72 +116,7 @@ const List<PocketType> kPocketTypes = [
       kind: PocketKind.bank,
       group: '银行与支付',
       nameHint: '例如 京东金融'),
-  PocketType(
-      id: 'baitiaoPlain',
-      label: '白条',
-      glyph: 'ic:acc_baitiao',
-      legacyGlyph: '🧾',
-      kind: PocketKind.credit,
-      group: '信用与分期',
-      nameHint: '例如 京东白条'),
-  PocketType(
-      id: 'member',
-      label: '会员卡',
-      glyph: '🎫',
-      kind: PocketKind.cash,
-      group: '现金与储值',
-      nameHint: '例如 超市会员卡'),
-  PocketType(
-      id: 'depositCard',
-      label: '押金',
-      glyph: '🛡️',
-      kind: PocketKind.cash,
-      group: '现金与储值',
-      nameHint: '例如 租房押金'),
-  PocketType(
-      id: 'crypto',
-      label: '虚拟货币',
-      glyph: '🪙',
-      kind: PocketKind.bank,
-      group: '投资与保障',
-      nameHint: '例如 BTC、ETH'),
-  PocketType(
-      id: 'house',
-      label: '房子',
-      glyph: '🏠',
-      kind: PocketKind.bank,
-      group: '投资与保障',
-      nameHint: '例如 自住房、出租房'),
-  PocketType(
-      id: 'car',
-      label: '车子',
-      glyph: '🚗',
-      kind: PocketKind.bank,
-      group: '投资与保障',
-      nameHint: '例如 私家车'),
-  PocketType(
-      id: 'borrowIn',
-      label: '借入',
-      glyph: '🤝',
-      kind: PocketKind.debt,
-      group: '负债与借款',
-      nameHint: '例如 欠朋友的钱'),
-  PocketType(
-      id: 'lendOut',
-      label: '借出',
-      glyph: '💸',
-      kind: PocketKind.bank,
-      group: '投资与保障',
-      nameHint: '例如 借给朋友的钱'),
-  PocketType(
-      id: 'reimburse',
-      label: '报销',
-      glyph: '🧾',
-      kind: PocketKind.bank,
-      group: '投资与保障',
-      nameHint: '例如 待报销的票'),
-  // 「自定义」：选择器里的自定义项，选中后让用户自己改名 / 换图标。
-  // 资金账户那一列的「自定义」，走现金口径（有余额、可记收支）。
+  // 资金账户那一列的「自定义」：走现金口径（有余额、可记收支）。
   PocketType(
       id: 'custom',
       label: '自定义',
@@ -431,8 +125,34 @@ const List<PocketType> kPocketTypes = [
       kind: PocketKind.cash,
       group: '现金与储值',
       nameHint: '自定义账户'),
+
+  // ---- 信贷账户（PocketKind.credit：有额度 / 欠款 / 出账日 / 还款日）
+  PocketType(
+      id: 'credit',
+      label: '信用卡',
+      glyph: 'ic:acc_credit',
+      legacyGlyph: '💳',
+      kind: PocketKind.credit,
+      group: '信用与分期',
+      nameHint: '例如 招行信用卡'),
+  PocketType(
+      id: 'huabei',
+      label: '花呗',
+      glyph: 'ic:acc_huabei',
+      legacyGlyph: '🌸',
+      kind: PocketKind.credit,
+      group: '信用与分期',
+      nameHint: '例如 花呗'),
+  PocketType(
+      id: 'baitiaoPlain',
+      label: '白条',
+      glyph: 'ic:acc_baitiao',
+      legacyGlyph: '🧾',
+      kind: PocketKind.credit,
+      group: '信用与分期',
+      nameHint: '例如 京东白条'),
   // 信贷账户那一列的「自定义」：**和 custom 是不同的类型**，
-  // 走信用卡口径（欠款 / 额度 / 出账日 / 还款日），页面跟信用卡一致。
+  // 走信用卡口径，页面跟信用卡一致。
   PocketType(
       id: 'customCredit',
       label: '自定义',
@@ -442,6 +162,7 @@ const List<PocketType> kPocketTypes = [
       group: '信用与分期',
       nameHint: '自定义信用卡'),
 ];
+
 
 /// 新增账户时「选择类型」展示的分组与类型。
 ///

@@ -15,11 +15,16 @@ import 'package:jianji/ui/app_glyph.dart';
 ///      一个空白格，肉眼很容易滑过去，所以放到测试里挡）；
 ///   3. 账户图标栏确实覆盖了「新增账户」里能建的全部类型。
 void main() {
-  const allIds = [
+  // 去重：模板/心愿单有意识地复用了分类和物体图标，不去重会被当成「重复」。
+  final allIds = <String>{
     ...kOutGlyphIds,
     ...kInGlyphIds,
     ...kAccountGlyphIds,
-  ];
+    ...kBookGlyphIds,
+    ...kSubsGlyphIds,
+    ...kTplGlyphIds,
+    ...kWishGlyphIds,
+  }.toList();
 
   group('图标清单', () {
     test('支出 9 / 收入 5 / 账户 11，且同一组内不重复', () {
@@ -34,6 +39,24 @@ void main() {
     test('账户图标栏就是那 11 个 id（顺序跟类型选择器一致）', () {
       expect(AccountEditPage.glyphs,
           [for (final id in kAccountGlyphIds) Glyphs.of(id)]);
+    });
+
+    test('第二批四组：账本 8 / 订阅 10 / 模板 12 / 心愿单 10，组内不重复', () {
+      expect(kBookGlyphIds.length, 8);
+      expect(kSubsGlyphIds.length, 10);
+      expect(kTplGlyphIds.length, 12);
+      expect(kWishGlyphIds.length, 10);
+      for (final list in [
+        kBookGlyphIds,
+        kSubsGlyphIds,
+        kTplGlyphIds,
+        kWishGlyphIds,
+      ]) {
+        expect(list.toSet().length, list.length, reason: '同一栏里别放重复图标');
+      }
+      // 复用的那几个必须真的存在（写错 id 只会让那一格空白）
+      expect(kTplGlyphIds, containsAll(['out_food', 'out_transport', 'out_medical']));
+      expect(kWishGlyphIds, contains('out_gift'));
     });
 
     test('每个 id 都有对应的 emoji 兜底（桑基图/图例只能放文字）', () {

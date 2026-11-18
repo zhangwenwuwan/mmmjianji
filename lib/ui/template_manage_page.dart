@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/glyphs.dart';
 import '../core/rules.dart';
 import '../data/store.dart';
 import '../state/ledger_state.dart';
@@ -11,21 +12,9 @@ import 'common.dart';
 import 'motion.dart';
 import 'theme.dart';
 
-/// 记账模板图标候选（emoji）。第一个是默认。
-const kTemplateGlyphs = [
-  '📋',
-  '🍜',
-  '🚌',
-  '☕',
-  '🛒',
-  '💡',
-  '📱',
-  '🏠',
-  '⛽',
-  '🎬',
-  '💊',
-  '🐱',
-];
+/// 记账模板图标：设计师画的 PNG（见 core/glyphs.dart 的 kTplGlyphIds）。
+/// 前四个是高频场景（模板/吃饭/通勤/咖啡），所以排在最前面。
+final kTemplateGlyphs = glyphListOf(kTplGlyphIds);
 
 /// 记账模板管理：列表 + 删除 + 新建/编辑入口。
 class TemplateManagePage extends ConsumerStatefulWidget {

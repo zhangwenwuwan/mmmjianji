@@ -51,8 +51,10 @@ const List<String> kInGlyphIds = [
 
 /// 账户图标 id：只覆盖「新增账户」里能选到的 11 个类型。
 ///
-/// 其余类型（股票、基金、房产、贷款…）没有专属插画，继续用 emoji ——
-/// 硬塞一个不相干的图标比 emoji 更误导。
+/// 1.4.73 之前 `kPocketTypes` 有 49 个类型，其中 38 个没有插画、继续用 emoji。
+/// 那些类型在「选择类型」里本来就看不到，只在老账户的编辑页露一眼 ——
+/// 留着等于让 emoji 在 App 里阴魂不散。现在整表只留这 11 个（见 pocket_types.dart），
+/// 老账户由 DB v27 迁移归一，一个 emoji 都不剩。
 const List<String> kAccountGlyphIds = [
   'acc_cash',
   'acc_alipay',
@@ -98,4 +100,100 @@ const Map<String, String> kGlyphEmoji = {
   'acc_baitiao': '🧾',
   'acc_custom': '⭐',
   'acc_custom_credit': '⭐',
+  // 第二批：物体图标池
+  'obj_notebook': '📒',
+  'obj_house': '🏠',
+  'obj_luggage': '🧳',
+  'obj_office': '💼',
+  'obj_graduation': '🎓',
+  'obj_pet': '🐱',
+  'obj_car': '🚗',
+  'obj_plane': '✈️',
+  'obj_tv': '📺',
+  'obj_movie': '🎬',
+  'obj_music': '🎵',
+  'obj_cloud': '☁️',
+  'obj_box': '📦',
+  'obj_game': '🎮',
+  'obj_book': '📚',
+  'obj_cart': '🛒',
+  'obj_ai': '🤖',
+  'obj_clipboard': '📋',
+  'obj_coffee': '☕',
+  'obj_bulb': '💡',
+  'obj_phone': '📱',
+  'obj_fuel': '⛽',
+  'obj_sneaker': '👟',
+  'obj_laptop': '💻',
+  'obj_headphone': '🎧',
+  'obj_watch': '⌚',
+  'obj_bag': '👜',
+  'obj_chair': '🪑',
 };
+
+// ---------------------------------------------------------------------------
+// 第二批：账本 / 会员订阅 / 记账模板 / 心愿单
+//
+// 这四组共用同一个「物体」图标池（`obj_*`）：房子、车子、飞机、游戏机这些
+// 概念在四个功能里都用得上，画一次到处引用，别按功能各画一套。
+// 少数几张直接复用第一批的分类图标（吃饭/通勤/买药/礼物）。
+// ---------------------------------------------------------------------------
+
+/// 账本图标（账本管理列表 + 账本编辑框）。
+const List<String> kBookGlyphIds = [
+  'obj_notebook',
+  'obj_house',
+  'obj_luggage',
+  'obj_office',
+  'obj_graduation',
+  'obj_pet',
+  'obj_car',
+  'obj_plane',
+];
+
+/// 会员订阅图标。
+const List<String> kSubsGlyphIds = [
+  'obj_tv',
+  'obj_movie',
+  'obj_music',
+  'obj_cloud',
+  'obj_box',
+  'obj_game',
+  'obj_book',
+  'obj_office',
+  'obj_cart',
+  'obj_ai',
+];
+
+/// 记账模板图标。吃饭/通勤/买药直接复用分类插画，不为模板再画一遍。
+const List<String> kTplGlyphIds = [
+  'obj_clipboard',
+  'out_food',
+  'out_transport',
+  'obj_coffee',
+  'obj_cart',
+  'obj_bulb',
+  'obj_phone',
+  'obj_house',
+  'obj_fuel',
+  'obj_movie',
+  'out_medical',
+  'obj_pet',
+];
+
+/// 心愿单图标。礼物盒复用分类的「礼」。
+const List<String> kWishGlyphIds = [
+  'out_gift',
+  'obj_sneaker',
+  'obj_phone',
+  'obj_laptop',
+  'obj_headphone',
+  'obj_watch',
+  'obj_bag',
+  'obj_game',
+  'obj_plane',
+  'obj_chair',
+];
+
+/// 把 id 清单转成存库值（`['out_food']` → `['ic:out_food']`）。
+List<String> glyphListOf(List<String> ids) => [for (final id in ids) Glyphs.of(id)];

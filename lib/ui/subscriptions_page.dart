@@ -3,6 +3,7 @@ import 'package:flutter/services.dart'
     show FilteringTextInputFormatter, LengthLimitingTextInputFormatter;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/glyphs.dart';
 import '../core/rules.dart';
 import '../core/subscription.dart';
 import '../data/store.dart';
@@ -20,7 +21,11 @@ import 'wheel_date_picker.dart';
 ///
 /// 和分类一样只留一排：找图标比想名字还慢，想用别的走第一个格子的「相册」，
 /// 自定义图片不受这个清单限制。
-const kSubsGlyphs = ['📺', '🎬', '🎵', '☁️', '📦', '🎮', '📚', '💼', '🛒', '🤖'];
+/// 会员订阅图标：设计师画的 PNG（见 core/glyphs.dart 的 kSubsGlyphIds）。
+///
+/// 和分类一样只留一排：找图标比想名字还慢，想用别的走第一个格子的「相册」，
+/// 自定义图片不受这个清单限制。
+final kSubsGlyphs = glyphListOf(kSubsGlyphIds);
 
 /// 表单里「常用时长」的快捷键。自定义仍然随便填（用户明确要 12 / 15 这类任意月数）。
 const _kQuickMonths = [1, 3, 6, 12, 24, 36];

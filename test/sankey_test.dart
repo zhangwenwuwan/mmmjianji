@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:jianji/core/glyphs.dart';
 import 'package:jianji/core/pocket_types.dart';
 import 'package:jianji/data/store.dart';
 import 'package:jianji/ui/sankey.dart';
@@ -93,22 +94,39 @@ void main() {
         expect(t.label.isNotEmpty, isTrue);
         expect(t.glyph.isNotEmpty, isTrue);
       }
-      expect(kPocketTypes.length, greaterThan(20), reason: '要能覆盖常见账户');
+      // 1.4.73 起类型表**只留「选择类型」里点得到的**那 11 个 ——
+      // 多一个就是「有类型却选不到」的孤儿，且必然只能靠 emoji 撑着。
+      final choosable = [
+        for (final g in kAccountChooserGroups) ...g.$2,
+      ];
+      expect(kPocketTypes.map((t) => t.id).toSet(), choosable.toSet());
+      expect(choosable.length, kAccountGlyphIds.length);
     });
 
-    test('支付宝/微信是资产类，花呗/白条是信用类，房贷是负债类', () {
+    test('每个类型都有插画，一个 emoji 都不剩', () {
+      for (final t in kPocketTypes) {
+        expect(Glyphs.isIcon(t.glyph), isTrue,
+            reason: '${t.label}（${t.id}）还在用 emoji「${t.glyph}」');
+        expect(kAccountGlyphIds, contains(Glyphs.idOf(t.glyph)));
+      }
+    });
+
+    test('支付宝/微信是资产类，花呗/白条是信用类', () {
       expect(pocketTypeOf('alipay')!.kind, PocketKind.bank);
-      expect(pocketTypeOf('wechat')!.kind, PocketKind.bank);
+      expect(pocketTypeOf('wechatWallet')!.kind, PocketKind.bank);
       expect(pocketTypeOf('huabei')!.kind, PocketKind.credit);
-      expect(pocketTypeOf('baitiao')!.kind, PocketKind.credit);
-      expect(pocketTypeOf('mortgage')!.kind, PocketKind.debt);
+      expect(pocketTypeOf('baitiaoPlain')!.kind, PocketKind.credit);
       expect(pocketTypeOf('huabei')!.kind.isLiability, isTrue);
       expect(pocketTypeOf('') , isNull);
       expect(pocketTypeOf('不存在'), isNull);
+      // 精简掉的类型必须真没了（老账户由 DB v27 归一）
+      expect(pocketTypeOf('mortgage'), isNull);
+      expect(pocketTypeOf('stock'), isNull);
+      expect(pocketTypeOf('wechat'), isNull);
     });
 
     test('老账户按 kind + 图标反推预设', () {
-      expect(guessPocketType(PocketKind.bank, '🏦')!.id, 'debit');
+      expect(guessPocketType(PocketKind.bank, '🏦')!.id, 'bankcard');
       expect(guessPocketType(PocketKind.cash, '💵')!.id, 'cash');
       // 图标对不上时退回同类的第一个（现金）
       expect(guessPocketType(PocketKind.cash, '🙈')!.kind, PocketKind.cash);

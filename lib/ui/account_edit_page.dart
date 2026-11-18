@@ -98,10 +98,12 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
     _limitCents = p?.creditLimitCents ?? 0;
     _kind = p?.kind ?? PocketKind.cash;
     // 老账户没存过 type，按 kind + 图标反推一个，编辑时才不会空着；
-    // 新建直接给「现金钱包」（iCost 选择器的第一项）——
+    // 新建直接给「现金」（选择器第一项）。
     // ⚠️ 别走 guessPocketType：它对空图标会命中同名的 cash，新建就变「现金」了。
+    // （原来默认是 'cashWallet'（现金钱包），1.4.73 精简类型表时并进了 cash ——
+    //  两个类型图标口径完全一样，留两个只会让选择器里出现「选中项不在列表中」。）
     if (p == null) {
-      _typeId = 'cashWallet';
+      _typeId = 'cash';
     } else if (p.typeId.isNotEmpty) {
       _typeId = p.typeId;
     } else {
@@ -1029,7 +1031,11 @@ class TypeBadge {
   final String? emoji;
 }
 
-/// 每个类型对应的徽标（id → 配色 + 字形）。没列进来的类型走 [_fallbackBadge]。
+/// 每个类型对应的徽标（id → 配色 + 字形）。
+///
+/// 1.4.73 起 11 个类型全都有插画（`ic:`），`_gridItem` / `_typeRow` 都优先画插画，
+/// 这张表已经用不上了 —— 只有「账户图标被换成相册图片」等极端情况才兜底。
+/// 表里只留仍在类型表里的 id，别再把删掉的类型（股票/房贷/会员卡…）加回来。
 const Map<String, TypeBadge> kTypeBadges = {
   // 资金账户
   'cash': TypeBadge(tint: Color(0xFFF2A33C), text: '¥'),
@@ -1046,21 +1052,6 @@ const Map<String, TypeBadge> kTypeBadges = {
   // 信贷列的「自定义」：和资金列的 custom 是两个类型（口径不同），
   // 徽标配色也换掉，免得两列都是同款青绿星星分不清。
   'customCredit': TypeBadge(tint: Color(0xFF7C5CD6), icon: Icons.star),
-  // 充值账户
-  'member': TypeBadge(tint: Color(0xFFC99B3B), icon: Icons.card_membership),
-  'transit': TypeBadge(tint: Color(0xFF1FA463), icon: Icons.directions_bus),
-  'meal': TypeBadge(tint: Color(0xFFE8833A), icon: Icons.restaurant),
-  'depositCard': TypeBadge(tint: Color(0xFF3C7EED), text: '押'),
-  // 投资理财
-  'insurance': TypeBadge(tint: Color(0xFF3C7EED), text: '保'),
-  'crypto': TypeBadge(tint: Color(0xFF9B59B6), icon: Icons.currency_bitcoin),
-  // 二手货物
-  'house': TypeBadge(tint: Color(0xFFE0533D), icon: Icons.home),
-  'car': TypeBadge(tint: Color(0xFF3C7EED), icon: Icons.directions_car),
-  // 债务
-  'borrowIn': TypeBadge(tint: Color(0xFFE0A93D), icon: Icons.call_received),
-  'lendOut': TypeBadge(tint: Color(0xFF15B8A6), icon: Icons.call_made),
-  'reimburse': TypeBadge(tint: Color(0xFF3C7EED), icon: Icons.receipt_long),
 };
 
 /// 「选择类型」独立页（参考 App 风格）：顶栏返回 + 居中标题，下面是

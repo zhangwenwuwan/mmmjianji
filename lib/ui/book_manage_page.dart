@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app_glyph.dart';
 import '../core/currency.dart';
+import '../core/glyphs.dart';
 import '../data/store.dart';
 import '../state/settings.dart';
 import '../services/attachment_service.dart';
@@ -11,8 +12,8 @@ import 'common.dart';
 import 'motion.dart';
 import 'theme.dart';
 
-const _bookGlyphs = ['📒', '🏠', '🧳', '💼', '🎓', '🐱', '🚗', '✈️'];
-
+/// 账本图标：设计师画的 PNG（见 core/glyphs.dart 的 kBookGlyphIds）。
+final _bookGlyphs = glyphListOf(kBookGlyphIds);
 /// 账本管理 + 汇率维护。
 ///
 /// 汇率是**手填**：自动拉取要联网 + 加权限，留给下一轮；这里先把机制跑通，
