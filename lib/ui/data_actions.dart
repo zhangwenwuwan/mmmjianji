@@ -427,7 +427,8 @@ Future<void> importConfig(BuildContext context, WidgetRef ref) async {
       await store.addPocket(
         bookId: book.id,
         title: title,
-        glyph: (item['glyph'] as String?) ?? '👛',
+        // 备份里没带图标的账户：给设计师的现金插画，别再造一个旧 emoji 账户。
+        glyph: (item['glyph'] as String?) ?? 'ic:acc_cash',
         kind: PocketKind.values.firstWhere(
           (k) => k.name == item['kind'],
           orElse: () => PocketKind.cash,

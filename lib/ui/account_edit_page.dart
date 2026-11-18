@@ -108,7 +108,12 @@ class _AccountEditPageState extends ConsumerState<AccountEditPage> {
       // 老账户 typeId 是空串（不是 null），得显式判 isNotEmpty 才会走到反推
       _typeId = guessPocketType(p.kind, p.glyph)?.id ?? 'cash';
     }
-    _glyph = p?.glyph ?? '💵';
+    // 新建账户的默认图标必须**跟着默认类型走**。
+    // 以前这里写死 '💵'：一进「添加账户」左上角大徽标就是旧 emoji，
+    // 图标选择器还会因为它「不在插画列表里」被前置成第 13 格
+    // （见 _pickGlyph 的兜底逻辑），等于凭空多出一个旧图标。
+    _glyph = p?.glyph ??
+        (pocketTypeOf(_typeId)?.glyph ?? Glyphs.of(kAccountGlyphIds.first));
     _currency = p?.currency ?? 'CNY';
     _billingDay = p?.billingDay;
     _paymentDueDay = p?.paymentDueDay;

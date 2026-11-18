@@ -753,6 +753,34 @@ class Template {
       );
 }
 
+/// 新库 / 新账本的默认分类：支出 9 + 收入 5，图标一律是设计师的 PNG（`ic:`）。
+///
+/// 支出前八个正好铺满记账页 4 列网格的两行，「其他」独占第三行；
+/// **不预置二级** —— 记账是「点分类即选中」的一屏流程，预置二级等于每笔多按一次。
+///
+/// ⚠️ 首装（[_seedIfEmpty]）和「新建账本」（[LedgerStore.seedBookDefaults]）
+/// 必须用**同一份**清单。1.4.73 换图标时只改了首装那份，新建出来的账本
+/// 还是 衣/食/住/行 四个旧 emoji 分类 —— 两套种子并存就会这样。
+const kSeedOutBuckets = [
+  ('食', 'ic:out_food'),
+  ('行', 'ic:out_transport'),
+  ('住', 'ic:out_housing'),
+  ('购', 'ic:out_shopping'),
+  ('玩', 'ic:out_fun'),
+  ('医', 'ic:out_medical'),
+  ('学', 'ic:out_education'),
+  ('礼', 'ic:out_gift'),
+  ('其他', 'ic:out_other'),
+];
+
+const kSeedInBuckets = [
+  ('工资', 'ic:in_salary'),
+  ('副业', 'ic:in_sidejob'),
+  ('理财', 'ic:in_invest'),
+  ('红包', 'ic:in_redpacket'),
+  ('其他', 'ic:in_other'),
+];
+
 class LedgerStore {
   LedgerStore._(this._db, {this.withSamplePockets = true});
 
@@ -1345,7 +1373,7 @@ class LedgerStore {
       await _db.insert('pockets', {
         'book_id': bookId,
         'title': '现金',
-        'glyph': '👛',
+        'glyph': 'ic:acc_cash',
         'kind': 'cash',
         'currency': 'CNY',
         'opening_cents': 0,
@@ -1354,7 +1382,7 @@ class LedgerStore {
       await _db.insert('pockets', {
         'book_id': bookId,
         'title': '银行卡',
-        'glyph': '💳',
+        'glyph': 'ic:acc_bank',
         'kind': 'bank',
         'currency': 'CNY',
         'opening_cents': 0,
@@ -1365,30 +1393,11 @@ class LedgerStore {
             await _db.rawQuery('SELECT COUNT(*) FROM buckets')) ??
         0;
     if (bucketCount == 0) {
-      // 1.4.73：图标从 emoji 换成设计师画的 PNG（`ic:` 前缀，见 core/glyphs.dart）。
-      // 支出仍是九个一级：前八个铺满记账页 4 列网格的两行，「其他」独占第三行；
-      // 收入五个。**不预置二级** —— 记账是「点分类即选中」的一屏流程，
-      // 预置二级等于每笔多按一次。想要细分的人自己加。
-      const outBuckets = [
-        ('食', 'ic:out_food'),
-        ('行', 'ic:out_transport'),
-        ('住', 'ic:out_housing'),
-        ('购', 'ic:out_shopping'),
-        ('玩', 'ic:out_fun'),
-        ('医', 'ic:out_medical'),
-        ('学', 'ic:out_education'),
-        ('礼', 'ic:out_gift'),
-        ('其他', 'ic:out_other'),
-      ];
-      const inBuckets = [
-        ('工资', 'ic:in_salary'),
-        ('副业', 'ic:in_sidejob'),
-        ('理财', 'ic:in_invest'),
-        ('红包', 'ic:in_redpacket'),
-        ('其他', 'ic:in_other'),
-      ];
+      // 图标是设计师画的 PNG（`ic:` 前缀，见 core/glyphs.dart）。
+      // 清单见文件顶部的 kSeedOutBuckets / kSeedInBuckets ——
+      // 新建账本必须用同一份，否则两套种子会并存。
       var rank = 0;
-      for (final b in outBuckets) {
+      for (final b in kSeedOutBuckets) {
         await _db.insert('buckets', {
           'book_id': bookId,
           'title': b.$1,
@@ -1398,7 +1407,7 @@ class LedgerStore {
         });
       }
       rank = 0;
-      for (final b in inBuckets) {
+      for (final b in kSeedInBuckets) {
         await _db.insert('buckets', {
           'book_id': bookId,
           'title': b.$1,
@@ -1597,17 +1606,11 @@ class LedgerStore {
   /// 原来会建「现金 / 银行卡」，但这两个名字对不上任何真实账户，
   /// 用户第一件事就是删掉它们再建自己的 —— 预置反而多两步。
   Future<void> seedBookDefaults(int bookId, String currency) async {
-    // 账户不再预置（见方法注释）。分类照旧：新账本没有分类的话，
-    // 记账前得先建 8 个分类，那是纯粹的浪费。
-    const outBuckets = [
-        ('衣', '👕'),
-        ('食', '🍜'),
-        ('住', '🏠'),
-        ('行', '🚌'),
-      ];
-    const inBuckets = [('工资', '💰'), ('兼职', '💼'), ('红包', '🧧'), ('其他', '✨')];
+    // 账户不再预置（见方法注释）。分类和首装**同一份清单**
+    // （kSeedOutBuckets / kSeedInBuckets）：两个种子各写一份，换图标时
+    // 必然只改一处，新建的账本就会冒出旧 emoji 分类。
     var rank = 0;
-    for (final b in outBuckets) {
+    for (final b in kSeedOutBuckets) {
       await _db.insert('buckets', {
         'book_id': bookId,
         'title': b.$1,
@@ -1617,7 +1620,7 @@ class LedgerStore {
       });
     }
     rank = 0;
-    for (final b in inBuckets) {
+    for (final b in kSeedInBuckets) {
       await _db.insert('buckets', {
         'book_id': bookId,
         'title': b.$1,

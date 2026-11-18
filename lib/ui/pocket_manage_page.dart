@@ -10,19 +10,9 @@ import 'common.dart';
 import 'motion.dart';
 import 'theme.dart';
 
-/// 账户图标可选集（账户管理页和资产页的「添加账户」共用）
-const pocketGlyphs = [
-  '👛',
-  '💳',
-  '🏦',
-  '💵',
-  '🪙',
-  '📱',
-  '🎫',
-  '🏠',
-  '🚗',
-  '💎'
-];
+// 2026-11-18 删掉 `pocketGlyphs`（👛💳🏦💵🪙📱🎫🏠🚗💎）：
+// 1.4.73 换插画后账户图标一律走 `AccountEditPage.glyphs`（`ic:` 前缀），
+// 这个常量已经没有任何引用，留着只会让人误以为还有一套 emoji 图标在用。
 
 /// 新增 / 编辑账户对话框。
 ///
