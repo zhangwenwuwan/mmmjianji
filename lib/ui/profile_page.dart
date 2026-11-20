@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/version.dart';
 import '../services/avatar_service.dart';
 import '../services/update_service.dart';
+import '../services/vault_service.dart';
 import 'update_dialog.dart';
 import '../state/ledger_state.dart';
 import '../state/settings.dart';
@@ -93,6 +94,10 @@ class ProfilePage extends ConsumerWidget {
               // 没写过总结的月份是空的，用户以为上月账单归档后找不到入口。
               _nav(context, Icons.calendar_month_outlined, '月度归档',
                   '每月账单 + 总结，随时回看', const MonthArchivePage()),
+              if (VaultService.isSupported) ...[
+                const Divider(height: 1, indent: 16),
+                const _VaultTile(),
+              ],
               const Divider(height: 1, indent: 16),
               const _CheckUpdateTile(),
               const Divider(height: 1, indent: 16),
@@ -482,6 +487,39 @@ class _GridItem extends StatelessWidget {
                   fontWeight: FontWeight.w500,
                   color: Palette.ink(context))),
         ],
+      ),
+    );
+  }
+}
+
+/// 「密码库」行：拉起内嵌的 LaClave 原生模块（同 APK，独立 Activity）。
+///
+/// 与 _nav 不同，这里不 push Flutter 页面——密码库是独立的 WebView Activity，
+/// 通过 jianji/vault MethodChannel 打开。
+class _VaultTile extends StatelessWidget {
+  const _VaultTile();
+
+  Future<void> _open(BuildContext context) async {
+    try {
+      await VaultService.open();
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).toast('$e');
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PressScale(
+      scale: 0.98,
+      onTap: () => _open(context),
+      child: ListTile(
+        leading: const Icon(Icons.password_outlined),
+        title: const Text('密码库'),
+        subtitle: const Text('离线保管账号密码，支持 KeePass 导入导出',
+            style: TextStyle(fontSize: 12)),
+        trailing: const Icon(Icons.chevron_right, size: 18),
       ),
     );
   }

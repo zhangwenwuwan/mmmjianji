@@ -9,6 +9,7 @@ import android.provider.Settings
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import com.jianji.vault.VaultActivity
 import java.io.File
 import java.security.MessageDigest
 
@@ -27,6 +28,7 @@ class MainActivity : FlutterFragmentActivity() {
     private val widgetChannel = "jianji/widget"
     private val updateChannel = "jianji/update"
     private val schemeChannel = "jianji/scheme"
+    private val vaultChannel = "jianji/vault"
 
     /// scheme 通道引用，热启动 onNewIntent 时直接把原始 URI 推给 Dart。
     private var schemeMethodChannel: MethodChannel? = null
@@ -65,6 +67,22 @@ class MainActivity : FlutterFragmentActivity() {
             }
         }
 
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, vaultChannel)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "open" -> {
+                        try {
+                            VaultActivity.launch(this)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.error("vault_open_failed", e.message, null)
+                        }
+                    }
+                    "available" -> result.success(true)
+                    else -> result.notImplemented()
+                }
+            }
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, widgetChannel)
             .setMethodCallHandler { call, result ->

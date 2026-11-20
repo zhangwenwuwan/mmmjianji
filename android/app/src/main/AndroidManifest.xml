@@ -37,6 +37,17 @@
              「系统云备份 / 换机直传」带走 —— 和本 App「数据只在本机」的定位
              直接冲突，而且用户在界面上完全看不到这件事。
              自己的备份走「数据管理 → 导出 / 复制备份」，由用户主动触发。 -->
+        <!-- LaClave 密码库模块（同 APK 内嵌，独立 Activity + WebView）。
+             exported=false：只能由本应用内部通过 MethodChannel 拉起。
+             零 INTERNET 依赖——代码不使用网络，但共享宿主的权限集合。 -->
+        <activity
+            android:name="com.jianji.vault.VaultActivity"
+            android:exported="false"
+            android:theme="@style/NormalTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
