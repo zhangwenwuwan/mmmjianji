@@ -50,10 +50,18 @@ class AppGlyph extends StatelessWidget {
     // 裁圆角会把接近满画布的卡类图标切掉四角；用 contain 让留白自然存在，
     // 视觉大小由设计时的构图决定（所有图都是居中构图，已核对过）。
     if (Glyphs.isIcon(glyph)) {
+      // cacheWidth/Height：源图是 256×256，实际只画 18~48 —— 不缩放解码等于
+      // 每张图都按 1024×1024 字节（256KB）进内存，一屏 20 个图标就是 5MB，
+      // 图标选择器一次 53 个直接把 ImageCache 顶满。
+      // 按「逻辑尺寸 × DPR」解码，四舍五入到 8 的倍数，避免 1px 差异造成
+      // 缓存里多存一份。
+      final px = _decodePx(context);
       final img = Image.asset(
         Glyphs.assetPath(glyph),
         width: fill ? null : size,
         height: fill ? null : size,
+        cacheWidth: px,
+        cacheHeight: px,
         fit: BoxFit.contain,
         filterQuality: FilterQuality.medium,
         gaplessPlayback: true,
@@ -77,6 +85,9 @@ class AppGlyph extends StatelessWidget {
           // fill：交给父容器的约束（BoxFit.cover 保证不变形）
           width: fill ? null : size,
           height: fill ? null : size,
+          // 同上：自定义图标是 256 的，别按原图解码
+          cacheWidth: _decodePx(context),
+          cacheHeight: _decodePx(context),
           fit: BoxFit.cover,
           filterQuality: FilterQuality.medium,
           gaplessPlayback: true,
@@ -88,6 +99,17 @@ class AppGlyph extends StatelessWidget {
         );
       },
     );
+  }
+
+  /// 解码目标像素（逻辑尺寸 × 设备像素比，8 的倍数）。
+  ///
+  /// `fill: true` 时真实尺寸由父容器决定，[size] 只是兜底 —— 取两者较大值，
+  /// 宁可多解一点也别糊（图标格一般是 36~48，差值有限）。
+  int _decodePx(BuildContext context) {
+    final dpr = MediaQuery.maybeDevicePixelRatioOf(context) ?? 1.0;
+    final px = (size * dpr).round();
+    // 上限 256：源图本身就只有这么大，再大是白费。
+    return ((px + 7) ~/ 8 * 8).clamp(16, 256);
   }
 
   Widget _fallbackText() => Text(fallback, style: TextStyle(fontSize: size));

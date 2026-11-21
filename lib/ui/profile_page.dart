@@ -306,6 +306,10 @@ class _AvatarCard extends ConsumerWidget {
               File(path),
               fit: BoxFit.cover,
               filterQuality: FilterQuality.medium,
+              // 56×56 的头像按原图解码 = 一张 4000×3000 的照片占 48MB。
+              // 按 3 倍 DPR 解到 168 足够，内存差三个数量级。
+              cacheWidth: 168,
+              cacheHeight: 168,
               errorBuilder: (_, __, ___) => fallback,
             ),
     );

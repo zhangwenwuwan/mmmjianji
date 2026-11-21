@@ -930,6 +930,17 @@ class _SafeToSpendCard extends ConsumerWidget {
 /// 明细页折叠头部（复刻原版 PrimaryHeader + HomeBudgetSummary 的分层：
 /// 展开时三行「账本条 / 年月 / 收支三段」，滚动后收起第一、三行，
 /// 只留「年月 + 紧凑收支」，并压到顶栏位置）。
+/// 封面图解码宽度（物理像素）：屏宽 × DPR，封顶 1440。
+///
+/// 独立成函数是因为它同时被 Image.file 的 cacheWidth / cacheHeight 用到，
+/// 而且**必须和渲染尺寸挂钩** —— 写死 1080 的话，折叠屏 / 平板会糊，
+/// 写死 4000 又等于没优化。
+int coverDecodeWidth(BuildContext context) {
+  final dpr = MediaQuery.maybeDevicePixelRatioOf(context) ?? 2.0;
+  final w = MediaQuery.maybeSizeOf(context)?.width ?? 400;
+  return (w * dpr).round().clamp(360, 1440);
+}
+
 class _LedgerHeader extends SliverPersistentHeaderDelegate {
   _LedgerHeader({
     required this.bookAsync,
@@ -2216,6 +2227,12 @@ class _CoverBackdrop extends StatelessWidget {
               alignment: Alignment.center,
               filterQuality: FilterQuality.medium,
               gaplessPlayback: true,
+              // 封面是整屏背景，但用户可能选一张 4000×3000 的原图 ——
+              // 不限制的话单张解码就是 48MB，冷启动直接顶到 OOM 边缘，
+              // 而且每次重建都要重新 raster。按屏宽（含 DPR）解码够了，
+              // 头部最多 1.6 屏宽那么高，高度按 1.8 倍留余量。
+              cacheWidth: coverDecodeWidth(context),
+              cacheHeight: (coverDecodeWidth(context) * 1.8).round(),
               errorBuilder: (_, __, ___) => const SizedBox.shrink(),
             ),
           ),

@@ -253,13 +253,16 @@ final profileStatsProvider =
 /// 美元分和人民币分加在一起，这是算错账，不能图省事。
 final totalsProvider =
     FutureProvider<({int incomeCents, int expenseCents})>((ref) async {
-  final store = await ref.watch(storeProvider.future);
   final book = await ref.watch(activeBookProvider.future);
   final rates = await ref.watch(ratesProvider.future);
-  final month = ref.watch(monthProvider);
   ref.watch(revisionProvider);
-  final entries = await store.entriesOfMonth(book.id, month);
-  final pocketList = await store.allPockets();
+  // **复用 entriesProvider**，不要自己再查一遍：
+  // 两边都 watch 同一个 (book, month, revision)，数据完全一样，
+  // 各查一次等于每次保存/删除都白跑一遍全月 SELECT + 解析 300 行。
+  // 首页同时 watch entries / totals / daily / budgetSpent 四个，
+  // 原来一次 revision 变动要扫 4 遍全月流水。
+  final entries = await ref.watch(entriesProvider.future);
+  final pocketList = await ref.watch(allPocketsProvider.future);
   final currencyOf = {for (final p in pocketList) p.id: p.currency};
   var income = 0;
   var expense = 0;
@@ -288,13 +291,12 @@ final totalsProvider =
 /// 收入与支出分开累计，日历可以同时展示；转账和「不计入统计」的流水不参与。
 final dailyTotalsProvider = FutureProvider<
     Map<String, ({int incomeCents, int expenseCents})>>((ref) async {
-  final store = await ref.watch(storeProvider.future);
   final book = await ref.watch(activeBookProvider.future);
   final rates = await ref.watch(ratesProvider.future);
-  final month = ref.watch(monthProvider);
   ref.watch(revisionProvider);
-  final entries = await store.entriesOfMonth(book.id, month);
-  final pocketList = await store.allPockets();
+  // 同上：和 entriesProvider 共用一份全月流水
+  final entries = await ref.watch(entriesProvider.future);
+  final pocketList = await ref.watch(allPocketsProvider.future);
   final currencyOf = {for (final p in pocketList) p.id: p.currency};
   final map = <String, ({int incomeCents, int expenseCents})>{};
   for (final e in entries) {
@@ -397,12 +399,27 @@ final reimburseDoneProvider = FutureProvider<int>((ref) async {
   return rows.length;
 });
 
+/// 本月「预算口径」支出（主币分）。
+///
+/// 口径必须和 [budgetSpentOf] 一模一样（只算 out、排除 exclude_from_budget、
+/// AA 他人份额不计），只是数据来源换成 [entriesProvider] 的缓存，
+/// 不再自己查一遍全月流水。
 final budgetSpentProvider = FutureProvider<int>((ref) async {
   ref.watch(revisionProvider);
   ref.watch(monthProvider);
-  final store = await ref.watch(storeProvider.future);
   final book = await ref.watch(activeBookProvider.future);
-  return budgetSpentOf(store, book, ref.watch(monthProvider));
+  final rates = await ref.watch(ratesProvider.future);
+  final entries = await ref.watch(entriesProvider.future);
+  final pockets = await ref.watch(allPocketsProvider.future);
+  final currencyOf = {for (final p in pockets) p.id: p.currency};
+  var spent = 0;
+  for (final e in entries) {
+    if (e.flow != 'out') continue;
+    if (e.excludeFromBudget) continue;
+    final from = e.currency ?? currencyOf[e.pocketId] ?? book.baseCurrency;
+    spent += toBaseCents(e.statsCents, from, book.baseCurrency, rates);
+  }
+  return spent;
 });
 
 final budgetCarryProvider = FutureProvider<int>((ref) async {
@@ -618,7 +635,6 @@ final monthSeriesProvider = FutureProvider.family<List<MonthPoint>,
     ({int count, DateTime anchor})>((ref, args) async {
   final store = await ref.watch(storeProvider.future);
   final book = await ref.watch(activeBookProvider.future);
-  final rates = await ref.watch(ratesProvider.future);
   // ⚠️ 锚点由调用方传（首页传自己 watch 的月份、统计页传 insightAnchor）。
   // 以前这里 watch `monthProvider`，统计页的「近 6 个月」永远跟着首页当月，
   // 翻到 3 月时上半页变、趋势卡不动。
@@ -626,31 +642,27 @@ final monthSeriesProvider = FutureProvider.family<List<MonthPoint>,
   final count = args.count;
   ref.watch(revisionProvider);
 
-  final pockets = await store.allPockets();
-  final currencyOf = {for (final p in pockets) p.id: p.currency};
+  // 一次聚合查完所有月份，再按需取 6 个点。
+  //
+  // 原来是「循环 6 次 entriesOfMonth」，每次把该月所有流水行都读成 Dart 对象
+  // 再在内存里累加 —— 首页每次保存/删除都会触发（revision 自增），
+  // 等于 6 次全表扫描 + 几百个 Entry 分配。`monthsWithData` 是同口径的
+  // SQL 聚合（口径注释里写明和 monthTotalsByFlow 一致），一次就够。
+  final all = await store.monthsWithData(book.id);
+  final byMonth = {
+    for (final m in all) m.month: (income: m.incomeCents, expense: m.expenseCents),
+  };
 
   final points = <MonthPoint>[];
   for (var i = count - 1; i >= 0; i--) {
     final month = DateTime(anchorMonth.year, anchorMonth.month - i);
-    final entries = await store.entriesOfMonth(book.id, month);
-    var income = 0;
-    var expense = 0;
-    for (final e in entries) {
-      if (e.flow != 'in' && e.flow != 'out') continue;
-      if (e.excludeFromStats) continue;
-      final base = toBaseCents(
-          e.statsCents,
-          e.currency ?? currencyOf[e.pocketId] ?? book.baseCurrency,
-          book.baseCurrency,
-          rates);
-      if (e.flow == 'in') {
-        income += base;
-      } else {
-        expense += base;
-      }
-    }
-    points.add(
-        MonthPoint(month: month, incomeCents: income, expenseCents: expense));
+    final key = monthKey(month);
+    final v = byMonth[key];
+    points.add(MonthPoint(
+      month: month,
+      incomeCents: v?.income ?? 0,
+      expenseCents: v?.expense ?? 0,
+    ));
   }
   return points;
 });
