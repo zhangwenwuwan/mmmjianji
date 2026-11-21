@@ -475,6 +475,8 @@ class Debt {
     required this.note,
     required this.interestRate,
     required this.closed,
+    this.pocketId = 0,
+    this.entryId = 0,
   });
 
   final int id;
@@ -490,6 +492,15 @@ class Debt {
   final double? interestRate;
   final bool closed;
 
+  /// 这笔借贷钱实际进/出的资金账户（0 = 不关联）。
+  ///
+  /// 关联后会自动生成一笔「不计入收支统计」的流水（见 [_debtFlowFor]），
+  /// 账户余额跟着变；不关联就是纯台账，和 1.4.78 之前一样。
+  final int pocketId;
+
+  /// 关联生成的那笔流水的 id（0 = 没有）。
+  final int entryId;
+
   bool get isLend => direction == 'lend';
 
   Debt copyWith({
@@ -503,6 +514,8 @@ class Debt {
     String? note,
     double? interestRate,
     bool? closed,
+    int? pocketId,
+    int? entryId,
     // 与 Entry.copyWith 同一套问题：null 被 `?? this.x` 吃掉，
     // 「编辑借贷 → 清掉到期日」永远清不掉。
     bool clearDueOn = false,
@@ -520,6 +533,8 @@ class Debt {
         note: note ?? this.note,
         interestRate: interestRate ?? this.interestRate,
         closed: closed ?? this.closed,
+        pocketId: pocketId ?? this.pocketId,
+        entryId: entryId ?? this.entryId,
       );
 }
 
@@ -530,6 +545,8 @@ class DebtPayment {
     required this.amountCents,
     required this.paidOn,
     required this.note,
+    this.pocketId = 0,
+    this.entryId = 0,
   });
 
   final int id;
@@ -537,6 +554,10 @@ class DebtPayment {
   final int amountCents;
   final DateTime paidOn;
   final String note;
+
+  /// 这笔还款从哪个账户出 / 收回哪个账户（0 = 不关联）。
+  final int pocketId;
+  final int entryId;
 }
 
 class Wish {
@@ -794,7 +815,7 @@ class LedgerStore {
   /// `allPockets().first` 这样的默认账户，改默认值会让十几处测试同时红。
   final bool withSamplePockets;
 
-  static const _version = 27;
+  static const _version = 28;
 
   static Future<LedgerStore> open({
     String? path,
@@ -984,7 +1005,9 @@ class LedgerStore {
         note TEXT NOT NULL DEFAULT '',
         interest_rate REAL,
         closed INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        pocket_id INTEGER NOT NULL DEFAULT 0,
+        entry_id INTEGER NOT NULL DEFAULT 0
       )
     ''');
     await db.execute('''
@@ -994,7 +1017,9 @@ class LedgerStore {
         debt_id INTEGER NOT NULL,
         amount_cents INTEGER NOT NULL,
         paid_on TEXT NOT NULL,
-        note TEXT NOT NULL DEFAULT ''
+        note TEXT NOT NULL DEFAULT '',
+        pocket_id INTEGER NOT NULL DEFAULT 0,
+        entry_id INTEGER NOT NULL DEFAULT 0
       )
     ''');
     await db.execute('''
@@ -1273,6 +1298,25 @@ class LedgerStore {
   //   · 没有的清掉 type，图标换成「自定义」插画（负债类清空 type，保留 kind）。
   if (from < 27) {
     await _migrateGlyphsV27(db);
+  }
+
+  // v28：借贷可以关联资金账户了（可选）。
+  //
+  // 之前借贷是独立账本，钱进出账户要手工再记一笔，两处金额一错就对不上。
+  // 现在 debts / debt_payments 各存「关联账户 + 生成的那笔流水」，
+  // 建/改/删借贷时流水跟着走。
+  //
+  // 老数据一律 pocket_id = 0 / entry_id = 0（不关联），行为完全不变 ——
+  // 凭空给历史借贷补一笔流水会把余额算错。
+  if (from < 28) {
+    await _addColumnIfMissing(
+        db, 'debts', 'pocket_id', 'INTEGER NOT NULL DEFAULT 0');
+    await _addColumnIfMissing(
+        db, 'debts', 'entry_id', 'INTEGER NOT NULL DEFAULT 0');
+    await _addColumnIfMissing(
+        db, 'debt_payments', 'pocket_id', 'INTEGER NOT NULL DEFAULT 0');
+    await _addColumnIfMissing(
+        db, 'debt_payments', 'entry_id', 'INTEGER NOT NULL DEFAULT 0');
   }
 
   // v8：附件（图片凭证）
@@ -3765,10 +3809,52 @@ class LedgerStore {
         note: r['note'] as String,
         interestRate: (r['interest_rate'] as num?)?.toDouble(),
         closed: (r['closed'] as int) == 1,
+        pocketId: (r['pocket_id'] as int?) ?? 0,
+        entryId: (r['entry_id'] as int?) ?? 0,
       );
 
-  Future<int> addDebt(Debt d) => _db.insert('debts', {
-        'book_id': d.bookId,
+  /// 记一笔借贷。`pocketId > 0` 时顺手生成一笔不计入收支的流水，
+  /// 让账户余额真的对上（见 [_debtFlow]）。
+  Future<int> addDebt(Debt d) async {
+    await _assertDebtPocket(d.pocketId, d.currency);
+    final id = await _db.insert('debts', {
+      'book_id': d.bookId,
+      'direction': d.direction,
+      'counterparty': d.counterparty,
+      'channel': d.channel,
+      'principal_cents': d.principalCents,
+      'currency': d.currency,
+      'borrowed_on': dayKey(d.borrowedOn),
+      'due_on': d.dueOn == null ? null : dayKey(d.dueOn!),
+      'note': d.note,
+      'interest_rate': d.interestRate,
+      'closed': d.closed ? 1 : 0,
+      'created_at': DateTime.now().toIso8601String(),
+      'pocket_id': d.pocketId,
+      'entry_id': 0,
+    });
+    if (d.pocketId > 0) {
+      final eid = await _insertDebtEntry(
+        bookId: d.bookId,
+        pocketId: d.pocketId,
+        flow: d.isLend ? 'out' : 'in',
+        cents: d.principalCents,
+        currency: d.currency,
+        day: d.borrowedOn,
+        memo: '${d.isLend ? '借出' : '借入'} · ${d.counterparty}',
+      );
+      await _db.update('debts', {'entry_id': eid},
+          where: 'id = ?', whereArgs: [id]);
+    }
+    return id;
+  }
+
+  Future<void> updateDebt(Debt d) async {
+    final old = await _debtById(d.id);
+    await _assertDebtPocket(d.pocketId, d.currency);
+    await _db.update(
+      'debts',
+      {
         'direction': d.direction,
         'counterparty': d.counterparty,
         'channel': d.channel,
@@ -3779,29 +3865,131 @@ class LedgerStore {
         'note': d.note,
         'interest_rate': d.interestRate,
         'closed': d.closed ? 1 : 0,
+        'pocket_id': d.pocketId,
+      },
+      where: 'id = ?',
+      whereArgs: [d.id],
+    );
+    await _syncDebtEntry(old ?? d, d);
+  }
+
+  /// 「关联账户」不是必选项：传 0 就是纯台账。
+  ///
+  /// 但一旦要关联，币种必须和借贷本身一致 —— 金额是一个数字，
+  /// 跨币种没法自动折算（借贷上没有汇率），硬写只会让余额和台账双双失真。
+  Future<void> _assertDebtPocket(int pocketId, String currency) async {
+    if (pocketId <= 0) return;
+    final cur = await _pocketCurrencyOf(pocketId);
+    if (cur == null) throw StateError('这个账户已经被删掉了，请重新选');
+    if (cur != currency) {
+      throw StateError('账户是 $cur，这笔借贷是 $currency —— 请选一个 $currency 账户');
+    }
+  }
+
+  Future<Debt?> _debtById(int id) async {
+    final rows = await _db.query('debts', where: 'id = ?', whereArgs: [id]);
+    if (rows.isEmpty) return null;
+    final r = rows.first;
+    return Debt(
+      id: r['id'] as int,
+      bookId: r['book_id'] as int,
+      direction: r['direction'] as String,
+      counterparty: r['counterparty'] as String,
+      channel: r['channel'] as String,
+      principalCents: r['principal_cents'] as int,
+      currency: r['currency'] as String,
+      borrowedOn: parseDay(r['borrowed_on'] as String),
+      dueOn: r['due_on'] == null ? null : parseDay(r['due_on'] as String),
+      note: r['note'] as String,
+      interestRate: (r['interest_rate'] as num?)?.toDouble(),
+      closed: (r['closed'] as int) == 1,
+      pocketId: (r['pocket_id'] as int?) ?? 0,
+      entryId: (r['entry_id'] as int?) ?? 0,
+    );
+  }
+
+  /// 借贷生成的那笔流水：**不计入收支统计**。
+  ///
+  /// 借进来的钱不是收入、还出去的不是消费 —— 记成收入支出会让「本月结余」
+  /// 和分类占比同时失真（借 1 万，统计里就多了 1 万收入）。
+  /// 和 AA 回款同一个口径：exclude_from_stats = 1，只有账户余额认它。
+  Future<int> _insertDebtEntry({
+    required int bookId,
+    required int pocketId,
+    required String flow,
+    required int cents,
+    required String currency,
+    required DateTime day,
+    required String memo,
+  }) =>
+      _db.insert('entries', {
+        'book_id': bookId,
+        'pocket_id': pocketId,
+        'flow': flow,
+        'amount_cents': cents,
+        'memo': memo,
+        'day': dayKey(day),
+        'tags': '债务',
+        'reimburse': 0,
+        'exclude_from_stats': 1,
+        'currency': currency,
         'created_at': DateTime.now().toIso8601String(),
       });
 
-  Future<void> updateDebt(Debt d) => _db.update(
-        'debts',
+  /// 编辑借贷后把关联流水对齐（建 / 改 / 删三种情况）。
+  Future<void> _syncDebtEntry(Debt old, Debt now) async {
+    if (now.pocketId <= 0) {
+      if (old.entryId > 0) {
+        await _db.delete('entries', where: 'id = ?', whereArgs: [old.entryId]);
+        await _db.update('debts', {'entry_id': 0},
+            where: 'id = ?', whereArgs: [now.id]);
+      }
+      return;
+    }
+    final flow = now.isLend ? 'out' : 'in';
+    final memo = '${now.isLend ? '借出' : '借入'} · ${now.counterparty}';
+    if (old.entryId > 0) {
+      await _db.update(
+        'entries',
         {
-          'direction': d.direction,
-          'counterparty': d.counterparty,
-          'channel': d.channel,
-          'principal_cents': d.principalCents,
-          'currency': d.currency,
-          'borrowed_on': dayKey(d.borrowedOn),
-          'due_on': d.dueOn == null ? null : dayKey(d.dueOn!),
-          'note': d.note,
-          'interest_rate': d.interestRate,
-          'closed': d.closed ? 1 : 0,
+          'pocket_id': now.pocketId,
+          'flow': flow,
+          'amount_cents': now.principalCents,
+          'day': dayKey(now.borrowedOn),
+          'memo': memo,
+          'currency': now.currency,
         },
         where: 'id = ?',
-        whereArgs: [d.id],
+        whereArgs: [old.entryId],
       );
+    } else {
+      final eid = await _insertDebtEntry(
+        bookId: now.bookId,
+        pocketId: now.pocketId,
+        flow: flow,
+        cents: now.principalCents,
+        currency: now.currency,
+        day: now.borrowedOn,
+        memo: memo,
+      );
+      await _db.update('debts', {'entry_id': eid},
+          where: 'id = ?', whereArgs: [now.id]);
+    }
+  }
 
   Future<void> deleteDebt(int id) async {
     await _db.transaction((txn) async {
+      // 先收走关联流水：借贷删了、账户余额却少了一笔没人认，是最难查的那种账。
+      final rows = await txn.query('debts',
+          columns: ['entry_id'], where: 'id = ?', whereArgs: [id]);
+      final pays = await txn.query('debt_payments',
+          columns: ['entry_id'], where: 'debt_id = ?', whereArgs: [id]);
+      for (final r in [...rows, ...pays]) {
+        final eid = (r['entry_id'] as int?) ?? 0;
+        if (eid > 0) {
+          await txn.delete('entries', where: 'id = ?', whereArgs: [eid]);
+        }
+      }
       await txn.delete('debt_payments', where: 'debt_id = ?', whereArgs: [id]);
       await txn.delete('debts', where: 'id = ?', whereArgs: [id]);
     });
@@ -3821,29 +4009,63 @@ class LedgerStore {
               id: r['id'] as int,
               debtId: r['debt_id'] as int,
               amountCents: r['amount_cents'] as int,
-              paidOn: DateTime.parse(r['paid_on'] as String),
+              paidOn: parseDay(r['paid_on'] as String),
               note: r['note'] as String,
+              pocketId: (r['pocket_id'] as int?) ?? 0,
+              entryId: (r['entry_id'] as int?) ?? 0,
             ))
         .toList();
   }
 
-  Future<void> addDebtPayment({
+  /// 记一笔还款 / 收回。`pocketId > 0` 时同步生成一笔不计入收支的流水。
+  Future<int> addDebtPayment({
     required int bookId,
     required int debtId,
     required int amountCents,
     required DateTime paidOn,
     String note = '',
-  }) =>
-      _db.insert('debt_payments', {
-        'book_id': bookId,
-        'debt_id': debtId,
-        'amount_cents': amountCents,
-        'paid_on': dayKey(paidOn),
-        'note': note,
-      });
+    int pocketId = 0,
+  }) async {
+    final debt = await _debtById(debtId);
+    if (debt == null) throw StateError('这条借贷已经被删掉了');
+    await _assertDebtPocket(pocketId, debt.currency);
+    final id = await _db.insert('debt_payments', {
+      'book_id': bookId,
+      'debt_id': debtId,
+      'amount_cents': amountCents,
+      'paid_on': dayKey(paidOn),
+      'note': note,
+      'pocket_id': pocketId,
+      'entry_id': 0,
+    });
+    if (pocketId > 0) {
+      // 借出 → 现在是「收回」，钱进账户；借入 → 现在是「还款」，钱出账户。
+      final eid = await _insertDebtEntry(
+        bookId: bookId,
+        pocketId: pocketId,
+        flow: debt.isLend ? 'in' : 'out',
+        cents: amountCents,
+        currency: debt.currency,
+        day: paidOn,
+        memo: '${debt.isLend ? '收回' : '还款'} · ${debt.counterparty}',
+      );
+      await _db.update('debt_payments', {'entry_id': eid},
+          where: 'id = ?', whereArgs: [id]);
+    }
+    return id;
+  }
 
-  Future<void> deleteDebtPayment(int id) =>
-      _db.delete('debt_payments', where: 'id = ?', whereArgs: [id]);
+  Future<void> deleteDebtPayment(int id) async {
+    await _db.transaction((txn) async {
+      final rows = await txn.query('debt_payments',
+          columns: ['entry_id'], where: 'id = ?', whereArgs: [id]);
+      final eid = rows.isEmpty ? 0 : ((rows.first['entry_id'] as int?) ?? 0);
+      if (eid > 0) {
+        await txn.delete('entries', where: 'id = ?', whereArgs: [eid]);
+      }
+      await txn.delete('debt_payments', where: 'id = ?', whereArgs: [id]);
+    });
+  }
 
   /// 每条借贷已还多少：debtId → 分，用来算「还欠 / 待收」
   Future<Map<int, int>> debtPaidMap(int bookId) async {

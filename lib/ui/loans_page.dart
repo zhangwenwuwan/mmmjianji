@@ -7,9 +7,82 @@ import '../data/store.dart';
 import '../state/ledger_state.dart';
 import '../state/settings.dart';
 import 'amount_keypad.dart';
+import 'app_glyph.dart';
 import 'common.dart';
 import 'motion.dart';
 import 'theme.dart';
+
+/// 选「这笔钱进/出哪个账户」。返回 0 = 不关联，null = 用户取消。
+///
+/// 不用 editor_page 的 `showPocketPicker`：那个返回 `int?`，null 同时代表
+/// 「划掉了」和「没选」，而这里「不关联」是一个**有效选择**（借贷本来就可以
+/// 只记台账）。所以自己开一层，把「不关联」做成第一格。
+Future<int?> showDebtPocketPicker(
+  BuildContext context,
+  WidgetRef ref, {
+  required String title,
+  required int selectedId,
+  required String currency,
+}) {
+  final pockets = ref.read(allPocketsProvider).valueOrNull ?? const [];
+  final usable =
+      pockets.where((p) => p.currency == currency && !p.archived).toList();
+  final balances = ref.read(balancesProvider).valueOrNull ?? const [];
+  final balanceOf = {for (final b in balances) b.pocket.id: b.balanceCents};
+  return showAppSheet<int>(
+    context: context,
+    title: title,
+    builder: (ctx) => Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ListTile(
+          dense: true,
+          leading: const Icon(Icons.link_off, size: 20),
+          title: const Text('不关联账户'),
+          subtitle: const Text('只记台账，不动余额',
+              style: TextStyle(fontSize: 11)),
+          trailing: selectedId <= 0
+              ? Icon(Icons.check, size: 18, color: Palette.brand(ctx))
+              : null,
+          onTap: () => Navigator.pop(ctx, 0),
+        ),
+        if (usable.isEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 18),
+            child: Text(
+              '还没有 $currency 账户。想联动余额，先去「资产」建一个账户。',
+              style: TextStyle(fontSize: 12, color: Palette.inkFaint(ctx)),
+            ),
+          )
+        else
+          for (final p in usable)
+            ListTile(
+              dense: true,
+              leading: AppGlyph(p.glyph, size: 20),
+              title: Text(p.displayName, style: const TextStyle(fontSize: 14)),
+              subtitle: Text(p.kind.label,
+                  style: const TextStyle(fontSize: 11)),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (balanceOf[p.id] != null)
+                    MoneyText(balanceOf[p.id]!,
+                        style: const TextStyle(fontSize: 13)),
+                  if (selectedId == p.id)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 6),
+                      child: Icon(Icons.check,
+                          size: 18, color: Palette.brand(ctx)),
+                    ),
+                ],
+              ),
+              onTap: () => Navigator.pop(ctx, p.id),
+            ),
+        const SizedBox(height: 8),
+      ],
+    ),
+  );
+}
 
 /// 借贷：我借出去的（待收）和我借进来的（待还）。
 class LoansPage extends ConsumerStatefulWidget {
@@ -208,6 +281,13 @@ class _LoansPageState extends ConsumerState<LoansPage>
         : DateTime(d.dueOn!.year, d.dueOn!.month, d.dueOn!.day);
     final overdue =
         dueDay != null && !d.closed && dueDay.isBefore(today) && left > 0;
+    // 关联了账户就在副标题上标出来 —— 不标的话，用户看不出这笔借贷动没动余额。
+    var pocketName = '';
+    if (d.pocketId > 0) {
+      for (final p in ref.read(allPocketsProvider).valueOrNull ?? const []) {
+        if (p.id == d.pocketId) pocketName = p.displayName;
+      }
+    }
     return PressScale(
       scale: 0.98,
       onTap: () => _detail(context, ref, d),
@@ -244,6 +324,7 @@ class _LoansPageState extends ConsumerState<LoansPage>
                         '${dayKey(d.dueOn!)}${overdue ? ' · 已逾期' : ' 到期'}',
                       if (paidCents > 0)
                         '已还 ${(paidCents / 100).toStringAsFixed(0)}',
+                      if (pocketName.isNotEmpty) pocketName,
                     ].join(' · '),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -292,6 +373,13 @@ class _LoansPageState extends ConsumerState<LoansPage>
     final store = await ref.read(storeProvider.future);
     final payments = await store.debtPayments(d.id);
     if (!context.mounted) return;
+    final pockets = ref.read(allPocketsProvider).valueOrNull ?? const [];
+    String pocketName(int id) {
+      for (final p in pockets) {
+        if (p.id == id) return p.displayName;
+      }
+      return '';
+    }
     final paid = payments.fold<int>(0, (s, p) => s + p.amountCents);
     final left = (d.principalCents - paid).clamp(0, 1 << 62);
     final paidText = d.isLend ? '收回' : '还款';
@@ -322,6 +410,7 @@ class _LoansPageState extends ConsumerState<LoansPage>
             Text(
               '${dayKey(d.borrowedOn)} ${d.isLend ? '借出' : '借入'}'
               '${d.dueOn == null ? '' : ' · ${dayKey(d.dueOn!)} 到期'}'
+              '${d.pocketId > 0 ? ' · 记到 ${pocketName(d.pocketId)}' : ''}'
               '${d.note.isEmpty ? '' : ' · ${d.note}'}',
               style: TextStyle(fontSize: 12, color: Palette.inkFaint(context)),
             ),
@@ -366,7 +455,9 @@ class _LoansPageState extends ConsumerState<LoansPage>
                           title: Text((p.amountCents / 100).toStringAsFixed(2),
                               style: const TextStyle(fontSize: 14)),
                           subtitle: Text(
-                              '${dayKey(p.paidOn)}${p.note.isEmpty ? '' : ' · ${p.note}'}',
+                              '${dayKey(p.paidOn)}'
+                              '${p.pocketId > 0 ? ' · ${pocketName(p.pocketId)}' : ''}'
+                              '${p.note.isEmpty ? '' : ' · ${p.note}'}',
                               style: const TextStyle(fontSize: 12)),
                           trailing: IconButton(
                             icon: const Icon(Icons.close, size: 16),
@@ -419,22 +510,110 @@ class _LoansPageState extends ConsumerState<LoansPage>
     );
   }
 
+  /// 「还款 / 收回」表单：金额 + 可选的资金账户。
+  ///
+  /// 原来只有一步金额键盘。现在借钱和账户要对上，所以合并成一张表 ——
+  /// 分成两步（先金额、再问账户）等于逼着不想关联的人多点一次。
+  Future<(int, int)?> _askPayment(
+      BuildContext context, WidgetRef ref, Debt d, int leftCents) async {
+    var cents = leftCents > 0 ? leftCents : 0;
+    var pocketId = d.pocketId; // 借贷建的时候关联了谁，默认还是谁
+    final pockets = ref.read(allPocketsProvider).valueOrNull ?? const [];
+    String label(int id) {
+      for (final p in pockets) {
+        if (p.id == id) return p.displayName;
+      }
+      return '不关联账户';
+    }
+
+    return showAppSheet<(int, int)>(
+      context: context,
+      title: d.isLend ? '收回一笔' : '还一笔',
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${d.isLend ? '借给' : '借自'} ${d.counterparty} · 还欠 '
+              '${(leftCents / 100).toStringAsFixed(2)} ${d.currency}',
+              style: TextStyle(fontSize: 12, color: Palette.inkFaint(ctx)),
+            ),
+            const SizedBox(height: 10),
+            AmountField(
+              label: d.isLend ? '收回金额' : '还款金额',
+              cents: cents,
+              onChanged: (v) => setState(() => cents = v),
+            ),
+            const SizedBox(height: 10),
+            InkWell(
+              onTap: () async {
+                final picked = await showDebtPocketPicker(
+                  context,
+                  ref,
+                  title: d.isLend ? '收回哪个账户' : '从哪个账户出',
+                  selectedId: pocketId,
+                  currency: d.currency,
+                );
+                if (picked != null) setState(() => pocketId = picked);
+              },
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Row(
+                  children: [
+                    Text('资金账户',
+                        style: TextStyle(
+                            fontSize: 13, color: Palette.inkSoft(ctx))),
+                    const Spacer(),
+                    Flexible(
+                      child: Text(label(pocketId),
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: pocketId > 0
+                                ? Palette.ink(ctx)
+                                : Palette.inkFaint(ctx),
+                          )),
+                    ),
+                    Icon(Icons.chevron_right,
+                        size: 16, color: Palette.inkFaint(ctx)),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () {
+                  if (cents <= 0) {
+                    ScaffoldMessenger.of(ctx).toast('先填金额');
+                    return;
+                  }
+                  Navigator.pop(ctx, (cents, pocketId));
+                },
+                child: const Text('确认'),
+              ),
+            ),
+            const SizedBox(height: 6),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _addPayment(
       BuildContext context, WidgetRef ref, Debt d, int leftCents) async {
-    // 统一走 App 自己的计算器键盘（和系统键盘混用会让手感割裂）
-    final cents = await showAmountKeypad(
-      context,
-      initialCents: leftCents > 0 ? leftCents : 0,
-      title: d.isLend ? '收回金额' : '还款金额',
-    );
-    if (cents == null || cents <= 0) return;
+    final cents = await _askPayment(context, ref, d, leftCents);
+    if (cents == null) return;
     final store = await ref.read(storeProvider.future);
     final book = await ref.read(activeBookProvider.future);
     await store.addDebtPayment(
       bookId: book.id,
       debtId: d.id,
-      amountCents: cents,
+      amountCents: cents.$1,
       paidOn: DateTime.now(),
+      pocketId: cents.$2,
     );
     // 还清了就自动结清，省一步操作
     final paidMap = await store.debtPaidMap(book.id);
@@ -467,7 +646,15 @@ Future<bool> showDebtEditor(
   DateTime borrowedOn = debt?.borrowedOn ?? DateTime.now();
   DateTime? dueOn = debt?.dueOn;
   int amountCents = debt?.principalCents ?? 0;
+  int pocketId = debt?.pocketId ?? 0;
   final noteCtrl = TextEditingController(text: debt?.note ?? '');
+  final pockets = ref.read(allPocketsProvider).valueOrNull ?? const [];
+  String pocketLabel(int id) {
+    for (final p in pockets) {
+      if (p.id == id) return p.displayName;
+    }
+    return '不关联账户';
+  }
 
   if (!context.mounted) return false;
   final ok = await showDialog<bool>(
@@ -516,7 +703,54 @@ Future<bool> showDebtEditor(
                 cents: amountCents,
                 onChanged: (v) => setState(() => amountCents = v),
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 10),
+              // 关联账户是**可选项**：不选就还是纯台账（和 1.4.78 之前一样）。
+              // 选了就会生成一笔流水，钱真的进出这个账户。
+              InkWell(
+                onTap: () async {
+                  final picked = await showDebtPocketPicker(
+                    context,
+                    ref,
+                    title: direction == 'lend' ? '这笔钱从哪出' : '这笔钱进哪',
+                    selectedId: pocketId,
+                    currency: currency,
+                  );
+                  if (picked != null) setState(() => pocketId = picked);
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Row(
+                    children: [
+                      Text('资金账户',
+                          style: TextStyle(
+                              fontSize: 13, color: Palette.inkSoft(ctx))),
+                      const Spacer(),
+                      Flexible(
+                        child: Text(
+                          pocketLabel(pocketId),
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: pocketId > 0
+                                ? Palette.ink(ctx)
+                                : Palette.inkFaint(ctx),
+                          ),
+                        ),
+                      ),
+                      Icon(Icons.chevron_right,
+                          size: 16, color: Palette.inkFaint(ctx)),
+                    ],
+                  ),
+                ),
+              ),
+              if (pocketId > 0)
+                Text(
+                  direction == 'lend'
+                      ? '会从该账户扣一笔，不计入收支统计'
+                      : '会往该账户加一笔，不计入收支统计',
+                  style: TextStyle(fontSize: 11, color: Palette.inkFaint(ctx)),
+                ),
+              const SizedBox(height: 6),
               AppDropdown<String>(
                 label: '渠道',
                 value: channel,
@@ -602,6 +836,7 @@ Future<bool> showDebtEditor(
       note: noteCtrl.text.trim(),
       interestRate: null,
       closed: false,
+      pocketId: pocketId,
     ));
   } else {
     await store.updateDebt(debt.copyWith(
@@ -614,6 +849,7 @@ Future<bool> showDebtEditor(
       // 清空到期日要能真正写进库（null 的语义是「清除」）
       clearDueOn: dueOn == null,
       note: noteCtrl.text.trim(),
+      pocketId: pocketId,
     ));
   }
   if (!context.mounted) return false;
