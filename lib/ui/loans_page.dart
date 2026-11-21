@@ -284,7 +284,9 @@ class _LoansPageState extends ConsumerState<LoansPage>
     // 关联了账户就在副标题上标出来 —— 不标的话，用户看不出这笔借贷动没动余额。
     var pocketName = '';
     if (d.pocketId > 0) {
-      for (final p in ref.read(allPocketsProvider).valueOrNull ?? const []) {
+      // watch 而不是 read：首帧账户列表可能还没读完，
+      // 用 read 会永远停在「没有关联账户」的副标题上（不会被重建）。
+      for (final p in ref.watch(allPocketsProvider).valueOrNull ?? const []) {
         if (p.id == d.pocketId) pocketName = p.displayName;
       }
     }
