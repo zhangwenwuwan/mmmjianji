@@ -457,7 +457,10 @@ class Recurring {
   final String flow; // 'in' / 'out'
   final int amountCents;
 
-  /// 每月几号生成（1-28，避开月底歧义）
+  /// 每月几号生成（1-31）。
+  ///
+  /// 29/30/31 在短月不存在时，按**当月最后一天**记（`applyDueRecurring` 里
+  /// 会把日期夹到 lastDay）—— 所以「每月 31 号」在 2 月就是 28/29 号。
   final int dayOfMonth;
 
   /// 最后生成的月份（'2026-10'），没跑过是 ''

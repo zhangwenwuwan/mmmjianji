@@ -214,11 +214,13 @@ class RecurringPage extends ConsumerWidget {
                   onChanged: (v) => setState(() => amountCents = v),
                 ),
                 const SizedBox(height: 14),
-                // 每月几号：步进器。
+                // 每月几号：滑条（1~31）。
                 //
-                // 原来是个 1~28 的 Slider（27 个刻度）：白拇指压在白底上，
-                // 只剩一排点状刻度和半个圆 —— 看着像控件没画出来。
-                // 而且拖 27 格在手机上根本对不准具体某一天。
+                // 上一版把它换成了 ± 步进器，用户嫌"不如滑的方便、也不好看"，
+                // 换回滑条 —— 但这次的拇指有颜色：原来全局主题给的是**白拇指**，
+                // 压在白色卡片上等于隐形，只剩一排点状刻度和半个圆，
+                // 看着像控件没画出来。刻度也藏掉（31 格画出来是一排麻点），
+                // 具体是几号由上面那行「N 日」实时显示。
                 Row(
                   children: [
                     Text('每月几号',
@@ -227,28 +229,45 @@ class RecurringPage extends ConsumerWidget {
                             fontWeight: FontWeight.w500,
                             color: Palette.inkSoft(ctx))),
                     const Spacer(),
-                    _StepButton(
-                      icon: Icons.remove,
-                      onTap: () => setState(
-                          () => dayOfMonth = (dayOfMonth - 1).clamp(1, 28)),
-                    ),
-                    SizedBox(
-                      width: 56,
-                      child: Text('$dayOfMonth 日',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w700,
-                              color: Palette.brand(ctx))),
-                    ),
-                    _StepButton(
-                      icon: Icons.add,
-                      onTap: () => setState(
-                          () => dayOfMonth = (dayOfMonth + 1).clamp(1, 28)),
-                    ),
+                    Text('$dayOfMonth 日',
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: Palette.brand(ctx))),
                   ],
                 ),
-                const SizedBox(height: 12),
+                SliderTheme(
+                  data: SliderTheme.of(ctx).copyWith(
+                    trackHeight: 5,
+                    activeTrackColor: Palette.brand(ctx),
+                    inactiveTrackColor:
+                        Palette.brand(ctx).withValues(alpha: 0.16),
+                    thumbColor: Palette.brand(ctx),
+                    overlayColor: Palette.brand(ctx).withValues(alpha: 0.12),
+                    thumbShape: const RoundSliderThumbShape(
+                        enabledThumbRadius: 9, elevation: 2),
+                    activeTickMarkColor: Colors.transparent,
+                    inactiveTickMarkColor: Colors.transparent,
+                    showValueIndicator: ShowValueIndicator.never,
+                  ),
+                  child: Slider(
+                    value: dayOfMonth.toDouble().clamp(1, 31),
+                    min: 1,
+                    max: 31,
+                    divisions: 30,
+                    onChanged: (v) =>
+                        setState(() => dayOfMonth = v.round().clamp(1, 31)),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Text(
+                    dayOfMonth > 28 ? '这个月没有 $dayOfMonth 号时，按当月最后一天记' : '',
+                    style: TextStyle(
+                        fontSize: 11, color: Palette.inkFaint(ctx)),
+                  ),
+                ),
+                const SizedBox(height: 6),
                 // 开始时间：默认今天。选了未来的月份，那之前不会补记。
                 _FormRow(
                   label: '开始时间',

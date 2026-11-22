@@ -496,7 +496,10 @@ class _GridItem extends StatelessWidget {
   }
 }
 
-/// 「密码库」行：拉起内嵌的 LaClave 原生模块（同 APK，独立 Activity）。
+/// 「防爆柜」行：拉起内嵌的 LaClave 原生模块（同 APK，独立 Activity）。
+///
+/// 名字叫**防爆柜**（2026-11-22 用户定的）：功能还是那个离线密码管理器，
+/// 只是「密码库」听着太普通，也不像记账 App 里该出现的东西。
 ///
 /// 与 _nav 不同，这里不 push Flutter 页面——密码库是独立的 WebView Activity，
 /// 通过 jianji/vault MethodChannel 打开。
@@ -520,7 +523,7 @@ class _VaultTile extends StatelessWidget {
       onTap: () => _open(context),
       child: ListTile(
         leading: const Icon(Icons.password_outlined),
-        title: const Text('密码库'),
+        title: const Text('防爆柜'),
         subtitle: const Text('离线保管账号密码，支持 KeePass 导入导出',
             style: TextStyle(fontSize: 12)),
         trailing: const Icon(Icons.chevron_right, size: 18),
