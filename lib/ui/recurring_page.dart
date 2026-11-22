@@ -272,7 +272,8 @@ class RecurringPage extends ConsumerWidget {
                         color: Palette.inkSoft(ctx))),
                 const SizedBox(height: 6),
                 Wrap(
-                  spacing: 8,
+                  // 三个胶囊在 361dp 的屏幕上刚好差一点点，收一点内边距排成一行
+                  spacing: 6,
                   runSpacing: 6,
                   children: [
                     for (final e in const [
@@ -528,7 +529,7 @@ class _ModeChip extends StatelessWidget {
       scale: 0.95,
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
         decoration: BoxDecoration(
           color: selected
               ? Palette.brand(context).withValues(alpha: 0.14)

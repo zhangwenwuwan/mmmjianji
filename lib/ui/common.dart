@@ -597,12 +597,7 @@ class AppDropdown<T> extends StatelessWidget {
           color: Palette.paper(context),
           borderRadius: BorderRadius.circular(AppRadius.control),
         ),
-        // 值太长时（"微信零钱通"这种）原来会折成两行、把 42 高的框撑破，
-        // 和旁边那个下拉高度对不上。统一单行 + 省略号。
-        child: DefaultTextStyle.merge(
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          child: DropdownButtonHideUnderline(
+        child: DropdownButtonHideUnderline(
           child: DropdownButton<T>(
             value: value,
             hint: hint == null
@@ -610,7 +605,21 @@ class AppDropdown<T> extends StatelessWidget {
                 : Text(hint!,
                     style: TextStyle(
                         fontSize: 14, color: Palette.inkFaint(context))),
-            items: items,
+            // 值太长时（"微信零钱通"这种）原来折成两行、把 42 高的框撑破，
+            // 和旁边的下拉高度对不齐。必须在**每个 item 内部**套单行约束：
+            // DropdownButton 自己会用 DefaultTextStyle 包一层，外面那层管不到它。
+            items: [
+              for (final it in items)
+                DropdownMenuItem<T>(
+                  value: it.value,
+                  enabled: it.enabled,
+                  child: DefaultTextStyle.merge(
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    child: it.child,
+                  ),
+                ),
+            ],
             onChanged: onChanged,
             isExpanded: true,
             isDense: true,
@@ -622,7 +631,6 @@ class AppDropdown<T> extends StatelessWidget {
             ),
           ),
         ),
-          ),
       ),
     );
   }
