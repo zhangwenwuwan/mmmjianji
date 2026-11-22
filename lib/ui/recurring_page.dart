@@ -55,8 +55,13 @@ class RecurringPage extends ConsumerWidget {
         ),
         error: (e, _) => Center(child: LoadError(error: e)),
         data: (list) => list.isEmpty
-            ? const EmptyView(
-                icon: Icons.repeat, title: '还没有周期账单', hint: '房租、会员订阅、工资都可以加成周期')
+            // 居中：原来直接丢在 body 里，空状态会贴在左上角，
+            // 加上长提示被切边，整页像没排完。
+            ? const Center(
+                child: EmptyView(
+                    icon: Icons.repeat,
+                    title: '还没有周期账单',
+                    hint: '房租、会员订阅、工资都可以加成周期'))
             : ListView(
                 padding: const EdgeInsets.fromLTRB(12, 10, 12, 96),
                 children: [
@@ -72,7 +77,7 @@ class RecurringPage extends ConsumerWidget {
                               '每月 ${list[i].dayOfMonth} 日 · '
                               '${list[i].flow == 'in' ? '收入' : '支出'} '
                               '${(list[i].amountCents / 100).toStringAsFixed(2)}'
-                              '${list[i].lastRunMonth.isEmpty ? '' : ' · 上次生成 ${list[i].lastRunMonth}'}',
+                              '${_term(list[i])}',
                               style: const TextStyle(fontSize: 12),
                             ),
                             trailing: Row(
@@ -83,18 +88,8 @@ class RecurringPage extends ConsumerWidget {
                                   onChanged: (v) async {
                                     final store =
                                         await ref.read(storeProvider.future);
-                                    await store.updateRecurring(Recurring(
-                                      id: list[i].id,
-                                      bookId: list[i].bookId,
-                                      title: list[i].title,
-                                      bucketId: list[i].bucketId,
-                                      pocketId: list[i].pocketId,
-                                      flow: list[i].flow,
-                                      amountCents: list[i].amountCents,
-                                      dayOfMonth: list[i].dayOfMonth,
-                                      lastRunMonth: list[i].lastRunMonth,
-                                      enabled: v,
-                                    ));
+                                    await store.updateRecurring(
+                                        list[i].copyWith(enabled: v));
                                     bumpRevision(ref);
                                   },
                                 ),
@@ -122,6 +117,23 @@ class RecurringPage extends ConsumerWidget {
               ),
       ),
     );
+  }
+
+  /// 副标题里那段「什么时候结束」。
+  ///
+  /// 三种模式都要一眼看懂：永不结束 / 还剩几次 / 到哪天为止。
+  static String _term(Recurring r) {
+    switch (r.endMode) {
+      case 'count':
+        final left = r.endCount - r.runCount;
+        if (left <= 0) return ' · 已结束（共 ${r.endCount} 次）';
+        return ' · 共 ${r.endCount} 次，还剩 $left 次';
+      case 'until':
+        if (r.endOn == null) return '';
+        return ' · 到 ${dayKey(r.endOn!)} 为止';
+      default:
+        return r.lastRunMonth.isEmpty ? '' : ' · 上次生成 ${r.lastRunMonth}';
+    }
   }
 
   Future<void> _menu(BuildContext context, WidgetRef ref, Recurring r) async {
@@ -174,6 +186,10 @@ class RecurringPage extends ConsumerWidget {
     int pocketId = r?.pocketId ?? pockets.first.id;
     int? bucketId = r?.bucketId;
     int amountCents = r?.amountCents ?? 0;
+    DateTime? startOn = r?.startOn;
+    String endMode = r?.endMode ?? 'never';
+    int endCount = (r?.endCount ?? 0) > 0 ? r!.endCount : 12;
+    DateTime? endOn = r?.endOn;
 
     final ok = await showDialog<bool>(
       context: context,
@@ -198,30 +214,127 @@ class RecurringPage extends ConsumerWidget {
                   onChanged: (v) => setState(() => amountCents = v),
                 ),
                 const SizedBox(height: 14),
+                // 每月几号：步进器。
+                //
+                // 原来是个 1~28 的 Slider（27 个刻度）：白拇指压在白底上，
+                // 只剩一排点状刻度和半个圆 —— 看着像控件没画出来。
+                // 而且拖 27 格在手机上根本对不准具体某一天。
                 Row(
                   children: [
                     Text('每月几号',
                         style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w500,
-                            color: Palette.inkSoft(context))),
+                            color: Palette.inkSoft(ctx))),
                     const Spacer(),
-                    Text('$dayOfMonth 日',
-                        style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: Palette.brand(context))),
+                    _StepButton(
+                      icon: Icons.remove,
+                      onTap: () => setState(
+                          () => dayOfMonth = (dayOfMonth - 1).clamp(1, 28)),
+                    ),
+                    SizedBox(
+                      width: 56,
+                      child: Text('$dayOfMonth 日',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              color: Palette.brand(ctx))),
+                    ),
+                    _StepButton(
+                      icon: Icons.add,
+                      onTap: () => setState(
+                          () => dayOfMonth = (dayOfMonth + 1).clamp(1, 28)),
+                    ),
                   ],
                 ),
-                Slider(
-                  value: dayOfMonth.toDouble(),
-                  min: 1,
-                  max: 28,
-                  divisions: 27,
-                  label: '$dayOfMonth 日',
-                  onChanged: (v) => setState(() => dayOfMonth = v.round()),
+                const SizedBox(height: 12),
+                // 开始时间：默认今天。选了未来的月份，那之前不会补记。
+                _FormRow(
+                  label: '开始时间',
+                  value: startOn == null ? '立即开始' : '${dayKey(startOn!)} 起',
+                  onTap: () async {
+                    final picked = await showDatePicker(
+                      context: ctx,
+                      initialDate: startOn ?? DateTime.now(),
+                      firstDate: DateTime(2000),
+                      lastDate: DateTime(2100),
+                    );
+                    if (picked != null) setState(() => startOn = picked);
+                  },
                 ),
+                const SizedBox(height: 10),
+                // 结束方式：三选一，和截图里那种底部选项一致。
+                Text('结束方式',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: Palette.inkSoft(ctx))),
                 const SizedBox(height: 6),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: [
+                    for (final e in const [
+                      ('never', '永不结束'),
+                      ('count', '执行 N 次'),
+                      ('until', '到某天结束'),
+                    ])
+                      _ModeChip(
+                        label: e.$2,
+                        selected: endMode == e.$1,
+                        onTap: () => setState(() => endMode = e.$1),
+                      ),
+                  ],
+                ),
+                if (endMode == 'count') ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Text('共执行',
+                          style: TextStyle(
+                              fontSize: 12, color: Palette.inkSoft(ctx))),
+                      const Spacer(),
+                      _StepButton(
+                        icon: Icons.remove,
+                        onTap: () => setState(
+                            () => endCount = (endCount - 1).clamp(1, 600)),
+                      ),
+                      SizedBox(
+                        width: 64,
+                        child: Text('$endCount 次',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: Palette.brand(ctx))),
+                      ),
+                      _StepButton(
+                        icon: Icons.add,
+                        onTap: () => setState(
+                            () => endCount = (endCount + 1).clamp(1, 600)),
+                      ),
+                    ],
+                  ),
+                ],
+                if (endMode == 'until') ...[
+                  const SizedBox(height: 8),
+                  _FormRow(
+                    label: '结束日期',
+                    value: endOn == null ? '选一个日期' : dayKey(endOn!),
+                    warn: endOn == null,
+                    onTap: () async {
+                      final picked = await showDatePicker(
+                        context: ctx,
+                        initialDate: endOn ?? DateTime.now(),
+                        firstDate: DateTime(2000),
+                        lastDate: DateTime(2100),
+                      );
+                      if (picked != null) setState(() => endOn = picked);
+                    },
+                  ),
+                ],
+                const SizedBox(height: 12),
                 Row(
                   children: [
                     Expanded(
@@ -275,6 +388,14 @@ class RecurringPage extends ConsumerWidget {
     if (amount <= 0 || title.trim().isEmpty) return;
     final store = await ref.read(storeProvider.future);
     if (r == null) {
+      // lastRunMonth 对齐 startOn 的上一个月：
+      // 生成器从这个月之后开始扫，再靠 startOn 把「起始日之前的那一期」滤掉。
+      // 直接写当月会让「从下个月开始」变成"这个月也不生成"，
+      // 而写上月又会在起始日已过时把当月补出来 —— 两个都要 startOn 兜底。
+      final now = DateTime.now();
+      final startMonth = DateTime(
+          (startOn ?? now).year, (startOn ?? now).month);
+      final lastRun = monthKey(DateTime(startMonth.year, startMonth.month - 1));
       await store.addRecurring(Recurring(
         id: 0,
         bookId: book.id,
@@ -284,23 +405,147 @@ class RecurringPage extends ConsumerWidget {
         flow: flow,
         amountCents: amount,
         dayOfMonth: dayOfMonth,
-        lastRunMonth: monthKey(DateTime.now()), // 本月不重复生成
+        lastRunMonth: lastRun,
         enabled: true,
+        startOn: startOn,
+        endMode: endMode,
+        endCount: endMode == 'count' ? endCount : 0,
+        endOn: endMode == 'until' ? endOn : null,
       ));
     } else {
-      await store.updateRecurring(Recurring(
-        id: r.id,
-        bookId: r.bookId,
+      await store.updateRecurring(r.copyWith(
         title: title.trim(),
         bucketId: bucketId,
         pocketId: pocketId,
         flow: flow,
         amountCents: amount,
         dayOfMonth: dayOfMonth,
-        lastRunMonth: r.lastRunMonth,
-        enabled: r.enabled,
+        startOn: startOn,
+        clearStartOn: startOn == null,
+        endMode: endMode,
+        endCount: endMode == 'count' ? endCount : 0,
+        endOn: endMode == 'until' ? endOn : null,
+        clearEndOn: endMode != 'until',
+        // 改回「永不结束」时把开关打开：之前可能是跑完次数自动关的。
+        enabled: endMode == 'never' || r.enabled ? true : r.enabled,
       ));
     }
     bumpRevision(ref);
+  }
+}
+
+/// 步进器上的 ± 圆按钮。
+class _StepButton extends StatelessWidget {
+  const _StepButton({required this.icon, required this.onTap});
+
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return PressScale(
+      scale: 0.9,
+      onTap: onTap,
+      child: Container(
+        width: 30,
+        height: 30,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: Palette.brand(context).withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(9),
+        ),
+        child: Icon(icon, size: 16, color: Palette.brand(context)),
+      ),
+    );
+  }
+}
+
+/// 「标签 —— 值 ›」的一行，点开选日期。
+class _FormRow extends StatelessWidget {
+  const _FormRow({
+    required this.label,
+    required this.value,
+    required this.onTap,
+    this.warn = false,
+  });
+
+  final String label;
+  final String value;
+  final VoidCallback onTap;
+
+  /// 还没选（比如结束日期为空）时用警示色提醒。
+  final bool warn;
+
+  @override
+  Widget build(BuildContext context) {
+    return PressScale(
+      scale: 0.99,
+      onTap: onTap,
+      child: Container(
+        height: 38,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: Palette.paper(context),
+          borderRadius: BorderRadius.circular(AppRadius.control),
+        ),
+        child: Row(
+          children: [
+            Text(label,
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    color: Palette.inkSoft(context))),
+            const Spacer(),
+            Text(value,
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: warn ? Palette.expense : Palette.ink(context))),
+            Icon(Icons.chevron_right,
+                size: 16, color: Palette.inkFaint(context)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 结束方式的单选胶囊。
+class _ModeChip extends StatelessWidget {
+  const _ModeChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return PressScale(
+      scale: 0.95,
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(
+          color: selected
+              ? Palette.brand(context).withValues(alpha: 0.14)
+              : Palette.paper(context),
+          borderRadius: BorderRadius.circular(AppRadius.control),
+          border: Border.all(
+            color: selected
+                ? Palette.brand(context)
+                : Palette.inkFaint(context).withValues(alpha: 0.25),
+          ),
+        ),
+        child: Text(label,
+            style: TextStyle(
+                fontSize: 12,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                color: selected ? Palette.brand(context) : Palette.inkSoft(context))),
+      ),
+    );
   }
 }

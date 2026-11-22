@@ -766,7 +766,14 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
           // 常用字段：横向滚动，屏幕再窄也不会挤爆
           SizedBox(
             height: 32,
-            child: ListView(
+            // 点日期/账户/标签这些 chip 之前先收键盘：
+            // 备注框还挂着焦点时，系统输入法会一直停在下面，
+            // 既挡住自己的数字键盘，又让人以为「还没输完备注」。
+            child: Listener(
+              behavior: HitTestBehavior.translucent,
+              onPointerDown: (_) =>
+                  FocusManager.instance.primaryFocus?.unfocus(),
+              child: ListView(
               scrollDirection: Axis.horizontal,
               children: [
                 _FieldChip(
@@ -851,6 +858,7 @@ class _EntryEditorPageState extends ConsumerState<EntryEditorPage>
                     active: _moreSetCount > 0,
                     onTap: () => _moreOptions(fromCur)),
               ],
+              ),
             ),
           ),
           // 凭证缩略图（有才占位）
@@ -3447,7 +3455,12 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
                   ],
                   const SizedBox(height: 8),
                   // 日期 / 标签 / 报销 / 情绪
-                  Wrap(
+                  // 同面板一：点 chip 之前先收键盘，别让备注的输入法赖着不走。
+                  Listener(
+                    behavior: HitTestBehavior.translucent,
+                    onPointerDown: (_) =>
+                        FocusManager.instance.primaryFocus?.unfocus(),
+                    child: Wrap(
                     spacing: 8,
                     runSpacing: 6,
                     children: [
@@ -3595,6 +3608,7 @@ class _AmountSheetState extends ConsumerState<_AmountSheet> {
                               onTap: _pickRefundSource),
                       ],
                     ],
+                    ),
                   ),
                   // 凭证：已挂的缩略图 + 加凭证入口
                   if (_savedAttachments.isNotEmpty ||

@@ -442,6 +442,11 @@ class Recurring {
     required this.dayOfMonth,
     required this.lastRunMonth,
     required this.enabled,
+    this.startOn,
+    this.endMode = 'never',
+    this.endCount = 0,
+    this.endOn,
+    this.runCount = 0,
   });
 
   final int id;
@@ -458,6 +463,70 @@ class Recurring {
   /// 最后生成的月份（'2026-10'），没跑过是 ''
   final String lastRunMonth;
   final bool enabled;
+
+  /// 从哪一天开始生效（null = 不限制，老规则都是这种）。
+  ///
+  /// 只影响**首次生成**：起始日之前的那几个月不会被补记 —— 新建规则时
+  /// 「从下个月开始」是很自然的需求，没有它就只能等下个月再建。
+  final DateTime? startOn;
+
+  /// 结束方式：
+  /// - `never` 永不结束；
+  /// - `count` 共执行 [endCount] 次（按 [runCount] 计）；
+  /// - `until` 到 [endOn] 那天为止。
+  final String endMode;
+  final int endCount;
+  final DateTime? endOn;
+
+  /// 已经生成过几次（`count` 模式用）。老规则从 0 起算 —— 历史补不了。
+  final int runCount;
+
+  bool get isFinished => endMode == 'count'
+      ? runCount >= endCount
+      : endMode == 'until'
+          ? (endOn != null && lastRunMonth.isNotEmpty &&
+              lastRunMonth.compareTo(_monthKeyOf(endOn!)) >= 0)
+          : false;
+
+  static String _monthKeyOf(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}';
+
+  /// 复制并覆盖若干字段。UI 里改一个开关不能把开始/结束条件弄丢，
+  /// 所以统一走这里，别再手写一长串构造。
+  Recurring copyWith({
+    String? title,
+    int? bucketId,
+    int? pocketId,
+    String? flow,
+    int? amountCents,
+    int? dayOfMonth,
+    String? lastRunMonth,
+    bool? enabled,
+    DateTime? startOn,
+    bool clearStartOn = false,
+    String? endMode,
+    int? endCount,
+    DateTime? endOn,
+    bool clearEndOn = false,
+    int? runCount,
+  }) =>
+      Recurring(
+        id: id,
+        bookId: bookId,
+        title: title ?? this.title,
+        bucketId: bucketId ?? this.bucketId,
+        pocketId: pocketId ?? this.pocketId,
+        flow: flow ?? this.flow,
+        amountCents: amountCents ?? this.amountCents,
+        dayOfMonth: dayOfMonth ?? this.dayOfMonth,
+        lastRunMonth: lastRunMonth ?? this.lastRunMonth,
+        enabled: enabled ?? this.enabled,
+        startOn: clearStartOn ? null : (startOn ?? this.startOn),
+        endMode: endMode ?? this.endMode,
+        endCount: endCount ?? this.endCount,
+        endOn: clearEndOn ? null : (endOn ?? this.endOn),
+        runCount: runCount ?? this.runCount,
+      );
 }
 
 /// 借贷：direction = lend（我借出去，别人欠我）/ borrow（我借进来，我欠别人）
@@ -815,7 +884,7 @@ class LedgerStore {
   /// `allPockets().first` 这样的默认账户，改默认值会让十几处测试同时红。
   final bool withSamplePockets;
 
-  static const _version = 28;
+  static const _version = 29;
 
   static Future<LedgerStore> open({
     String? path,
@@ -1055,7 +1124,12 @@ class LedgerStore {
         amount_cents INTEGER NOT NULL,
         day_of_month INTEGER NOT NULL,
         last_run_month TEXT NOT NULL DEFAULT '',
-        enabled INTEGER NOT NULL DEFAULT 1
+        enabled INTEGER NOT NULL DEFAULT 1,
+        start_on TEXT,
+        end_mode TEXT NOT NULL DEFAULT 'never',
+        end_count INTEGER NOT NULL DEFAULT 0,
+        end_on TEXT,
+        run_count INTEGER NOT NULL DEFAULT 0
       )
     ''');
 
@@ -1298,6 +1372,23 @@ class LedgerStore {
   //   · 没有的清掉 type，图标换成「自定义」插画（负债类清空 type，保留 kind）。
   if (from < 27) {
     await _migrateGlyphsV27(db);
+  }
+
+  // v29：周期账单支持「开始时间 / 结束方式」。
+  //
+  // 这个功能只对**新建**的规则有意义，老规则一律按「从上次生成那月起、
+  // 永不结束」处理（start_on = NULL / end_mode = 'never'），行为完全不变。
+  // run_count 会从 0 开始，所以给老规则切到「执行 N 次」时，计数不包含
+  // 历史上已经生成的那些 —— 这是刻意的：没人能回溯知道当年该算几次。
+  if (from < 29) {
+    await _addColumnIfMissing(db, 'recurring', 'start_on', 'TEXT');
+    await _addColumnIfMissing(
+        db, 'recurring', 'end_mode', "TEXT NOT NULL DEFAULT 'never'");
+    await _addColumnIfMissing(
+        db, 'recurring', 'end_count', 'INTEGER NOT NULL DEFAULT 0');
+    await _addColumnIfMissing(db, 'recurring', 'end_on', 'TEXT');
+    await _addColumnIfMissing(
+        db, 'recurring', 'run_count', 'INTEGER NOT NULL DEFAULT 0');
   }
 
   // v28：借贷可以关联资金账户了（可选）。
@@ -3703,6 +3794,15 @@ class LedgerStore {
               dayOfMonth: r['day_of_month'] as int,
               lastRunMonth: r['last_run_month'] as String,
               enabled: (r['enabled'] as int) == 1,
+              startOn: r['start_on'] == null
+                  ? null
+                  : parseDay(r['start_on'] as String),
+              endMode: (r['end_mode'] as String?) ?? 'never',
+              endCount: (r['end_count'] as int?) ?? 0,
+              endOn: r['end_on'] == null
+                  ? null
+                  : parseDay(r['end_on'] as String),
+              runCount: (r['run_count'] as int?) ?? 0,
             ))
         .toList();
   }
@@ -3717,6 +3817,11 @@ class LedgerStore {
         'day_of_month': r.dayOfMonth,
         'last_run_month': r.lastRunMonth,
         'enabled': r.enabled ? 1 : 0,
+        'start_on': r.startOn == null ? null : dayKey(r.startOn!),
+        'end_mode': r.endMode,
+        'end_count': r.endCount,
+        'end_on': r.endOn == null ? null : dayKey(r.endOn!),
+        'run_count': r.runCount,
       });
 
   Future<void> updateRecurring(Recurring r) => _db.update(
@@ -3729,6 +3834,11 @@ class LedgerStore {
           'amount_cents': r.amountCents,
           'day_of_month': r.dayOfMonth,
           'enabled': r.enabled ? 1 : 0,
+          'start_on': r.startOn == null ? null : dayKey(r.startOn!),
+          'end_mode': r.endMode,
+          'end_count': r.endCount,
+          'end_on': r.endOn == null ? null : dayKey(r.endOn!),
+          'run_count': r.runCount,
         },
         where: 'id = ?',
         whereArgs: [r.id],
@@ -3753,7 +3863,20 @@ class LedgerStore {
           : DateTime.parse('${r.lastRunMonth}-01')
               .add(const Duration(days: 32));
       month = DateTime(month.year, month.month); // 归一到月初
+      // 开始时间：整月早于起始月的直接跳过，别把「从下个月开始」补成"从今天开始"。
+      if (r.startOn != null) {
+        final startMonth = DateTime(r.startOn!.year, r.startOn!.month);
+        if (month.isBefore(startMonth)) month = startMonth;
+      }
+      var run = r.runCount;
       while (!month.isAfter(currentMonth)) {
+        // 结束条件先判：已达标就别再生成，顺手把开关关掉（否则列表里
+        // 永远挂着一条「永不结束」的规则，用户以为它还在跑）。
+        if (r.endMode == 'count' && r.endCount > 0 && run >= r.endCount) {
+          await _db.update('recurring', {'enabled': 0},
+              where: 'id = ?', whereArgs: [r.id]);
+          break;
+        }
         // 夹到当月最后一天：dayOfMonth=31 在 30/28 天月会被 Dart 自动溢出到下月，
         // 导致本该落地的周期账单静默跳过、lastRunMonth 永不推进、周期永久卡死。
         final lastDay = DateTime(month.year, month.month + 1, 0).day;
@@ -3767,6 +3890,23 @@ class LedgerStore {
         // dayMissing 时该月没有这一天，月底即视为到期，进入当月就生成；
         // 否则 dayOfMonth=31 在短月会永远等不到「那一天」→ 永久卡死。
         if (isCurrent && !dayMissing && today.isBefore(dueDay)) break;
+        // 开始时间：起始日之前的那个月不发。例：11-20 建「每月 5 号」，
+        // 11 月 5 号已经过去了，第一次应该是 12-05。
+        if (r.startOn != null && dueDay.isBefore(r.startOn!)) {
+          await _db.update('recurring',
+              {'last_run_month': monthKey(month)},
+              where: 'id = ?', whereArgs: [r.id]);
+          month = DateTime(month.year, month.month + 1);
+          continue;
+        }
+        // 结束日期：这一期已经过了结束日，停在这里并关掉开关。
+        if (r.endMode == 'until' &&
+            r.endOn != null &&
+            dueDay.isAfter(r.endOn!)) {
+          await _db.update('recurring', {'enabled': 0},
+              where: 'id = ?', whereArgs: [r.id]);
+          break;
+        }
         await addEntry(
           bookId: bookId,
           pocketId: r.pocketId,
@@ -3777,8 +3917,19 @@ class LedgerStore {
           day: dueDay,
         );
         created++;
-        await _db.update('recurring', {'last_run_month': monthKey(month)},
-            where: 'id = ?', whereArgs: [r.id]);
+        run++;
+        // 生成满次数就地关掉，列表上立刻显示「已结束」，不用等下次启动。
+        final done = r.endMode == 'count' && r.endCount > 0 && run >= r.endCount;
+        await _db.update(
+            'recurring',
+            {
+              'last_run_month': monthKey(month),
+              'run_count': run,
+              if (done) 'enabled': 0,
+            },
+            where: 'id = ?',
+            whereArgs: [r.id]);
+        if (done) break;
         month = DateTime(month.year, month.month + 1);
       }
     }

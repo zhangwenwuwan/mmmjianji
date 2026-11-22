@@ -597,7 +597,12 @@ class AppDropdown<T> extends StatelessWidget {
           color: Palette.paper(context),
           borderRadius: BorderRadius.circular(AppRadius.control),
         ),
-        child: DropdownButtonHideUnderline(
+        // 值太长时（"微信零钱通"这种）原来会折成两行、把 42 高的框撑破，
+        // 和旁边那个下拉高度对不上。统一单行 + 省略号。
+        child: DefaultTextStyle.merge(
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          child: DropdownButtonHideUnderline(
           child: DropdownButton<T>(
             value: value,
             hint: hint == null
@@ -617,6 +622,7 @@ class AppDropdown<T> extends StatelessWidget {
             ),
           ),
         ),
+          ),
       ),
     );
   }
@@ -825,8 +831,11 @@ class EmptyView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 28),
+      // 左右留 24：原来是 0，长提示（"房租、会员订阅、工资都可以加成周期"）
+      // 在窄屏上会顶到屏幕边缘、左边半个字被切掉 —— 看着像排错了。
+      padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 24),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, size: 30, color: Palette.inkFaint(context)),
           const SizedBox(height: 8),
