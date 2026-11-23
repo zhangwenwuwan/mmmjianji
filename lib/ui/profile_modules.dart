@@ -57,7 +57,7 @@ final List<ProfileModuleDef> kProfileModules = [
     label: '数据管理',
     icon: Icons.storage_outlined,
     page: DataManagePage(),
-    note: '备份 / 恢复 / 清空 / 账单分享',
+    note: '导出 / 导入 / 账单导入',
   ),
   const ProfileModuleDef(
     id: 'insights',

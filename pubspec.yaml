@@ -12,6 +12,8 @@ dependencies:
   flutter_localizations:
     sdk: flutter
   flutter_riverpod: ^2.6.1
+  # 备份文件加密（PBKDF2 + HMAC-CTR）；纯 Dart，无原生依赖。
+  crypto: ^3.0.7
   sqflite: ^2.3.3
   path: ^1.9.0
   shared_preferences: ^2.3.2

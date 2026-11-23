@@ -14,24 +14,12 @@ import 'book_manage_page.dart';
 import 'bucket_manage_page.dart';
 import 'common.dart';
 import 'category_migration_page.dart';
-import 'export_page.dart';
-import 'log_center_page.dart';
 import 'statement_share_page.dart';
 import 'data_actions.dart'
-    show
-        copyBackup,
-        exportBackup,
-        exportCsv,
-        exportConfig,
-        importConfig,
-        importFromClipboard,
-        confirmWipe,
-        wipeAll,
-        runWithProgress;
+    show exportBackup, importFromFile, runWithProgress;
 import 'motion.dart';
 import 'pocket_manage_page.dart';
 import 'recycle_bin_page.dart';
-import 'storage_page.dart';
 import 'tag_manage_page.dart';
 import 'template_manage_page.dart';
 import 'theme.dart';
@@ -458,112 +446,32 @@ class _DataManagePageState extends ConsumerState<DataManagePage> {
             ),
           ),
           const SizedBox(height: 18),
-          SectionLabel('导入导出'),
+          SectionLabel('备份与导入'),
           Panel(
             padding: EdgeInsets.zero,
             child: Column(
               children: [
                 ListTile(
-                  leading: const Icon(Icons.upload_outlined),
+                  leading: const Icon(Icons.file_upload_outlined),
                   title: const Text('导出备份'),
-                  // 备份是"数据"的备份，不含凭证图片（图片走本机目录，
-                  // 换了手机路径也无效）。不写明的话，换机后以为票据会跟着回来。
-                  subtitle: const Text('通过系统分享发出去 · 不含凭证图片'),
+                  // 加密成 .jjbk 文件，别人打开看不到明细；不含凭证图片。
+                  subtitle: const Text('生成加密文件 · 可存网盘 / 发给自己'),
                   onTap: () => exportBackup(context, ref),
                 ),
                 const Divider(height: 1, indent: 16),
                 ListTile(
-                  leading: const Icon(Icons.copy_all_outlined),
-                  title: const Text('复制备份到剪贴板'),
-                  subtitle: const Text('数据量小时的备用通道'),
-                  onTap: () => copyBackup(context, ref),
+                  leading: const Icon(Icons.file_download_outlined),
+                  title: const Text('导入备份'),
+                  subtitle: const Text('选择备份文件恢复 · 会覆盖当前数据'),
+                  onTap: () => importFromFile(context, ref),
                 ),
                 const Divider(height: 1, indent: 16),
                 ListTile(
-                  leading: const Icon(Icons.table_view_outlined),
-                  title: const Text('导出 CSV'),
-                  subtitle: const Text('Excel / WPS 可直接打开'),
-                  onTap: () => exportCsv(context, ref),
-                ),
-                const Divider(height: 1, indent: 16),
-                ListTile(
-                  leading: const Icon(Icons.download_outlined),
-                  title: const Text('从剪贴板导入'),
-                  subtitle: const Text('会覆盖当前所有数据'),
-                  onTap: () => importFromClipboard(context, ref),
-                ),
-                const Divider(height: 1, indent: 16),
-                ListTile(
-                  leading: const Icon(Icons.ios_share),
-                  title: const Text('导出数据'),
-                  subtitle: const Text('备份 / CSV / 配置，三种用途'),
-                  onTap: () => Navigator.of(context)
-                      .push(AppPageRoute(page: const ExportPage())),
-                ),
-                const Divider(height: 1, indent: 16),
-                ListTile(
-                  leading: const Icon(Icons.article_outlined),
-                  title: const Text('日志中心'),
-                  subtitle: const Text('出问题时看看发生了什么'),
-                  onTap: () => Navigator.of(context)
-                      .push(AppPageRoute(page: const LogCenterPage())),
-                ),
-                const Divider(height: 1, indent: 16),
-                ListTile(
-                  leading: const Icon(Icons.settings_backup_restore),
-                  title: const Text('导出配置'),
-                  subtitle: const Text('只带分类和账户结构，不带流水'),
-                  onTap: () => exportConfig(context, ref),
-                ),
-                const Divider(height: 1, indent: 16),
-                ListTile(
-                  leading: const Icon(Icons.settings_backup_restore_outlined),
-                  title: const Text('从剪贴板导入配置'),
-                  subtitle: const Text('同名的分类/账户会跳过'),
-                  onTap: () => importConfig(context, ref),
-                ),
-                const Divider(height: 1, indent: 16),
-                ListTile(
-                  leading: const Icon(Icons.sd_storage_outlined),
-                  title: const Text('存储管理'),
-                  subtitle: const Text('看数据库和备份占了多少'),
-                  onTap: () => Navigator.of(context)
-                      .push(AppPageRoute(page: const StoragePage())),
-                ),
-                const Divider(height: 1, indent: 16),
-                ListTile(
-                  leading: const Icon(Icons.download_for_offline_outlined),
-                  title: const Text('账单导入'),
-                  subtitle: const Text('微信 / 支付宝账单 CSV'),
+                  leading: const Icon(Icons.account_balance_outlined),
+                  title: const Text('微信 / 支付宝账单导入'),
+                  subtitle: const Text('从账单 CSV 里识别流水'),
                   onTap: () => Navigator.of(context)
                       .push(AppPageRoute(page: const BillImportPage())),
-                ),
-                const Divider(height: 1, indent: 16),
-                ListTile(
-                  leading:
-                      Icon(Icons.delete_sweep_outlined, color: Palette.expense),
-                  title:
-                      Text('清空所有数据', style: TextStyle(color: Palette.expense)),
-                  onTap: () async {
-                    // 清空会连凭证图一起删、且没有回收站 ——
-                    // 光一句「建议先导出备份」拦不住顺手一点。
-                    // 这里改成两步：① 先自动存一份快照 ② 手输「清空」才给过。
-                    final store = await ref.read(storeProvider.future);
-                    final snap = await AutoBackup.run(store);
-                    if (!context.mounted) return;
-                    final ok = await confirmWipe(context);
-                    if (ok == true && context.mounted) {
-                      // 走 data_actions 里的统一实现：它还会清掉磁盘上的
-                      // 凭证图片（只删库里的行会留下永远删不掉的占用）。
-                      // 原来这里自己写了一遍，漏了附件那一步。
-                      await wipeAll(context, ref);
-                      if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).toast(snap.result ==
-                              AutoBackupResult.failed
-                          ? '已清空（清空前没能存下快照，磁盘可能已满）'
-                          : '已清空（清空前的数据存在「自动备份」里）');
-                    }
-                  },
                 ),
               ],
             ),

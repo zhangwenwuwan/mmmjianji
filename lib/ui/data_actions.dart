@@ -1,10 +1,15 @@
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../core/backup_crypto.dart';
+import '../core/rules.dart';
 import '../data/store.dart';
 import '../state/ledger_state.dart';
 import '../services/app_log.dart';
@@ -13,33 +18,62 @@ import '../state/settings.dart';
 import 'theme.dart';
 import 'common.dart';
 
-/// 数据相关的共用动作：导出备份 / 导出 CSV / 从剪贴板导入 / 清空。
+/// 数据相关的共用动作：导出备份 / 导出 CSV / 从文件导入 / 清空。
 ///
 /// 抽出来是因为「我的」和「数据管理」两个页面都要用，
 /// 复制两份迟早会不一致（导出格式一改就漏一个）。
+
+/// 导出加密备份文件。
+///
+/// 2026-11-23 重做：以前是 Share.share 直接甩明文 JSON，任何人拿到都能看，
+/// 而且能复制粘贴。现在导出成 `简记备份_xxx.jjbk` 文件（PBKDF2 + HMAC-CTR
+/// 加密），走系统分享保存 —— 用户拿到的是一个可以存网盘/发微信的文件。
 Future<void> exportBackup(BuildContext context, WidgetRef ref) async {
   final store = await ref.read(storeProvider.future);
   if (!context.mounted) return;
   final json = await runWithProgress(
       context, '正在生成备份…', () => store.exportJson());
+  final encrypted = encryptBackup(json);
+
+  final now = DateTime.now();
+  final stamp =
+      '${now.year}${pad2(now.month)}${pad2(now.day)}_${pad2(now.hour)}${pad2(now.minute)}';
+  final fileName = '简记备份_$stamp.jjbk';
+
+  File file;
   try {
-    final result = await Share.share(json, subject: '简记备份');
+    final dir = await getTemporaryDirectory();
+    file = File('${dir.path}${Platform.pathSeparator}$fileName');
+    await file.writeAsString(encrypted, flush: true);
+  } catch (e) {
+    AppLog.error('data', '写备份文件失败', e);
+    if (context.mounted) _toast(context, '备份文件写入失败，请检查存储空间');
+    return;
+  }
+  if (!context.mounted) return;
+
+  try {
+    final result = await Share.shareXFiles(
+      [XFile(file.path, name: fileName, mimeType: 'application/octet-stream')],
+      subject: '简记加密备份 $fileName',
+      text: '简记备份文件，请用简记 App「数据管理 → 导入备份」恢复。',
+    );
     // ⚠️ 必须看分享结果：用户在系统面板里点空白取消，以前照样记「已备份」，
     // 于是首页的备份提醒永久消失 —— 而实际上一份都没导出过。
     if (result.status == ShareResultStatus.dismissed) {
       if (context.mounted) _toast(context, '已取消，这次不算备份');
       return;
     }
-  } catch (_) {
-    await Clipboard.setData(ClipboardData(text: json));
-    if (!context.mounted) return;
-    _toast(context, '分享不可用，已复制到剪贴板');
+  } catch (e) {
+    AppLog.error('data', '分享备份文件失败', e);
+    if (context.mounted) _toast(context, '系统分享不可用，备份未导出');
+    return;
   }
-  // 到了这里说明备份内容已经出了 App（分享面板或剪贴板），
+  // 到了这里说明备份文件已经交到系统分享面板（用户可保存到本地/网盘），
   // 首页的「备份提醒」据此消失。
   await ref.read(settingsProvider.notifier).markBackedUp();
   if (context.mounted) {
-    _toast(context, '已备份（${(json.length / 1024).toStringAsFixed(1)} KB）');
+    _toast(context, '已导出加密备份 ${(encrypted.length / 1024).toStringAsFixed(1)} KB');
   }
 }
 
@@ -129,6 +163,98 @@ Future<bool> importFromClipboard(BuildContext context, WidgetRef ref) async {
     // 用新版备份恢复到旧版时，备份里会多一个当前表没有的列 →
     // insert 抛 DatabaseException（不是 FormatException）。
     // 原来没人接 → 事务回滚、界面毫无反应，用户以为按钮坏了。
+    await _restoreSnapshotQuietly(store, snapshot);
+    bumpRevision(ref);
+    if (context.mounted) _toast(context, '导入失败：$e（数据没变）');
+    return false;
+  }
+}
+
+/// 从文件导入备份（覆盖式）。支持新的 `.jjbk` 加密文件；
+/// 也兼容老版本的明文 JSON 备份（没有 JJBK1 头、但结构是简记备份）。
+/// 返回是否导入成功。
+Future<bool> importFromFile(BuildContext context, WidgetRef ref) async {
+  FilePickerResult? picked;
+  try {
+    picked = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['jjbk', 'json', 'txt'],
+      withData: true,
+    );
+  } catch (e) {
+    AppLog.error('data', '选择备份文件失败', e);
+  }
+  if (picked == null || picked.files.isEmpty) return false;
+
+  final f = picked.files.first;
+  String raw;
+  try {
+    final bytes = f.bytes ?? await File(f.path!).readAsBytes();
+    raw = utf8.decode(bytes);
+  } catch (e) {
+    AppLog.error('data', '读取备份文件失败', e);
+    if (context.mounted) _toast(context, '读不到备份文件内容');
+    return false;
+  }
+
+  String text;
+  try {
+    text = isEncryptedBackup(raw) ? decryptBackup(raw) : raw;
+  } on BackupCryptoException catch (e) {
+    if (context.mounted) _toast(context, '导入失败：${e.message}');
+    return false;
+  }
+  // 结构先验一次：明文文件也可能只是随便一个 txt。
+  try {
+    final decoded = jsonDecode(text);
+    if (decoded is! Map || decoded['app'] != 'jianji') {
+      if (context.mounted) _toast(context, '不是简记的备份文件');
+      return false;
+    }
+  } catch (_) {
+    if (context.mounted) _toast(context, '备份文件内容无法解析');
+    return false;
+  }
+
+  if (!context.mounted) return false;
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('导入备份？'),
+      content: const Text('当前所有数据会被覆盖，且无法撤销。覆盖前会自动存一份快照。'),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消')),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: Text('覆盖导入', style: TextStyle(color: Palette.expense)),
+        ),
+      ],
+    ),
+  );
+  if (ok != true) return false;
+
+  final store = await ref.read(storeProvider.future);
+  if (!context.mounted) return false;
+  final snapshot = await runWithProgress(
+      context, '正在备份旧数据…', () => store.exportJson());
+  try {
+    if (!context.mounted) return false;
+    await runWithProgress(
+        context, '正在导入备份…', () => store.importJson(text));
+    await AttachmentService.deleteAll();
+    bumpRevision(ref);
+    if (context.mounted) {
+      _toast(context, '导入完成（覆盖前的旧数据已存为 automatic 备份）');
+    }
+    return true;
+  } on FormatException catch (e) {
+    await _restoreSnapshotQuietly(store, snapshot);
+    bumpRevision(ref);
+    if (context.mounted) _toast(context, '导入失败：${e.message}（数据没变）');
+    return false;
+  } catch (e) {
     await _restoreSnapshotQuietly(store, snapshot);
     bumpRevision(ref);
     if (context.mounted) _toast(context, '导入失败：$e（数据没变）');
